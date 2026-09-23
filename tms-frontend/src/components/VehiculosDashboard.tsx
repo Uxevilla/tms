@@ -38,6 +38,7 @@ interface Vehiculo {
   proveedor_nombre?: string;
   fecha_alta?: string;
   cuota_mensual?: number;
+  km_actuales?: number;
 }
 
 interface Mantenimiento {
@@ -387,11 +388,14 @@ export function VehiculosDashboard() {
       { field: "id", headerName: "ID Trimble", width: 150, pinned: "left" },
       { field: "matricula", headerName: "Matrícula", width: 110, pinned: "left" },
       { field: "categoria", headerName: "Categoría", width: 110 },
+      { field: "marca", headerName: "Marca", flex: 1, minWidth: 110 },
+      { field: "modelo", headerName: "Modelo", flex: 1, minWidth: 110 },
       {
-        headerName: "Marca / Modelo",
-        flex: 1,
-        minWidth: 170,
-        valueGetter: (p) => `${p.data?.marca ?? ""} ${p.data?.modelo ?? ""}`.trim(),
+        field: "km_actuales",
+        headerName: "Kilómetros",
+        width: 120,
+        type: "rightAligned",
+        valueFormatter: (p) => `${Math.round((Number(p.value) || 0) / 1000).toLocaleString("es-ES")} km`,
       },
       { field: "anno", headerName: "Año", width: 70 },
       { field: "itv", headerName: "ITV", width: 105, editable: true, cellClass: editableCell },
