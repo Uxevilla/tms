@@ -119,37 +119,13 @@ FIRST_TENANT_SLUG = os.environ.get("FIRST_TENANT_SLUG", "eusebio")
 FIRST_TENANT_NAME = os.environ.get("FIRST_TENANT_NAME", "Transportes Eusebio")
 
 PUBLIC_PATHS = {"/manifest.webmanifest", "/sw.js", "/apple-touch-icon.png",
-                "/favicon.ico", "/api/login", "/api/health",
-                "/api/auth/login",
+                "/favicon.ico", "/api/health",
+                "/api/auth/login", "/api/auth/superadmin",
                 # Endpoints del frontend React: protegidos por JWT dentro del endpoint
                 # (require_jwt / require_role), no por el token HMAC del frontend antiguo.
                 "/api/viajes", "/api/telemetria/activa", "/api/telemetria/trayectoria",
                 # Webhook externo de TransFollow (sin token TMS): validar firma antes de producción.
                 "/api/webhooks/transfollow"}
-
-
-def _make_token(empresa, usuario, superadmin=False, ttl=12 * 3600):
-    payload = {"empresa": empresa, "usuario": usuario, "sa": bool(superadmin),
-               "exp": int(time.time()) + ttl}
-    data = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode().rstrip("=")
-    sig = hmac.new(config.SECRET_KEY.encode(), data.encode(), hashlib.sha256).hexdigest()
-    return f"{data}.{sig}"
-
-
-def _verify_token(token):
-    if not config.SECRET_KEY:
-        return None
-    try:
-        data, sig = token.split(".", 1)
-        expected = hmac.new(config.SECRET_KEY.encode(), data.encode(), hashlib.sha256).hexdigest()
-        if not hmac.compare_digest(sig, expected):
-            return None
-        payload = json.loads(base64.urlsafe_b64decode(data + "=" * (-len(data) % 4)))
-        if int(payload.get("exp", 0)) < time.time():
-            return None
-        return payload
-    except Exception:
-        return None
 
 
 _SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{1,31}$")
@@ -592,6 +568,21 @@ def auth_login(req: dict, request: Request):
             "debe_cambiar_clave": bool(row["debe_cambiar_clave"])}
 
 
+@app.post("/api/auth/superadmin")
+def auth_superadmin(req: dict, request: Request):
+    """Login del superadmin (gestión de empresas) → JWT con rol 'superadmin'."""
+    usuario = (req.get("usuario") or "").strip()
+    contrasena = req.get("contrasena") or req.get("password") or ""
+    ip = request.client.host if request.client else "?"
+    if not _login_rate_ok(f"{ip}:sa:{usuario}"):
+        raise HTTPException(status_code=429, detail={"error": "Demasiados intentos de login. Espera unos minutos."})
+    if usuario != config.SUPERADMIN_USER or not secrets.compare_digest(config.SUPERADMIN_PASSWORD or "", contrasena):
+        raise HTTPException(status_code=401, detail={"error": "Credenciales de administrador incorrectas"})
+    return {"token": _make_jwt(0, usuario, "superadmin"),
+            "superadmin": True, "usuario": usuario,
+            "empresa": "admin", "nombre": "Administración"}
+
+
 @app.post("/api/auth/change-password")
 def change_password(req: dict, user: dict = Depends(require_jwt)):
     """Cambia la contraseña del usuario autenticado y limpia el flag de cambio forzado."""
@@ -838,27 +829,27 @@ async def require_auth(request, call_next):
     payload = None
     if auth.startswith("Bearer "):
         token = auth[7:].strip()
-        # Acepta el token HMAC antiguo (frontend vanilla) o el JWT del frontend React.
-        payload = _verify_token(token) or _verify_jwt(token)
+        payload = _verify_jwt(token)
     if not payload:
         return JSONResponse(status_code=401, content={"detail": "Acceso no autorizado"})
-    # Control de rol: los JWT con rol fuera de admin/dispatcher no operan.
     rol = payload.get("rol")
-    if rol is not None:
+    # Superadmin (JWT rol=superadmin) → BD maestra.
+    if rol == "superadmin":
+        _tenant_ctx.set({"db_name": config.MASTER_DB_NAME, "empresa": "", "superadmin": True})
+    elif rol is not None:
+        # JWT admin/dispatcher: control de rol + resolución de tenant.
         if rol not in ("admin", "dispatcher"):
             return JSONResponse(status_code=403, content={"detail": "Permisos insuficientes"})
         if rol != "admin" and path.startswith(("/api/config", "/api/contabilidad", "/api/empleados",
                                                "/api/nominas", "/api/ausencias", "/api/empresas")):
             return JSONResponse(status_code=403, content={"detail": "Solo administrador"})
-    if payload.get("sa"):
-        _tenant_ctx.set({"db_name": config.MASTER_DB_NAME, "empresa": "", "superadmin": True})
-    elif payload.get("empresa"):
-        emp = _empresa_por_slug(payload.get("empresa", ""))
-        if not emp:
-            return JSONResponse(status_code=401, content={"detail": "Empresa no encontrada"})
-        _tenant_ctx.set({"db_name": emp["db_name"], "empresa": emp["slug"],
-                         "nombre": emp["nombre"], "superadmin": False})
-    # JWT (sub/rol/usuario, sin empresa): el tenant queda en None -> _db() usa config.DB_NAME.
+        if payload.get("empresa"):
+            emp = _empresa_por_slug(payload.get("empresa", ""))
+            if not emp:
+                return JSONResponse(status_code=401, content={"detail": "Empresa no encontrada"})
+            _tenant_ctx.set({"db_name": emp["db_name"], "empresa": emp["slug"],
+                             "nombre": emp["nombre"], "superadmin": False})
+    # JWT sin empresa: el tenant queda en None -> _db() usa config.DB_NAME.
     request.state.usuario = payload.get("usuario") or payload.get("rol") or ""
     request.state.empresa = payload.get("empresa") or ""
     _usuario_ctx.set(request.state.usuario or "sistema")
@@ -1624,42 +1615,6 @@ def _es_superadmin():
     return bool(t and t.get("superadmin"))
 
 
-@app.post("/api/login")
-def login(req: dict, request: Request):
-    """Login multi-tenant: {empresa, usuario, contraseña} → token de sesión."""
-    empresa = (req.get("empresa") or "").strip().lower()
-    usuario = (req.get("usuario") or "").strip()
-    contrasena = req.get("contraseña") or req.get("contrasena") or req.get("password") or ""
-    ua = (request.headers.get("user-agent") or "?")[:120]
-    ip = request.client.host if request.client else "?"
-    print(f"[LOGIN] ip={ip} empresa={empresa!r} usuario={usuario!r} UA={ua!r}", flush=True)
-    if not _login_rate_ok(f"{ip}:{usuario}"):
-        raise HTTPException(status_code=429, detail={"error": "Demasiados intentos de login. Espera unos minutos."})
-
-    # Super-admin (gestión de empresas): identificador de empresa vacío o "_admin"
-    if empresa in ("", "admin", "_admin"):
-        if usuario == config.SUPERADMIN_USER and secrets.compare_digest(config.SUPERADMIN_PASSWORD or "", contrasena):
-            return {"token": _make_token("", usuario, superadmin=True),
-                    "superadmin": True, "usuario": usuario,
-                    "empresa": "admin", "nombre": "Administración"}
-        raise HTTPException(status_code=401, detail={"error": "Credenciales de administrador incorrectas"})
-
-    emp = _empresa_por_slug(empresa)
-    if not emp:
-        raise HTTPException(status_code=401, detail={"error": "Empresa no encontrada"})
-    token = _tenant_ctx.set({"db_name": emp["db_name"], "empresa": emp["slug"],
-                             "nombre": emp["nombre"], "superadmin": False})
-    try:
-        users = [u.strip() for u in (_get_config("auth_users", "") or "").split(",") if u.strip()]
-        pwd = _get_config("auth_password", "") or ""
-    finally:
-        _tenant_ctx.reset(token)
-    if usuario not in users or not secrets.compare_digest(pwd, contrasena):
-        raise HTTPException(status_code=401, detail={"error": "Usuario o contraseña incorrectos"})
-    return {"token": _make_token(empresa, usuario), "empresa": empresa,
-            "nombre": emp["nombre"], "usuario": usuario}
-
-
 @app.get("/api/empresas")
 def list_empresas():
     if not _es_superadmin():
@@ -1732,7 +1687,7 @@ def entrar_empresa(slug: str):
     emp = _empresa_por_slug(slug)
     if not emp:
         raise HTTPException(status_code=404, detail={"error": "Empresa no encontrada"})
-    return {"token": _make_token(emp["slug"], "admin", superadmin=False),
+    return {"token": _make_jwt(0, "admin", "admin", emp["slug"]),
             "empresa": emp["slug"], "nombre": emp["nombre"],
             "usuario": "admin", "superadmin": False}
 
@@ -7664,22 +7619,5 @@ def rrhh_resumen():
 
 
 # ---------------------------------------------------------------------- #
-# Frontend: index.html dinámico con cache-busting + assets estáticos
+# Frontend vanilla retirado: el frontend React se sirve vía nginx (tms-stack).
 # ---------------------------------------------------------------------- #
-if FRONTEND_DIR.exists():
-    def _asset_version(name: str) -> str:
-        p = FRONTEND_DIR / name
-        return str(int(p.stat().st_mtime)) if p.exists() else "1"
-
-    @app.get("/", include_in_schema=False)
-    def index():
-        html = (FRONTEND_DIR / "index.html").read_text(encoding="utf-8")
-        html = html.replace(
-            'href="style.css"', f'href="style.css?v={_asset_version("style.css")}"'
-        )
-        html = html.replace(
-            'src="app.js"', f'src="app.js?v={_asset_version("app.js")}"'
-        )
-        return HTMLResponse(html)
-
-    app.mount("/", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="frontend")
