@@ -33,14 +33,23 @@ class _Conn:
         self._conn.rollback()
 
     def close(self):
-        if self._pool is not None:
-            try:
-                self._conn.rollback()  # descartar transacción abierta antes de devolverla al pool
-            except Exception:
-                pass
-            self._pool.putconn(self._conn)
-        else:
+        if self._pool is None:
             self._conn.close()
+            return
+        try:
+            if self._conn.autocommit:
+                self._conn.autocommit = False  # restaurar: si no, la próxima petición hace rollback() y no deshace nada
+            else:
+                self._conn.rollback()  # descartar transacción abierta antes de devolverla al pool
+            self._pool.putconn(self._conn)
+        except Exception:
+            self._pool.putconn(self._conn, close=True)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
 
     def set_autocommit(self, enabled):
         self._conn.autocommit = enabled
@@ -378,7 +387,7 @@ def _pool_for(dbname):
         p = _pools.get(dbname)
         if p is None:
             p = psycopg2.pool.ThreadedConnectionPool(
-                2, 20,
+                2, 40,
                 host=config.DB_HOST, port=config.DB_PORT, dbname=dbname,
                 user=config.DB_USER, password=config.DB_PASSWORD,
             )

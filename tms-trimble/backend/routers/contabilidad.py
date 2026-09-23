@@ -4,14 +4,18 @@ import datetime
 import io
 
 from fastapi import APIRouter, HTTPException, Depends
+from fastapi.responses import Response
 
 import config
-from db import _db, get_conn
+from db import _db, get_conn, _get_config
+from security import require_role
+import re
 from core import *
 from models import *
-import main as _m
+from services.contabilidad import _costes_reales_viaje, _crear_factura_borrador, _generar_factura_pdf, _liquidar_conductor
+from services.contabilidad import _post_asiento, _gasto_subcontrata, _costes_reales_viaje, _crear_factura_borrador
 
-router = APIRouter(dependencies=[Depends(_m.require_role(["admin", "superadmin"]))])
+router = APIRouter(dependencies=[Depends(require_role(["admin"]))])
 
 # ---------------------------------------------------------------------- #
 # Contabilidad: doble partida (plan contable, asientos, informes, facturas)
@@ -744,7 +748,7 @@ def contabilidad_reconciliacion_km(desde: str = "", hasta: str = "", conn = Depe
 @router.get("/api/contabilidad/auditoria")
 
 
-def contabilidad_auditoria(limite: int = 200, user: dict = Depends(_m.require_role(["admin"])), conn = Depends(get_conn)):
+def contabilidad_auditoria(limite: int = 200, user: dict = Depends(require_role(["admin"])), conn = Depends(get_conn)):
     """Pista de auditoría contable (solo administradores): quién hizo qué y cuándo."""
     limite = max(1, min(int(limite), 1000))
     rows = conn.execute(
@@ -784,17 +788,6 @@ def contabilidad_facturables(conn = Depends(get_conn)):
 
 
 
-def _costes_reales_viaje(trip, conn = Depends(get_conn)):
-    """Costes reales del viaje: peajes estimados + gastos vinculados exactamente al viaje."""
-    peaje = float(trip["peaje_estimado"] or 0)
-    row = conn.execute(
-        "SELECT COALESCE(SUM(importe), 0) AS total FROM gastos WHERE trip_id=?",
-        (trip["id"],),
-    ).fetchone()
-    gastos = float(row["total"] or 0) if row else 0.0
-    coste = round(peaje + gastos, 2)
-    margen = round(float(trip["precio"] or 0) - coste, 2)
-    return coste, margen
 
 
 
@@ -820,62 +813,6 @@ def _desglose_costes(conn, trip_id):
                 etiqueta = (g["categoria"] or "Otros").strip().title() or "Otros"
                 desglose.append({"concepto": etiqueta, "importe": imp})
     return desglose
-
-
-
-
-def _liquidar_conductor(trip, conn):
-    """Liquidación variable del conductor (si tiene tarifa por km). Devuelve importe o None."""
-    if not trip["conductor_id"]:
-        return None
-    c = conn.execute("SELECT tarifa_km FROM conductores WHERE id=?", (trip["conductor_id"],)).fetchone()
-    if not c or float(c["tarifa_km"] or 0) <= 0:
-        return None  # sin modelo variable: no aplica
-    importe = round(float(trip["km_total"] or 0) * float(c["tarifa_km"]), 2)
-    if importe <= 0:
-        return None
-    conn.execute(
-        "INSERT INTO liquidaciones (conductor_id, viaje_id, fecha, importe, concepto, pagado, creado) "
-        "VALUES (?,?,?,?,?,?,?)",
-        (trip["conductor_id"], trip["id"], datetime.date.today().isoformat(), importe,
-         f"Liquidación viaje {trip['id']} - {trip['conductor'] or ''}", False,
-         datetime.datetime.utcnow().isoformat() + "Z"),
-    )
-    return importe
-
-
-
-
-def _crear_factura_borrador(trip, conn = Depends(get_conn)):
-    """Crea una factura en estado Borrador (sin asiento) para un viaje entregado."""
-    # Subcontratación: registrar el gasto (624/410) antes de calcular costes/margen.
-    if trip["subcontratado"]:
-        gconn = _db()
-        _gasto_subcontrata(gconn, trip, (trip["creado"] or "")[:10] or datetime.date.today().isoformat())
-        gconn.commit()
-        gconn.close()
-    coste, margen = _costes_reales_viaje(trip)
-    base = round(float(trip["precio"] or 0), 2)
-    iva = round(float(trip["iva"] or 21), 2)
-    cuota = round(base * iva / 100.0, 2)
-    total = round(base + cuota, 2)
-    cur = conn.execute(
-        "INSERT INTO facturas (numero, fecha, trip_id, cliente_id, cliente_nombre, base, iva, cuota_iva, total, estado, coste, margen, creado) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id",
-        ("", (trip["creado"] or "")[:10] or datetime.date.today().isoformat(),
-         trip["id"], trip["cliente_id"], trip["cliente"] or "",
-         base, iva, cuota, total, "Borrador", coste, margen,
-         datetime.datetime.utcnow().isoformat() + "Z"),
-    )
-    factura_id = cur.fetchone()["id"]
-    concepto = f"{trip['origen'] or ''} → {trip['destino'] or ''}".strip().strip("→").strip() or trip["id"]
-    conn.execute(
-        "INSERT INTO factura_lineas (factura_id, trip_id, concepto, base, iva, cuota_iva, total) VALUES (?,?,?,?,?,?,?)",
-        (factura_id, trip["id"], concepto, base, iva, cuota, total),
-    )
-    _liquidar_conductor(trip, conn)
-    conn.commit()
-    return factura_id
 
 
 
@@ -994,7 +931,7 @@ def contabilidad_generar_factura(trip_id: str, conn = Depends(get_conn)):
 @router.get("/api/contabilidad/borradores")
 
 
-def contabilidad_borradores(user: dict = Depends(_m.require_role(["admin"])), conn = Depends(get_conn)):
+def contabilidad_borradores(user: dict = Depends(require_role(["admin"])), conn = Depends(get_conn)):
     """Facturas autogeneradas en estado Borrador, listas para validar y emitir."""
     rows = conn.execute(
         "SELECT f.id, f.numero, f.fecha, f.trip_id, f.cliente_nombre, f.base, f.iva, "
@@ -1015,7 +952,7 @@ def contabilidad_borradores(user: dict = Depends(_m.require_role(["admin"])), co
 @router.get("/api/contabilidad/liquidaciones")
 
 
-def contabilidad_liquidaciones(user: dict = Depends(_m.require_role(["admin"])), conn = Depends(get_conn)):
+def contabilidad_liquidaciones(user: dict = Depends(require_role(["admin"])), conn = Depends(get_conn)):
     """Liquidaciones de conductores autogeneradas (modelo variable por km)."""
     rows = conn.execute(
         "SELECT l.id, c.nombre AS conductor, l.viaje_id, l.fecha, "
@@ -1036,7 +973,7 @@ def contabilidad_liquidaciones(user: dict = Depends(_m.require_role(["admin"])),
 
 
 def contabilidad_emitir_borrador(factura_id: int,
-                                 user: dict = Depends(_m.require_role(["admin"]))):
+                                 user: dict = Depends(require_role(["admin"]))):
     """Valida y emite un borrador: asigna número, publica el asiento y marca 'emitida'."""
     conn = _db()
     f = conn.execute("SELECT * FROM facturas WHERE id=?", (factura_id,)).fetchone()
@@ -1071,82 +1008,6 @@ def contabilidad_emitir_borrador(factura_id: int,
 
 
 
-def _generar_factura_pdf(factura_id, conn = Depends(get_conn)):
-    import io
-    from reportlab.lib.pagesizes import A4
-    from reportlab.lib.units import mm
-    from reportlab.lib import colors
-    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
-    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-
-    f = conn.execute("SELECT * FROM facturas WHERE id=?", (factura_id,)).fetchone()
-    if not f:
-        raise HTTPException(status_code=404, detail={"error": "Factura no encontrada."})
-    lineas = conn.execute("SELECT * FROM factura_lineas WHERE factura_id=? ORDER BY id", (factura_id,)).fetchall()
-    cliente = conn.execute("SELECT * FROM clientes WHERE id=?", (f["cliente_id"],)).fetchone() if f["cliente_id"] else None
-    emp = _m._empresa()
-
-    def eur(n):
-        v = f"{float(n or 0):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-        return f"{v} €".replace("€", "€")
-
-    buf = io.BytesIO()
-    doc = SimpleDocTemplate(buf, pagesize=A4, rightMargin=18*mm, leftMargin=18*mm, topMargin=18*mm, bottomMargin=18*mm)
-    styles = getSampleStyleSheet()
-    normal = ParagraphStyle("normal", parent=styles["Normal"], fontSize=10, leading=14)
-    bold = ParagraphStyle("bold", parent=styles["Normal"], fontSize=10, leading=14, fontName="Helvetica-Bold")
-    title = ParagraphStyle("title", parent=styles["Title"], fontSize=22, spaceAfter=0)
-
-    story = []
-    emp_nombre = emp.get("nombre") or "Mi empresa"
-    emp_txt = [emp_nombre]
-    if emp.get("cif"): emp_txt.append(f"CIF: {emp['cif']}")
-    if emp.get("direccion"): emp_txt.append(emp["direccion"])
-    if emp.get("cp") or emp.get("poblacion"): emp_txt.append(f"{emp.get('cp','')} {emp.get('poblacion','')}".strip())
-    if emp.get("telefono"): emp_txt.append(f"Tel: {emp['telefono']}")
-    if emp.get("email"): emp_txt.append(emp["email"])
-    emp_block = [Paragraph(x, normal) for x in emp_txt]
-    fact_block = [Paragraph(f"<b>FACTURA</b> {f['numero']}", title),
-                  Paragraph(f"Fecha: {f['fecha']}", normal)]
-
-    header = Table([[emp_block, fact_block]], colWidths=[doc.width*0.55, doc.width*0.45])
-    header.setStyle(TableStyle([("VALIGN", (0,0), (-1,-1), "TOP"),
-                                ("LEFTPADDING", (0,0), (-1,-1), 0), ("RIGHTPADDING", (0,0), (-1,-1), 0)]))
-    story.append(header)
-    story.append(Spacer(1, 10*mm))
-
-    cli_nombre = (cliente["nombre"] if cliente else "") or f["cliente_nombre"] or "Cliente"
-    story.append(Paragraph(f"<b>Facturar a:</b> {cli_nombre}", normal))
-    if cliente:
-        if cliente.get("cif"): story.append(Paragraph(f"CIF: {cliente['cif']}", normal))
-        if cliente.get("direccion"): story.append(Paragraph(cliente["direccion"], normal))
-        if cliente.get("cp") or cliente.get("poblacion"):
-            story.append(Paragraph(f"{cliente.get('cp','')} {cliente.get('poblacion','')}".strip(), normal))
-    story.append(Spacer(1, 10*mm))
-
-    data = [["Concepto", "Base", "IVA %", "Total"]]
-    for l in lineas:
-        data.append([l["concepto"] or "—", eur(l["base"]), f"{float(l['iva'] or 0):.0f}%", eur(l["total"])])
-    data.append(["", "Base imponible", "", eur(f["base"])])
-    data.append(["", f"IVA ({float(f['iva'] or 0):.0f}%)", "", eur(f["cuota_iva"])])
-    data.append(["", "TOTAL", "", eur(f["total"])])
-    t = Table(data, colWidths=[doc.width*0.46, doc.width*0.18, doc.width*0.12, doc.width*0.24])
-    t.setStyle(TableStyle([
-        ("FONTNAME", (0,0), (-1,0), "Helvetica-Bold"),
-        ("GRID", (0,0), (-1,-4), 0.5, colors.grey),
-        ("LINEABOVE", (1,-1), (-1,-1), 1, colors.black),
-        ("ALIGN", (1,1), (-1,-1), "RIGHT"),
-        ("FONTNAME", (1,-1), (-1,-1), "Helvetica-Bold"),
-    ]))
-    story.append(t)
-    story.append(Spacer(1, 12*mm))
-    if emp.get("iban"):
-        story.append(Paragraph(f"<b>IBAN:</b> {emp['iban']}", normal))
-    if emp.get("web"):
-        story.append(Paragraph(emp["web"], normal))
-
-    doc.build(story)
-    return buf.getvalue()
 
 
 

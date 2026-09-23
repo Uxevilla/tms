@@ -8,6 +8,7 @@ import urllib.parse
 import urllib.request
 
 import config
+from fastapi import HTTPException
 from db import *
 from core import *
 from security import *
@@ -114,38 +115,36 @@ def _ingestar_dstat(did, source, vehiculo_id, raw, decoded, time):
     """Persiste la foto DSTAT más reciente de un conductor (clave DID) con su terminal."""
     if not decoded:
         return
-    conn = _db()
-    conn.execute(
-        "INSERT INTO tacografo_dstat (did, source, vehiculo_id, dstat_raw, "
-        "driving_coupure_min, day_driving_min, day_working_min, day_resting_min, "
-        "week_driving_min, remaining_week_available_min, week_long_driving_count, "
-        "next_rest_due_ts, time, creado) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-        (
-            did, source, vehiculo_id or "", raw,
-            float(decoded.get("driving_coupure") or 0),
-            float(decoded.get("day_driving") or 0),
-            float(decoded.get("day_working") or 0),
-            float(decoded.get("day_resting") or 0),
-            float(decoded.get("week_driving") or 0),
-            float(decoded.get("remaining_week_available") or 0),
-            int(decoded.get("week_long_driving_count") or 0),
-            int(decoded.get("next_rest_due_ts") or 0),
-            time or "",
-            datetime.datetime.utcnow().isoformat() + "Z",
-        ),
-    )
-    conn.commit()
-    conn.close()
+    with _db() as conn:
+        conn.execute(
+            "INSERT INTO tacografo_dstat (did, source, vehiculo_id, dstat_raw, "
+            "driving_coupure_min, day_driving_min, day_working_min, day_resting_min, "
+            "week_driving_min, remaining_week_available_min, week_long_driving_count, "
+            "next_rest_due_ts, time, creado) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                did, source, vehiculo_id or "", raw,
+                float(decoded.get("driving_coupure") or 0),
+                float(decoded.get("day_driving") or 0),
+                float(decoded.get("day_working") or 0),
+                float(decoded.get("day_resting") or 0),
+                float(decoded.get("week_driving") or 0),
+                float(decoded.get("remaining_week_available") or 0),
+                int(decoded.get("week_long_driving_count") or 0),
+                int(decoded.get("next_rest_due_ts") or 0),
+                time or "",
+                datetime.datetime.utcnow().isoformat() + "Z",
+            ),
+        )
+        conn.commit()
 
 
 def _dstat_terminal(terminal):
     """Devuelve el DSTAT más reciente del conductor logueado en el terminal (o None)."""
-    conn = _db()
-    row = conn.execute(
-        "SELECT * FROM tacografo_dstat WHERE vehiculo_id=? ORDER BY COALESCE(time, creado) DESC LIMIT 1",
-        (terminal,),
-    ).fetchone()
-    conn.close()
+    with _db() as conn:
+        row = conn.execute(
+            "SELECT * FROM tacografo_dstat WHERE vehiculo_id=? ORDER BY COALESCE(time, creado) DESC LIMIT 1",
+            (terminal,),
+        ).fetchone()
     if not row:
         return None
     return {

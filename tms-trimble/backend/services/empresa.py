@@ -33,7 +33,6 @@ from config import REDIS_URL, REDIS_STREAM, REDIS_CHANNEL, ACTIVITY_TYPES
 
 
 def _empresa():
-    conn = _db()
-    row = conn.execute("SELECT * FROM empresa WHERE id=1").fetchone()
-    conn.close()
+    with _db() as conn:
+        row = conn.execute("SELECT * FROM empresa WHERE id=1").fetchone()
     return dict(row) if row else {}

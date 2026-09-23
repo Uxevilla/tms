@@ -108,17 +108,15 @@ def _sync_status():
 
 
 def _get_sync_state(key):
-    conn = _db()
-    row = conn.execute("SELECT value FROM sync_state WHERE key=?", (key,)).fetchone()
-    conn.close()
+    with _db() as conn:
+        row = conn.execute("SELECT value FROM sync_state WHERE key=?", (key,)).fetchone()
     return row["value"] if row else None
 
 
 def _set_sync_state(key, value):
-    conn = _db()
-    conn.execute("INSERT INTO sync_state (key, value) VALUES (?,?) ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value", (key, value))
-    conn.commit()
-    conn.close()
+    with _db() as conn:
+        conn.execute("INSERT INTO sync_state (key, value) VALUES (?,?) ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value", (key, value))
+        conn.commit()
 
 
 def _parse_props(block):
@@ -132,14 +130,13 @@ def _parse_props(block):
 
 
 def _save_file(trip_id, name, ftype, ftime, source, driver, lid, content_b64):
-    conn = _db()
-    conn.execute(
-        "INSERT INTO files (trip_id, name, ftype, ftime, source, driver, lid, content_b64) "
-        "VALUES (?,?,?,?,?,?,?,?) ON CONFLICT (name) DO NOTHING",
-        (trip_id, name, ftype, ftime, source, driver, lid, content_b64),
-    )
-    conn.commit()
-    conn.close()
+    with _db() as conn:
+        conn.execute(
+            "INSERT INTO files (trip_id, name, ftype, ftime, source, driver, lid, content_b64) "
+            "VALUES (?,?,?,?,?,?,?,?) ON CONFLICT (name) DO NOTHING",
+            (trip_id, name, ftype, ftime, source, driver, lid, content_b64),
+        )
+        conn.commit()
 
 
 def _extraer_reporte_xml(block):
@@ -205,15 +202,14 @@ def _guardar_documento_entrega(trip_id, nombre, contenido_b64, formato="png", ft
     if not trip_id or not contenido_b64:
         return
     name = f"ecmr_{uuid.uuid4().hex[:8]}_{nombre}"
-    conn = _db()
-    conn.execute(
-        "INSERT INTO files (trip_id, name, ftype, ftime, source, content_b64, formato) "
-        "VALUES (?,?,?,?,?,?,?) ON CONFLICT (name) DO NOTHING",
-        (trip_id, name, 3, ftime or (datetime.datetime.utcnow().isoformat() + "Z"),
-         "ecmr", contenido_b64, formato),
-    )
-    conn.commit()
-    conn.close()
+    with _db() as conn:
+        conn.execute(
+            "INSERT INTO files (trip_id, name, ftype, ftime, source, content_b64, formato) "
+            "VALUES (?,?,?,?,?,?,?) ON CONFLICT (name) DO NOTHING",
+            (trip_id, name, 3, ftime or (datetime.datetime.utcnow().isoformat() + "Z"),
+             "ecmr", contenido_b64, formato),
+        )
+        conn.commit()
 
 
 def _publicar_estado(trip_id, estado):
@@ -245,46 +241,45 @@ def _aplicar_estado_viaje(trip_id, nuevo_estado, ts=None):
     - Si el nuevo estado es 'Entregado', libera el viaje activo (DEL del SET en Redis).
     Devuelve True si el viaje existía, False si no se encontró.
     """
-    conn = _db()
-    row = conn.execute(
-        "SELECT id, terminal, km_inicio, km_fin, km_total FROM trips WHERE id=?", (trip_id,)
-    ).fetchone()
-    if not row:
-        conn.close()
-        return False
-    terminal = row["terminal"]
-    ts_iso = ts or (datetime.datetime.utcnow().isoformat() + "Z")
+    with _db() as conn:
+        row = conn.execute(
+            "SELECT id, terminal, km_inicio, km_fin, km_total FROM trips WHERE id=?", (trip_id,)
+        ).fetchone()
+        if not row:
+            conn.close()
+            return False
+        terminal = row["terminal"]
+        ts_iso = ts or (datetime.datetime.utcnow().isoformat() + "Z")
 
-    # Captura de km por odómetro (km_real = km_fin - km_inicio, con guard de sanidad).
-    km_updates, km_params = "", []
-    if terminal:
-        if nuevo_estado in ("Cargando", "En_Transito") and row["km_inicio"] is None:
-            odo = _odometro_vehiculo(conn, terminal)
-            if odo is not None:
-                km_updates += ", km_inicio=?"
-                km_params.append(odo)
-        if nuevo_estado == "Entregado" and row["km_fin"] is None:
-            odo = _odometro_vehiculo(conn, terminal)
-            if odo is not None:
-                km_updates += ", km_fin=?"
-                km_params.append(odo)
-                if row["km_inicio"] is not None and float(odo) >= float(row["km_inicio"]):
-                    km_real = float(odo) - float(row["km_inicio"])
-                    km_total = float(row["km_total"] or 0)
-                    if km_real <= 0 or (km_total > 0 and km_real > km_total * 2.5):
-                        km_updates += ", km_fuente='invalido'"
+        # Captura de km por odómetro (km_real = km_fin - km_inicio, con guard de sanidad).
+        km_updates, km_params = "", []
+        if terminal:
+            if nuevo_estado in ("Cargando", "En_Transito") and row["km_inicio"] is None:
+                odo = _odometro_vehiculo(conn, terminal)
+                if odo is not None:
+                    km_updates += ", km_inicio=?"
+                    km_params.append(odo)
+            if nuevo_estado == "Entregado" and row["km_fin"] is None:
+                odo = _odometro_vehiculo(conn, terminal)
+                if odo is not None:
+                    km_updates += ", km_fin=?"
+                    km_params.append(odo)
+                    if row["km_inicio"] is not None and float(odo) >= float(row["km_inicio"]):
+                        km_real = float(odo) - float(row["km_inicio"])
+                        km_total = float(row["km_total"] or 0)
+                        if km_real <= 0 or (km_total > 0 and km_real > km_total * 2.5):
+                            km_updates += ", km_fuente='invalido'"
+                        else:
+                            km_updates += ", km_real=?, km_fuente='real'"
+                            km_params.append(km_real)
                     else:
-                        km_updates += ", km_real=?, km_fuente='real'"
-                        km_params.append(km_real)
-                else:
-                    km_updates += ", km_fuente='planificado'"
+                        km_updates += ", km_fuente='planificado'"
 
-    conn.execute(
-        f"UPDATE trips SET estado=?, fecha_actualizacion=?{km_updates} WHERE id=?",
-        [nuevo_estado, ts_iso, *km_params, trip_id],
-    )
-    conn.commit()
-    conn.close()
+        conn.execute(
+            f"UPDATE trips SET estado=?, fecha_actualizacion=?{km_updates} WHERE id=?",
+            [nuevo_estado, ts_iso, *km_params, trip_id],
+        )
+        conn.commit()
     _publicar_estado(trip_id, nuevo_estado)
     if nuevo_estado == "Entregado" and terminal:
         _del_viaje_activo(terminal)
@@ -336,80 +331,79 @@ def _sync_files():
     # 1) trazas tipo 10 (activity started) -> mapa LID -> trip_id
     lid_map = json.loads(_get_sync_state("lid_map") or "{}")
     mark = _get_sync_state("traces_mark")
-    pos_conn = _db()
-    pos_conn.set_autocommit(True)  # no mantener transacción abierta durante los poll SOAP (evita lock en cascada)
-    posiciones = {}
-    eventos = []  # cambios de actividad a publicar en Redis Pub/Sub
-    for _ in range(30):
-        r = get_client().poll_traces(mark)
-        if not r.get("ok"):
-            break
-        for block in re.findall(r"<traces>(.*?)</traces>", r["body"], re.S):
-            ttype = re.search(r"<type>(\d+)</type>", block)
-            props = _parse_props(block)
-            t = ttype.group(1) if ttype else ""
-            if t == "10" and props.get("LID") and props.get("TRID"):
-                lid_map[props["LID"]] = props["TRID"]
-                eventos.append({"tipo": "actividad", "traza": "10",
-                                "trip_id": props["TRID"], "reporte": ""})
-            elif t in ("12", "13") and props.get("LID"):
-                # activity report (12) o activity end (13) -> question path (ARE/AFRE)
-                trip_id = props.get("TRID") or lid_map.get(props["LID"])
-                src = re.search(r"<source>([^<]*)</source>", block)
-                tm = re.search(r"<time>([^<]*)</time>", block)
-                rt, qp = _extraer_reporte_xml(block)
-                if not qp:
-                    continue  # sin reporte (ARE/AFRE), no es question path
-                eseq = props.get("ESEQ", "")
-                suf = f"_{rt.lower()}" + (f"_{eseq}" if eseq else "")
-                _save_mensaje(
-                    f"qp_{props['LID']}{suf}", trip_id, "cuestionario", props.get("ATY", ""),
-                    props["LID"], src.group(1) if src else "", rt,
-                    qp, tm.group(1) if tm else "", False,
-                )
-                # Regla de negocio: CMR/DESCARGA firmada o sin incidencias => cerrar viaje.
-                aty = (props.get("ATY") or "").upper()
-                if trip_id and aty in ("CMR", "DESCARGA") and _entrega_confirmada(qp):
-                    _cerrar_viaje(trip_id)
-                    doc = _extraer_documento_ecmr(qp)
-                    if doc:
-                        _guardar_documento_entrega(trip_id, doc[0], doc[1], doc[2],
-                                                   tm.group(1) if tm else None)
-                # AFRE (informe final, traza 13) puede llevar el e-CMR embebido.
-                eventos.append({"tipo": "actividad", "traza": t,
-                                "trip_id": trip_id, "reporte": rt})
-            elif t == "82":
-                # Traza 82: cambio de estado del tacógrafo con DSTAT (estadísticas del conductor).
-                did = props.get("DID", "")
-                dstat_b64 = props.get("DSTAT", "")
-                if did and dstat_b64:
+    with _db() as pos_conn:
+        pos_conn.set_autocommit(True)  # no mantener transacción abierta durante los poll SOAP (evita lock en cascada)
+        posiciones = {}
+        eventos = []  # cambios de actividad a publicar en Redis Pub/Sub
+        for _ in range(30):
+            r = get_client().poll_traces(mark)
+            if not r.get("ok"):
+                break
+            for block in re.findall(r"<traces>(.*?)</traces>", r["body"], re.S):
+                ttype = re.search(r"<type>(\d+)</type>", block)
+                props = _parse_props(block)
+                t = ttype.group(1) if ttype else ""
+                if t == "10" and props.get("LID") and props.get("TRID"):
+                    lid_map[props["LID"]] = props["TRID"]
+                    eventos.append({"tipo": "actividad", "traza": "10",
+                                    "trip_id": props["TRID"], "reporte": ""})
+                elif t in ("12", "13") and props.get("LID"):
+                    # activity report (12) o activity end (13) -> question path (ARE/AFRE)
+                    trip_id = props.get("TRID") or lid_map.get(props["LID"])
                     src = re.search(r"<source>([^<]*)</source>", block)
                     tm = re.search(r"<time>([^<]*)</time>", block)
-                    source = src.group(1) if src else ""
-                    veh = _source_a_vehiculo(pos_conn, source) if source else None
-                    _ingestar_dstat(did, source, veh, dstat_b64,
-                                    _decode_dstat(dstat_b64), tm.group(1) if tm else "")
-            pos = _extraer_posicion(block)
-            if pos:
-                veh = _source_a_vehiculo(pos_conn, pos["source"])
-                if veh:
-                    posiciones[veh] = (pos["lat"], pos["lng"], pos["time"])
-                    # Solo el flujo GPS periódico (tipo 0) va a la telemetría histórica.
-                    if t == "0":
-                        _guardar_telemetria(pos, veh)
-        m = re.search(r"<mark>([^<]*)</mark>", r["body"])
-        more = re.search(r"<more>([^<]*)</more>", r["body"])
-        if m:
-            mark = m.group(1)
-        if not (more and more.group(1) == "true"):
-            break
-    for veh, (lat, lng, ttime) in posiciones.items():
-        pos_conn.execute(
-            "UPDATE vehiculos SET last_lat=?, last_lng=?, last_position_time=? WHERE id=?",
-            (lat, lng, ttime, veh),
-        )
-    pos_conn.commit()
-    pos_conn.close()
+                    rt, qp = _extraer_reporte_xml(block)
+                    if not qp:
+                        continue  # sin reporte (ARE/AFRE), no es question path
+                    eseq = props.get("ESEQ", "")
+                    suf = f"_{rt.lower()}" + (f"_{eseq}" if eseq else "")
+                    _save_mensaje(
+                        f"qp_{props['LID']}{suf}", trip_id, "cuestionario", props.get("ATY", ""),
+                        props["LID"], src.group(1) if src else "", rt,
+                        qp, tm.group(1) if tm else "", False,
+                    )
+                    # Regla de negocio: CMR/DESCARGA firmada o sin incidencias => cerrar viaje.
+                    aty = (props.get("ATY") or "").upper()
+                    if trip_id and aty in ("CMR", "DESCARGA") and _entrega_confirmada(qp):
+                        _cerrar_viaje(trip_id)
+                        doc = _extraer_documento_ecmr(qp)
+                        if doc:
+                            _guardar_documento_entrega(trip_id, doc[0], doc[1], doc[2],
+                                                       tm.group(1) if tm else None)
+                    # AFRE (informe final, traza 13) puede llevar el e-CMR embebido.
+                    eventos.append({"tipo": "actividad", "traza": t,
+                                    "trip_id": trip_id, "reporte": rt})
+                elif t == "82":
+                    # Traza 82: cambio de estado del tacógrafo con DSTAT (estadísticas del conductor).
+                    did = props.get("DID", "")
+                    dstat_b64 = props.get("DSTAT", "")
+                    if did and dstat_b64:
+                        src = re.search(r"<source>([^<]*)</source>", block)
+                        tm = re.search(r"<time>([^<]*)</time>", block)
+                        source = src.group(1) if src else ""
+                        veh = _source_a_vehiculo(pos_conn, source) if source else None
+                        _ingestar_dstat(did, source, veh, dstat_b64,
+                                        _decode_dstat(dstat_b64), tm.group(1) if tm else "")
+                pos = _extraer_posicion(block)
+                if pos:
+                    veh = _source_a_vehiculo(pos_conn, pos["source"])
+                    if veh:
+                        posiciones[veh] = (pos["lat"], pos["lng"], pos["time"])
+                        # Solo el flujo GPS periódico (tipo 0) va a la telemetría histórica.
+                        if t == "0":
+                            _guardar_telemetria(pos, veh)
+            m = re.search(r"<mark>([^<]*)</mark>", r["body"])
+            more = re.search(r"<more>([^<]*)</more>", r["body"])
+            if m:
+                mark = m.group(1)
+            if not (more and more.group(1) == "true"):
+                break
+        for veh, (lat, lng, ttime) in posiciones.items():
+            pos_conn.execute(
+                "UPDATE vehiculos SET last_lat=?, last_lng=?, last_position_time=? WHERE id=?",
+                (lat, lng, ttime, veh),
+            )
+        pos_conn.commit()
     _set_sync_state("traces_mark", mark or "")
     _set_sync_state("lid_map", json.dumps(lid_map))
 

@@ -212,6 +212,27 @@ def _calcular_importes(viaje):
     return precio, gastos, margen, iva_pct, base, cuota_iva
 
 
+# --- Constantes de negocio (movidas de main.py para compartir con services/routers) ---
+_SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{1,31}$")
+
+# Límite de tamaño para documentos DMS (Trimble: ~3000 KB en base64 ≈ 2 MB reales)
+MAX_DOC_MB = 2
+MAX_DOC_B64 = MAX_DOC_MB * 1024 * 1024 * 4 // 3
+
+# Safe-Dispatching (límites legales de conducción, Reglamento UE 561/2006)
+_MAX_CONDUCCION_CONTINUA_MIN = 270.0   # 4,5 h de conducción continua
+_MAX_DIA_CONDUCCION_MIN = 540.0        # 9 h diarias
+_EXT_DIA_CONDUCCION_MIN = 600.0        # 10 h diarias (máx 2 días/semana)
+
+# Automatización de dietas (RRHH) — importes por tipo (€). AJUSTAR a la política real.
+_DIETA_IMPORTE = {
+    "dieta": 26.67,
+    "dieta_comida": 12.00,
+    "dieta_cena": 14.67,
+    "pernocta": 30.00,
+}
+
+
 __all__ = [
     "_MAPA_ESTADOS_TRIMBLE", "_MAPA_ESTADOS_ALIAS",
     "_estado_desde_codigo", "_map_estado", "_progreso",
@@ -221,4 +242,7 @@ __all__ = [
     "_ESTADOS_FINALES", "_ESTADOS_FINALES_SQL",
     "_TOLL_RE", "_FREE_AP", "_is_toll_step",
     "_calcular_importes",
+    "_SLUG_RE", "MAX_DOC_MB", "MAX_DOC_B64",
+    "_MAX_CONDUCCION_CONTINUA_MIN", "_MAX_DIA_CONDUCCION_MIN", "_EXT_DIA_CONDUCCION_MIN",
+    "_DIETA_IMPORTE",
 ]

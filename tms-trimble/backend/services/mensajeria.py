@@ -33,15 +33,14 @@ from config import TRANSFOLLOW_WEBHOOK_USER, TRANSFOLLOW_WEBHOOK_PASSWORD
 
 
 def _save_mensaje(mid, trip_id, tipo, messagetype, originid, source, subject, body, mtime, needreply):
-    conn = _db()
-    conn.execute(
-        "INSERT INTO mensajes (id, trip_id, tipo, messagetype, originid, source, subject, body, time, needreply, creado) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT (id) DO NOTHING",
-        (mid, trip_id, tipo, messagetype, originid, source, subject, body, mtime, needreply,
-         datetime.datetime.utcnow().isoformat()),
-    )
-    conn.commit()
-    conn.close()
+    with _db() as conn:
+        conn.execute(
+            "INSERT INTO mensajes (id, trip_id, tipo, messagetype, originid, source, subject, body, time, needreply, creado) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT (id) DO NOTHING",
+            (mid, trip_id, tipo, messagetype, originid, source, subject, body, mtime, needreply,
+             datetime.datetime.utcnow().isoformat()),
+        )
+        conn.commit()
 
 
 def _store_mensaje(block, tipo, lid_map):
@@ -113,25 +112,24 @@ def _procesar_pales(trip_id, body, mtime):
     entregados, recuperados = _extraer_pales(body)
     if not (entregados or recuperados):
         return None
-    conn = _db()
-    row = conn.execute("SELECT cliente_id FROM trips WHERE id=?", (trip_id,)).fetchone()
-    if not row or not row["cliente_id"]:
-        conn.close()
-        return None
-    cliente_id = row["cliente_id"]
-    prev = conn.execute(
-        "SELECT balance FROM saldos_pales WHERE cliente_id=? ORDER BY id DESC LIMIT 1", (cliente_id,)
-    ).fetchone()
-    prev_balance = int(prev["balance"]) if prev else 0
-    balance = prev_balance + entregados - recuperados
-    conn.execute(
-        "INSERT INTO saldos_pales (cliente_id, viaje_id, entregados, recuperados, balance, fecha, creado) "
-        "VALUES (?,?,?,?,?,?,?)",
-        (cliente_id, trip_id, entregados, recuperados, balance, (mtime or "")[:10],
-         datetime.datetime.utcnow().isoformat() + "Z"),
-    )
-    conn.commit()
-    conn.close()
+    with _db() as conn:
+        row = conn.execute("SELECT cliente_id FROM trips WHERE id=?", (trip_id,)).fetchone()
+        if not row or not row["cliente_id"]:
+            conn.close()
+            return None
+        cliente_id = row["cliente_id"]
+        prev = conn.execute(
+            "SELECT balance FROM saldos_pales WHERE cliente_id=? ORDER BY id DESC LIMIT 1", (cliente_id,)
+        ).fetchone()
+        prev_balance = int(prev["balance"]) if prev else 0
+        balance = prev_balance + entregados - recuperados
+        conn.execute(
+            "INSERT INTO saldos_pales (cliente_id, viaje_id, entregados, recuperados, balance, fecha, creado) "
+            "VALUES (?,?,?,?,?,?,?)",
+            (cliente_id, trip_id, entregados, recuperados, balance, (mtime or "")[:10],
+             datetime.datetime.utcnow().isoformat() + "Z"),
+        )
+        conn.commit()
     return {"cliente_id": cliente_id, "balance": balance}
 
 

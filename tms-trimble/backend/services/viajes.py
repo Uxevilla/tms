@@ -8,6 +8,7 @@ import urllib.parse
 import urllib.request
 
 import config
+from fastapi import HTTPException
 from db import *
 from core import *
 from security import *
@@ -101,22 +102,21 @@ def _save_tramos(conn, trip_id, tramos):
 
 
 def _save_paradas(trip_id, viaje):
-    conn = _db()
-    conn.execute("DELETE FROM paradas WHERE trip_id=?", (trip_id,))
+    with _db() as conn:
+        conn.execute("DELETE FROM paradas WHERE trip_id=?", (trip_id,))
 
-    def insert(i, d, actividad):
-        conn.execute(
-            "INSERT INTO paradas (trip_id, orden, nombre, ciudad, lat, lng, actividad, comentario) "
-            "VALUES (?,?,?,?,?,?,?,?)",
-            (trip_id, i, d.nombre or "", d.ciudad or "", d.lat, d.lng, actividad, d.comentario or ""),
-        )
+        def insert(i, d, actividad):
+            conn.execute(
+                "INSERT INTO paradas (trip_id, orden, nombre, ciudad, lat, lng, actividad, comentario) "
+                "VALUES (?,?,?,?,?,?,?,?)",
+                (trip_id, i, d.nombre or "", d.ciudad or "", d.lat, d.lng, actividad, d.comentario or ""),
+            )
 
-    insert(0, viaje.origen, viaje.origen.actividad or "CARGA")
-    for i, p in enumerate(viaje.paradas, start=1):
-        insert(i, p, p.actividad or "DESCARGA")
-    insert(len(viaje.paradas) + 1, viaje.destino, viaje.destino.actividad or "DESCARGA")
-    conn.commit()
-    conn.close()
+        insert(0, viaje.origen, viaje.origen.actividad or "CARGA")
+        for i, p in enumerate(viaje.paradas, start=1):
+            insert(i, p, p.actividad or "DESCARGA")
+        insert(len(viaje.paradas) + 1, viaje.destino, viaje.destino.actividad or "DESCARGA")
+        conn.commit()
 
 
 def _upsert_direccion(conn, d):
@@ -147,9 +147,8 @@ def _upsert_direccion(conn, d):
 def _peaje_rate(categoria):
     if not categoria:
         return 0.0
-    conn = _db()
-    row = conn.execute("SELECT eur_km FROM tarifas_peaje WHERE categoria=?", (categoria,)).fetchone()
-    conn.close()
+    with _db() as conn:
+        row = conn.execute("SELECT eur_km FROM tarifas_peaje WHERE categoria=?", (categoria,)).fetchone()
     if row and row["eur_km"] is not None:
         return float(row["eur_km"])
     return float(_PEAJE_CATEGORIAS.get(categoria, {}).get("eur_km", 0.0))
@@ -158,24 +157,22 @@ def _peaje_rate(categoria):
 def _vehiculo_peaje_categoria(terminal):
     if not terminal:
         return "pesado4"
-    conn = _db()
-    row = conn.execute("SELECT peaje_categoria FROM vehiculos WHERE id=?", (terminal,)).fetchone()
-    conn.close()
+    with _db() as conn:
+        row = conn.execute("SELECT peaje_categoria FROM vehiculos WHERE id=?", (terminal,)).fetchone()
     return (row["peaje_categoria"] if row and row["peaje_categoria"] else "pesado4")
 
 
 def _vehiculos_en_curso(exclude_trip_id=None):
     """Ids de REMOLQUES (semirremolque/remolque) con un viaje activo (no finalizado).
     El terminal (tractora) NO se incluye: admite varios viajes en cola (se ejecutan uno tras otro)."""
-    conn = _db()
-    q = (f"SELECT semirremolque_id, remolque_id FROM trips "
-         f"WHERE COALESCE(estado,'') NOT IN {_ESTADOS_FINALES_SQL}")
-    params = []
-    if exclude_trip_id:
-        q += " AND id != ?"
-        params.append(exclude_trip_id)
-    rows = conn.execute(q, params).fetchall()
-    conn.close()
+    with _db() as conn:
+        q = (f"SELECT semirremolque_id, remolque_id FROM trips "
+             f"WHERE COALESCE(estado,'') NOT IN {_ESTADOS_FINALES_SQL}")
+        params = []
+        if exclude_trip_id:
+            q += " AND id != ?"
+            params.append(exclude_trip_id)
+        rows = conn.execute(q, params).fetchall()
     ids = set()
     for r in rows:
         for v in (r["semirremolque_id"], r["remolque_id"]):
@@ -379,15 +376,14 @@ def _crear_pedido(trip_id, viaje):
         subcontratado=viaje.subcontratado, proveedor_id=viaje.proveedor_id, coste=viaje.coste,
     )
     _save_paradas(trip_id, viaje)
-    conn = _db()
-    origen_id = _upsert_direccion(conn, viaje.origen)
-    destino_id = _upsert_direccion(conn, viaje.destino)
-    _guardar_documentos_pedido(conn, trip_id, viaje.documentos)
-    _save_tramos(conn, trip_id, viaje.tramos)
-    conn.execute("UPDATE trips SET payload=?, origen_id=?, destino_id=? WHERE id=?",
-                 (json.dumps(_viaje_payload(viaje), ensure_ascii=False), origen_id, destino_id, trip_id))
-    conn.commit()
-    conn.close()
+    with _db() as conn:
+        origen_id = _upsert_direccion(conn, viaje.origen)
+        destino_id = _upsert_direccion(conn, viaje.destino)
+        _guardar_documentos_pedido(conn, trip_id, viaje.documentos)
+        _save_tramos(conn, trip_id, viaje.tramos)
+        conn.execute("UPDATE trips SET payload=?, origen_id=?, destino_id=? WHERE id=?",
+                     (json.dumps(_viaje_payload(viaje), ensure_ascii=False), origen_id, destino_id, trip_id))
+        conn.commit()
     return {
         "ok": True, "trip_id": trip_id, "nombre": nombre, "estado": "sin_asignar",
         "km_total": km_total, "peaje_km": peaje_km, "peaje_estimado": peaje_estimado,
@@ -553,11 +549,10 @@ def _terminal_app(conn, vehiculo_id):
 
 def _vehiculo_ptv(terminal):
     """Atributos PTV del vehículo para el cálculo de peaje exacto."""
-    conn = _db()
-    row = conn.execute(
-        "SELECT ptv_profile, ejes, mma, clase_euro FROM vehiculos WHERE id=?", (terminal,)
-    ).fetchone()
-    conn.close()
+    with _db() as conn:
+        row = conn.execute(
+            "SELECT ptv_profile, ejes, mma, clase_euro FROM vehiculos WHERE id=?", (terminal,)
+        ).fetchone()
     return {
         "ptv_profile": (row["ptv_profile"] if row and row["ptv_profile"] else "EUR_TRAILER_TRUCK"),
         "ejes": (row["ejes"] if row else None),
@@ -568,3 +563,23 @@ def _vehiculo_ptv(terminal):
 
 from services.telemetria import _set_viaje_activo
 from services.contabilidad import _next_referencia
+
+def _vehiculo_posicion(terminal):
+    """Última posición conocida de un vehículo (lat, lng) o None."""
+    with _db() as conn:
+        row = conn.execute("SELECT last_lat, last_lng FROM vehiculos WHERE id=?", (terminal,)).fetchone()
+    if row and row["last_lat"] is not None and row["last_lng"] is not None:
+        return (float(row["last_lat"]), float(row["last_lng"]))
+    return None
+
+
+def _to_trimble_ts(iso_str: str) -> str:
+    """Convierte un timestamp ISO a formato Trimble (UTC, sin 'Z', con ms)."""
+    if not iso_str:
+        return ""
+    try:
+        dt = datetime.datetime.fromisoformat(str(iso_str).replace("Z", "+00:00"))
+    except ValueError:
+        return ""
+    dt = dt.astimezone(datetime.timezone.utc)
+    return dt.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3]

@@ -5,13 +5,17 @@ import datetime
 import io
 
 from fastapi import APIRouter, HTTPException, Depends
+from fastapi.responses import Response
 
 import config
 from db import _db, get_conn
+from security import require_role
+from services.rrhh import _sync_conductor
+from services.contabilidad import _post_asiento
 from models import Empleado, Nomina, Ausencia, AusenciaPlanificada
-import main as _m
+from services.rrhh import _calc_nomina, _generar_nomina_pdf
 
-router = APIRouter(dependencies=[Depends(_m.require_role(["admin", "superadmin"]))])
+router = APIRouter(dependencies=[Depends(require_role(["admin"]))])
 
 # ---------------------------------------------------------------------- #
 # Recursos Humanos (RRHH): empleados, nóminas, ausencias
@@ -43,7 +47,7 @@ def add_empleado(e: Empleado, conn = Depends(get_conn)):
          datetime.datetime.utcnow().isoformat() + "Z"),
     )
     if e.categoria == "Conductor":
-        _m._sync_conductor(conn, {"id": eid, "nombre": e.nombre, "apellidos": e.apellidos, "dni": e.dni,
+        _sync_conductor(conn, {"id": eid, "nombre": e.nombre, "apellidos": e.apellidos, "dni": e.dni,
                                "telefono": e.telefono, "email": e.email, "fecha_baja": e.fecha_baja})
     conn.commit()
     return {"ok": True, "id": eid}
@@ -70,7 +74,7 @@ def upd_empleado(emp_id: str, body: dict, conn = Depends(get_conn)):
             "SELECT nombre, apellidos, dni, telefono, email, categoria, fecha_baja FROM empleados WHERE id=?",
             (emp_id,)).fetchone()
         if row and (row["categoria"] or "") == "Conductor":
-            _m._sync_conductor(conn, {"id": emp_id, "nombre": row["nombre"], "apellidos": row["apellidos"],
+            _sync_conductor(conn, {"id": emp_id, "nombre": row["nombre"], "apellidos": row["apellidos"],
                                    "dni": row["dni"], "telefono": row["telefono"], "email": row["email"],
                                    "fecha_baja": row["fecha_baja"]})
     conn.commit()
@@ -86,13 +90,6 @@ def del_empleado(emp_id: str, conn = Depends(get_conn)):
 
 
 
-def _calc_nomina(bruto, irpf_pct, ss_t_pct, ss_e_pct):
-    ss_trabajador = round(bruto * ss_t_pct / 100.0, 2)
-    ss_empresa = round(bruto * ss_e_pct / 100.0, 2)
-    irpf = round(bruto * irpf_pct / 100.0, 2)
-    neto = round(bruto - ss_trabajador - irpf, 2)
-    coste = round(bruto + ss_empresa, 2)
-    return ss_trabajador, ss_empresa, irpf, neto, coste
 
 
 @router.get("/api/nominas")
@@ -108,115 +105,6 @@ def list_nominas(periodo: str = "", empleado_id: str = "", conn = Depends(get_co
     return {"nominas": [dict(r) for r in rows]}
 
 
-def _generar_nomina_pdf(nomina_id, conn = Depends(get_conn)):
-    import io
-    from reportlab.lib.pagesizes import A4
-    from reportlab.lib.units import mm
-    from reportlab.lib import colors
-    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
-    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-
-    n = conn.execute(
-        "SELECT n.*, e.nombre, e.apellidos, e.dni, e.nss, e.categoria, e.puesto, e.iban "
-        "FROM nominas n JOIN empleados e ON e.id=n.empleado_id WHERE n.id=?",
-        (nomina_id,),
-    ).fetchone()
-    if not n:
-        raise HTTPException(status_code=404, detail={"error": "Nómina no encontrada."})
-    emp = _m._empresa()
-    # Líneas de devengo extra (dietas/pernocta) desde lineas_nomina.
-    dietas = conn.execute(
-        "SELECT concepto, importe FROM lineas_nomina WHERE nomina_id=? AND tipo='devengo' ORDER BY id",
-        (nomina_id,),
-    ).fetchall()
-
-    def eur(v):
-        n = f"{float(v or 0):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-        return f"{n} €"
-
-    buf = io.BytesIO()
-    doc = SimpleDocTemplate(buf, pagesize=A4, rightMargin=18*mm, leftMargin=18*mm, topMargin=18*mm, bottomMargin=18*mm)
-    styles = getSampleStyleSheet()
-    normal = ParagraphStyle("normal", parent=styles["Normal"], fontSize=10, leading=14)
-    title = ParagraphStyle("title", parent=styles["Title"], fontSize=22, spaceAfter=0)
-
-    story = []
-    emp_nombre = emp.get("nombre") or "Mi empresa"
-    emp_txt = [emp_nombre]
-    if emp.get("cif"): emp_txt.append(f"CIF: {emp['cif']}")
-    if emp.get("direccion"): emp_txt.append(emp["direccion"])
-    if emp.get("cp") or emp.get("poblacion"): emp_txt.append(f"{emp.get('cp','')} {emp.get('poblacion','')}".strip())
-    if emp.get("telefono"): emp_txt.append(f"Tel: {emp['telefono']}")
-    emp_block = [Paragraph(x, normal) for x in emp_txt]
-    nom_block = [Paragraph("NÓMINA", title), Paragraph(f"Periodo: {n['periodo']}", normal)]
-    header = Table([[emp_block, nom_block]], colWidths=[doc.width*0.55, doc.width*0.45])
-    header.setStyle(TableStyle([("VALIGN", (0,0), (-1,-1), "TOP"),
-                                ("LEFTPADDING", (0,0), (-1,-1), 0), ("RIGHTPADDING", (0,0), (-1,-1), 0)]))
-    story.append(header)
-    story.append(Spacer(1, 10*mm))
-
-    nombre_completo = f"{n['nombre']} {n['apellidos'] or ''}".strip()
-    story.append(Paragraph(f"<b>Empleado:</b> {nombre_completo}", normal))
-    if n.get("dni"): story.append(Paragraph(f"DNI: {n['dni']}", normal))
-    if n.get("nss"): story.append(Paragraph(f"Afiliación SS: {n['nss']}", normal))
-    if n.get("categoria") or n.get("puesto"): story.append(Paragraph(f"Categoría: {n['categoria']} — {n.get('puesto') or ''}", normal))
-    story.append(Spacer(1, 8*mm))
-
-    bruto = float(n["salario_bruto"] or 0)
-    irpf_imp = float(n["irpf_importe"] or 0)
-    ss_t = float(n["ss_trabajador"] or 0)
-    ss_e = float(n["ss_empresa"] or 0)
-    neto = float(n["neto"] or 0)
-    coste = float(n["coste_empresa"] or 0)
-
-    dietas_total = sum(float(d["importe"] or 0) for d in dietas)
-    base = max(0.0, bruto - dietas_total)
-
-    data = [["Concepto", "Devengos", "Deducciones"]]
-    if dietas:
-        data.append(["Salario base", eur(base), ""])
-        for d in dietas:
-            data.append([d["concepto"], eur(float(d["importe"] or 0)), ""])
-    data.append(["Salario bruto", eur(bruto), ""])
-    data.append([f"IRPF ({float(n['irpf_pct'] or 0):.1f}%)", "", eur(irpf_imp)])
-    data.append([f"Seg. Social trabajador ({float(n['ss_trabajador_pct'] or 0):.2f}%)", "", eur(ss_t)])
-    data.append(["LÍQUIDO A PERCIBIR", "", eur(neto)])
-    t = Table(data, colWidths=[doc.width*0.46, doc.width*0.27, doc.width*0.27])
-    t.setStyle(TableStyle([
-        ("FONTNAME", (0,0), (-1,0), "Helvetica-Bold"),
-        ("BACKGROUND", (0,0), (-1,0), colors.HexColor("#1e293b")),
-        ("TEXTCOLOR", (0,0), (-1,0), colors.white),
-        ("GRID", (0,0), (-1,-1), 0.5, colors.grey),
-        ("ALIGN", (1,1), (-1,-1), "RIGHT"),
-        ("FONTNAME", (0,-1), (-1,-1), "Helvetica-Bold"),
-        ("BACKGROUND", (0,-1), (-1,-1), colors.HexColor("#f1f5f9")),
-        ("LINEABOVE", (0,-1), (-1,-1), 1, colors.black),
-    ]))
-    story.append(t)
-    story.append(Spacer(1, 8*mm))
-
-    coste_data = [
-        ["Coste para la empresa", ""],
-        ["Seguridad Social a cargo de la empresa", eur(ss_e)],
-        ["COSTE TOTAL EMPRESA", eur(coste)],
-    ]
-    ct = Table(coste_data, colWidths=[doc.width*0.6, doc.width*0.4])
-    ct.setStyle(TableStyle([
-        ("GRID", (0,0), (-1,-1), 0.5, colors.grey),
-        ("ALIGN", (1,0), (-1,-1), "RIGHT"),
-        ("FONTNAME", (0,-1), (-1,-1), "Helvetica-Bold"),
-        ("LINEABOVE", (0,-1), (-1,-1), 1, colors.black),
-    ]))
-    story.append(ct)
-    story.append(Spacer(1, 12*mm))
-
-    if n.get("iban"):
-        story.append(Paragraph(f"<b>IBAN:</b> {n['iban']}", normal))
-    estado = f"{n.get('estado') or 'borrador'}" + (" · PAGADA" if n.get("pagado") else "")
-    story.append(Paragraph(f"Estado: {estado}", normal))
-
-    doc.build(story)
-    return buf.getvalue()
 
 
 @router.get("/api/nominas/{nomina_id}/pdf")
@@ -315,7 +203,7 @@ def contabilizar_nomina(nomina_id: int, conn = Depends(get_conn)):
     irpf = float(n["irpf_importe"] or 0)
     neto = float(n["neto"] or 0)
     fecha = ((n["periodo"] or "") + "-28")[:10] if n["periodo"] else datetime.date.today().isoformat()
-    aid = _m._post_asiento(
+    aid = _post_asiento(
         fecha, f"Nómina {n['periodo']}",
         [("640", bruto, 0, "Sueldos y salarios"),
          ("642", ss_e, 0, "Seguridad Social empresa"),
@@ -341,7 +229,7 @@ def pagar_nomina(nomina_id: int, conn = Depends(get_conn)):
     irpf = float(n["irpf_importe"] or 0)
     total = round(neto + ss + irpf, 2)
     fecha = datetime.date.today().isoformat()
-    aid = _m._post_asiento(
+    aid = _post_asiento(
         fecha, f"Pago nómina {n['periodo']}",
         [("465", neto, 0, "Pago remuneraciones"),
          ("476", ss, 0, "Pago Seguridad Social"),
@@ -459,7 +347,7 @@ def _seed_demo(conn):
              "Conductor", "Conductor", "Indefinido", "Completa", "Santander", f"ES00 0049 0000 00{i:02d} 0000000000", f"{nombre} {apellidos}",
              carnet, cap, medica, bruto, irpf, "Transporte de mercancías", creado),
         )
-        _m._sync_conductor(conn, {"id": eid, "nombre": nombre, "apellidos": apellidos, "dni": dni,
+        _sync_conductor(conn, {"id": eid, "nombre": nombre, "apellidos": apellidos, "dni": dni,
                                "telefono": f"600{i}0000{i}", "email": f"{nombre.lower()}@transportes.es", "fecha_baja": ""})
         n_emp += 1
     administrativos = [

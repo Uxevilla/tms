@@ -64,7 +64,7 @@ from clients.trimble import get_client, _client_cache
 from clients.transfollow import get_transfollow_client, _tf_cache
 from clients.geocoding import _buscar_photon, reverse_geocode
 from clients.ptv import _ptv_route, _calc_ruta, _haversine_km
-from services.viajes import _save_trip, _save_tramos, _save_paradas, _upsert_direccion, _peaje_rate, _vehiculo_peaje_categoria, _vehiculos_en_curso, _puntos_del_viaje, _build_trip, _calcular_ruta, _viaje_payload, _guardar_documentos_pedido, _valorar_viaje, _crear_pedido, _enviar_viaje, _terminal_app, _vehiculo_ptv
+from services.viajes import _save_trip, _save_tramos, _save_paradas, _upsert_direccion, _peaje_rate, _vehiculo_peaje_categoria, _vehiculos_en_curso, _puntos_del_viaje, _build_trip, _calcular_ruta, _viaje_payload, _guardar_documentos_pedido, _valorar_viaje, _crear_pedido, _enviar_viaje, _terminal_app, _vehiculo_ptv, _vehiculo_posicion, _to_trimble_ts
 from services.telemetria import _get_redis, _set_viaje_activo, _del_viaje_activo, _json_safe, _viajes_snapshot, _extraer_posicion, _parse_trimble_ts, _guardar_telemetria, _source_a_vehiculo
 from services.tacografo import _decode_dstat, _ingestar_dstat, _dstat_terminal, _chequear_conduccion_legal
 from services.sync import _query_terminal_states, _sync_status, _get_sync_state, _set_sync_state, _parse_props, _save_file, _extraer_reporte_xml, _extraer_documento_ecmr, _guardar_documento_entrega, _publicar_estado, _odometro_vehiculo, _aplicar_estado_viaje, _cerrar_viaje, _cerrar_viaje_por_ecmr, _entrega_confirmada, _sync_files, _sync_mensajes
@@ -91,31 +91,9 @@ _redis_sync = None  # cliente síncrono compartido (pool thread-safe)
 PUBLIC_PATHS = {"/manifest.webmanifest", "/sw.js", "/apple-touch-icon.png",
                 "/favicon.ico", "/api/health",
                 "/api/auth/login", "/api/auth/superadmin",
-                # Endpoints del frontend React: protegidos por JWT dentro del endpoint
-                # (require_jwt / require_role), no por el token HMAC del frontend antiguo.
-                "/api/viajes", "/api/telemetria/activa", "/api/telemetria/trayectoria",
-                # Webhook externo de TransFollow (sin token TMS): validar firma antes de producción.
+                # Webhook externo de TransFollow (sin token TMS, usa Basic auth propia).
                 "/api/webhooks/transfollow"}
 
-_SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{1,31}$")
-
-# Límite de tamaño para documentos DMS (Trimble: ~3000 KB en base64 ≈ 2 MB reales)
-MAX_DOC_MB = 2
-MAX_DOC_B64 = MAX_DOC_MB * 1024 * 1024 * 4 // 3
-
-# --- Safe-Dispatching (tacógrafo predictivo) -------------------------------
-# Límites legales de conducción (Reglamento UE 561/2006).
-_MAX_CONDUCCION_CONTINUA_MIN = 270.0   # 4,5 h de conducción continua
-_MAX_DIA_CONDUCCION_MIN = 540.0        # 9 h diarias
-_EXT_DIA_CONDUCCION_MIN = 600.0        # 10 h diarias (máx 2 días/semana)
-
-# --- Automatización de dietas (RRHH) ---------------------------------------
-_DIETA_IMPORTE = {
-    "dieta": 26.67,           # dieta completa (manutención)
-    "dieta_comida": 12.00,
-    "dieta_cena": 14.67,
-    "pernocta": 30.00,        # pernocta fuera de residencia
-}
 
 
 # ----------------------------------------------------------------------
@@ -173,6 +151,14 @@ async def ws_operaciones(websocket: WebSocket):
     if not payload or payload.get("rol") not in ("admin", "dispatcher"):
         await websocket.close(code=1008)
         return
+    # Resolver el tenant igual que el middleware (si no, el WS leería siempre la BD por defecto).
+    if payload.get("empresa"):
+        emp = _empresa_por_slug(payload.get("empresa", ""))
+        if not emp:
+            await websocket.close(code=1008)
+            return
+        _tenant_ctx.set({"db_name": emp["db_name"], "empresa": emp["slug"],
+                         "nombre": emp["nombre"], "superadmin": False})
     await websocket.accept()
 
     # Suscripción Redis Pub/Sub (best-effort: sin Redis seguimos solo con polling).
@@ -243,9 +229,7 @@ async def require_auth(request, call_next):
     """Autenticación por token de sesión (Bearer). Resuelve el tenant del request."""
     path = request.url.path
     # Público: frontend estático, recursos PWA y endpoints de login/health.
-    if not path.startswith("/api/") or path in PUBLIC_PATHS or path.startswith("/icon-") \
-            or path.startswith("/api/mantenimiento/") or path.startswith("/api/contabilidad/borradores") \
-            or path.startswith("/api/contabilidad/liquidaciones"):
+    if not path.startswith("/api/") or path in PUBLIC_PATHS or path.startswith("/icon-"):
         return await call_next(request)
     auth = request.headers.get("Authorization", "")
     payload = None
