@@ -31,7 +31,7 @@ from services.mensajeria import _save_mensaje, _store_mensaje, _extraer_pales, _
 from services.ocr import _parse_ticket, _parse_documento, _pdf_a_texto, _regex_matricula, _regex_litros, _regex_importe, _regex_fecha
 from services.empresa import _empresa
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(require_role(["admin", "dispatcher", "superadmin"]))])
 
 
 @router.post("/api/mantenimientos")

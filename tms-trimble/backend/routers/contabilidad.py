@@ -11,7 +11,7 @@ from core import *
 from models import *
 import main as _m
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(_m.require_role(["admin", "superadmin"]))])
 
 # ---------------------------------------------------------------------- #
 # Contabilidad: doble partida (plan contable, asientos, informes, facturas)

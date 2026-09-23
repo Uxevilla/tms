@@ -11,7 +11,7 @@ from db import _db, get_conn
 from models import Empleado, Nomina, Ausencia, AusenciaPlanificada
 import main as _m
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(_m.require_role(["admin", "superadmin"]))])
 
 # ---------------------------------------------------------------------- #
 # Recursos Humanos (RRHH): empleados, nóminas, ausencias
