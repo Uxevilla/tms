@@ -1,8 +1,10 @@
 """Capa de datos: conexión PostgreSQL (wrapper ? -> %s), esquema y contexto multi-tenant."""
 import contextvars
 import re
+import threading
 import psycopg2
 import psycopg2.extras
+import psycopg2.pool
 
 import config
 from core import *
@@ -15,8 +17,9 @@ _schema_done = set()
 class _Conn:
     """Envuelve psycopg2 con interfaz tipo sqlite3; execute() traduce ? -> %s."""
 
-    def __init__(self, conn):
+    def __init__(self, conn, pool=None):
         self._conn = conn
+        self._pool = pool
 
     def execute(self, sql, params=()):
         cur = self._conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
@@ -30,7 +33,14 @@ class _Conn:
         self._conn.rollback()
 
     def close(self):
-        self._conn.close()
+        if self._pool is not None:
+            try:
+                self._conn.rollback()  # descartar transacción abierta antes de devolverla al pool
+            except Exception:
+                pass
+            self._pool.putconn(self._conn)
+        else:
+            self._conn.close()
 
     def set_autocommit(self, enabled):
         self._conn.autocommit = enabled
@@ -359,16 +369,31 @@ ALTER TABLE facturas ADD COLUMN IF NOT EXISTS borrado_en TEXT;
 """
 
 
+_pools = {}
+_pools_lock = threading.Lock()
+
+
+def _pool_for(dbname):
+    with _pools_lock:
+        p = _pools.get(dbname)
+        if p is None:
+            p = psycopg2.pool.ThreadedConnectionPool(
+                2, 20,
+                host=config.DB_HOST, port=config.DB_PORT, dbname=dbname,
+                user=config.DB_USER, password=config.DB_PASSWORD,
+            )
+            _pools[dbname] = p
+        return p
+
+
 def _db():
     t = _tenant_ctx.get()
     dbname = t["db_name"] if t else config.DB_NAME
-    conn = psycopg2.connect(
-        host=config.DB_HOST, port=config.DB_PORT, dbname=dbname,
-        user=config.DB_USER, password=config.DB_PASSWORD,
-    )
+    pool = _pool_for(dbname)
+    conn = pool.getconn()
     if t and t.get("superadmin"):
         # El superadmin no inicializa el esquema de tenant (la BD maestra solo tiene 'empresas')
-        return _Conn(conn)
+        return _Conn(conn, pool)
     if dbname not in _schema_done:
         try:
             cur = conn.cursor()
@@ -534,6 +559,6 @@ def _db():
             _schema_done.add(dbname)
         except Exception:
             conn.rollback()
-    return _Conn(conn)
+    return _Conn(conn, pool)
 
 __all__ = ["_tenant_ctx", "_usuario_ctx", "_schema_done", "_Conn", "_SCHEMA", "_db"]

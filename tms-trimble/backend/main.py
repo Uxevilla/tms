@@ -180,8 +180,10 @@ def _verify_password(password: str, password_hash: str) -> bool:
         return False
 
 
-def _make_jwt(user_id, usuario: str, rol: str, ttl: int = 7 * 86400) -> str:
+def _make_jwt(user_id, usuario: str, rol: str, empresa: str = "", ttl: int = 7 * 86400) -> str:
     payload = {"sub": str(user_id), "rol": rol, "usuario": usuario, "exp": int(time.time()) + ttl}
+    if empresa:
+        payload["empresa"] = empresa
     return jwt.encode(payload, _JWT_KEY, algorithm="HS256")
 
 
@@ -533,22 +535,38 @@ def _viajes_snapshot() -> dict:
 
 @app.post("/api/auth/login")
 def auth_login(req: dict):
-    """Login del frontend React: valida contra config.usuarios (bcrypt) y devuelve JWT."""
+    """Login del frontend React: valida contra config.usuarios (bcrypt) y devuelve JWT.
+
+    Acepta `empresa` (slug) opcional para resolver el tenant; sin slug usa el tenant por defecto.
+    """
     usuario = (req.get("usuario") or "").strip()
     contrasena = req.get("contrasena") or req.get("password") or ""
-    conn = _db()
+    empresa = (req.get("empresa") or "").strip().lower()
+    token_ctx = None
+    if empresa:
+        emp = _empresa_por_slug(empresa)
+        if not emp:
+            raise HTTPException(status_code=401, detail={"error": "Empresa no encontrada"})
+        token_ctx = _tenant_ctx.set({"db_name": emp["db_name"], "empresa": emp["slug"],
+                                     "nombre": emp["nombre"], "superadmin": False})
     try:
-        row = conn.execute(
-            "SELECT id, usuario, password_hash, rol, activo, COALESCE(debe_cambiar_clave, false) AS debe_cambiar_clave "
-            "FROM config.usuarios WHERE usuario=?",
-            (usuario,),
-        ).fetchone()
+        conn = _db()
+        try:
+            row = conn.execute(
+                "SELECT id, usuario, password_hash, rol, activo, COALESCE(debe_cambiar_clave, false) AS debe_cambiar_clave "
+                "FROM config.usuarios WHERE usuario=?",
+                (usuario,),
+            ).fetchone()
+        finally:
+            conn.close()
     finally:
-        conn.close()
+        if token_ctx is not None:
+            _tenant_ctx.reset(token_ctx)
     if not row or not row["activo"] or not _verify_password(contrasena, row["password_hash"]):
         raise HTTPException(status_code=401, detail={"error": "Usuario o contraseña incorrectos"})
-    return {"token": _make_jwt(row["id"], row["usuario"], row["rol"]),
+    return {"token": _make_jwt(row["id"], row["usuario"], row["rol"], empresa),
             "usuario": row["usuario"], "rol": row["rol"], "id": row["id"],
+            "empresa": empresa,
             "debe_cambiar_clave": bool(row["debe_cambiar_clave"])}
 
 

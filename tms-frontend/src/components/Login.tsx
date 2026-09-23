@@ -8,6 +8,7 @@ interface LoginProps {
 
 export function Login({ onLogin }: LoginProps) {
   const [usuario, setUsuario] = useState("");
+  const [empresa, setEmpresa] = useState("");
   const [contrasena, setContrasena] = useState("");
   const [error, setError] = useState("");
   const [cargando, setCargando] = useState(false);
@@ -24,7 +25,7 @@ export function Login({ onLogin }: LoginProps) {
       const res = await fetch(AUTH_LOGIN, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ usuario, contrasena }),
+        body: JSON.stringify({ usuario, contrasena, empresa }),
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok && data.token) {
@@ -151,6 +152,16 @@ export function Login({ onLogin }: LoginProps) {
             value={usuario}
             onChange={(e) => setUsuario(e.target.value)}
             autoFocus
+          />
+        </label>
+
+        <label className="mb-3 block text-sm font-medium text-slate-700">
+          Empresa <span className="text-xs font-normal text-slate-400">(opcional — vacío = empresa por defecto)</span>
+          <input
+            className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+            value={empresa}
+            onChange={(e) => setEmpresa(e.target.value)}
+            placeholder="slug de la empresa"
           />
         </label>
 
