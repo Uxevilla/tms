@@ -23,3 +23,10 @@
 **/.pytest_cache/
 **/.mypy_cache/
 **/.DS_Store
+
+# Bases de datos, tokens y datos locales (nunca al repo)
+**/*.db
+**/*.sqlite
+**/*.token
+**/data/
+**/history.db

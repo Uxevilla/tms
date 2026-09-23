@@ -164,7 +164,9 @@ _pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 DEFAULT_ADMIN_USER = os.environ.get("DEFAULT_ADMIN_USER", "admin")
 DEFAULT_ADMIN_PASSWORD = os.environ.get("DEFAULT_ADMIN_PASSWORD", "").strip()
 
-_JWT_KEY = config.SECRET_KEY or "insecure-dev-secret"
+if not config.SECRET_KEY or len(config.SECRET_KEY) < 32:
+    raise RuntimeError("TMS_SECRET_KEY no definido o < 32 caracteres; rechazo el arranque para no emitir JWT falsificables.")
+_JWT_KEY = config.SECRET_KEY
 
 
 def _hash_password(password: str) -> str:
@@ -800,6 +802,14 @@ async def require_auth(request, call_next):
         payload = _verify_token(token) or _verify_jwt(token)
     if not payload:
         return JSONResponse(status_code=401, content={"detail": "Acceso no autorizado"})
+    # Control de rol: los JWT con rol fuera de admin/dispatcher no operan.
+    rol = payload.get("rol")
+    if rol is not None:
+        if rol not in ("admin", "dispatcher"):
+            return JSONResponse(status_code=403, content={"detail": "Permisos insuficientes"})
+        if rol != "admin" and path.startswith(("/api/config", "/api/contabilidad", "/api/empleados",
+                                               "/api/nominas", "/api/ausencias", "/api/empresas")):
+            return JSONResponse(status_code=403, content={"detail": "Solo administrador"})
     if payload.get("sa"):
         _tenant_ctx.set({"db_name": config.MASTER_DB_NAME, "empresa": "", "superadmin": True})
     elif payload.get("empresa"):
@@ -1803,45 +1813,6 @@ def list_trips():
     return {"viajes": [dict(r) for r in rows]}
 
 
-@app.delete("/api/trips/{trip_id}")
-def delete_trip(trip_id: str):
-    """Elimina un viaje del terminal Trimble y del historial local."""
-    conn = _db()
-    row = conn.execute("SELECT terminal FROM trips WHERE id=?", (trip_id,)).fetchone()
-    if not row:
-        conn.close()
-        raise HTTPException(status_code=404, detail={"error": f"Viaje {trip_id} no encontrado"})
-    conn.close()
-
-    # 1) eliminar del terminal (best-effort; solo si fue enviado, i.e. tiene terminal)
-    terminal_ok, terminal_error = True, None
-    if row["terminal"]:
-        try:
-            resp = get_client().remove_trips([trip_id])
-            if not resp["ok"]:
-                terminal_ok = False
-                terminal_error = resp["fault"] or f"HTTP {resp['status']}"
-        except Exception as e:  # noqa: BLE001
-            terminal_ok = False
-            terminal_error = str(e)
-
-    # 2) borrar del historial local (viaje y sus archivos)
-    conn = _db()
-    conn.execute("DELETE FROM trips WHERE id=?", (trip_id,))
-    conn.execute("DELETE FROM files WHERE trip_id=?", (trip_id,))
-    conn.commit()
-    conn.close()
-
-    return {
-        "ok": True,
-        "trip_id": trip_id,
-        "terminal_eliminado": terminal_ok,
-        "error_terminal": terminal_error,
-    }
-
-
-
-
 @app.patch("/api/trips/{trip_id}")
 def update_trip(trip_id: str, upd: TripUpdate):
     """Actualiza campos de un viaje (contables + planificación)."""
@@ -1973,69 +1944,6 @@ def delete_tarifa(tarifa_id: int):
     conn.commit()
     conn.close()
     return {"ok": True}
-
-
-@app.post("/api/trips/{trip_id}/duplicar")
-def duplicate_trip(trip_id: str):
-    """Duplica un viaje existente SIN asignación (terminal/semirremolque/conductor vacíos)."""
-    conn = _db()
-    src = conn.execute("SELECT * FROM trips WHERE id=?", (trip_id,)).fetchone()
-    if not src:
-        conn.close()
-        raise HTTPException(status_code=404, detail={"error": f"Viaje {trip_id} no encontrado"})
-    paradas = conn.execute(
-        "SELECT orden, nombre, ciudad, lat, lng, actividad, comentario FROM paradas WHERE trip_id=? ORDER BY orden", (trip_id,)
-    ).fetchall()
-    tramos = conn.execute(
-        "SELECT orden, origen_nombre, origen_ciudad, origen_lat, origen_lng, "
-        "destino_nombre, destino_ciudad, destino_lat, destino_lng "
-        "FROM tramos WHERE trip_id=? ORDER BY orden", (trip_id,)
-    ).fetchall()
-    conn.close()
-
-    if len(paradas) < 2:
-        raise HTTPException(status_code=404, detail={"error": f"Viaje {trip_id} sin ruta (no duplicable)"})
-
-    def _dir(p):
-        return {"nombre": p["nombre"] or "", "ciudad": p["ciudad"] or "", "lat": p["lat"], "lng": p["lng"], "actividad": p["actividad"] or ""}
-
-    origen = _dir(paradas[0]); origen["actividad"] = origen["actividad"] or "CARGA"
-    destino = _dir(paradas[-1]); destino["actividad"] = destino["actividad"] or "DESCARGA"
-    inter = []
-    for p in paradas[1:-1]:
-        d = _dir(p); d["actividad"] = d["actividad"] or "DESCARGA"; d["comentario"] = p["comentario"] or ""
-        inter.append(d)
-
-    data = {
-        "origen": origen,
-        "destino": destino,
-        "paradas": inter,
-        "cliente": src["cliente"] or "",
-        "cliente_id": src["cliente_id"],
-        "precio": float(src["precio"] or 0),
-        "iva": float(src["iva"] or 21),
-        "estado_pago": src["estado_pago"] or "pendiente",
-        "tipo_carga": src["tipo_carga"] or "",
-        "fecha_esperada_carga": src["fecha_esperada_carga"] or "",
-        "fecha_esperada_descarga": src["fecha_esperada_descarga"] or "",
-        "terminal": "",
-        "semirremolque_id": "",
-        "remolque_id": "",
-        "conductor": "",
-        "tramos": [
-            {"orden": t["orden"], "origen_nombre": t["origen_nombre"] or "", "origen_ciudad": t["origen_ciudad"] or "",
-             "origen_lat": t["origen_lat"], "origen_lng": t["origen_lng"],
-             "destino_nombre": t["destino_nombre"] or "", "destino_ciudad": t["destino_ciudad"] or "",
-             "destino_lat": t["destino_lat"], "destino_lng": t["destino_lng"], "terminal": "", "conductor": ""}
-            for t in tramos
-        ],
-    }
-    new_id = "VIAJE-" + uuid.uuid4().hex[:10].upper()
-    try:
-        viaje = ViajeRequest(**data)
-    except Exception as e:
-        raise HTTPException(status_code=400, detail={"error": f"No se pudo reconstruir el viaje: {e}"})
-    return _crear_pedido(new_id, viaje)
 
 
 @app.delete("/api/trips/{trip_id}")
@@ -3535,7 +3443,14 @@ def get_config():
     conn = _db()
     rows = conn.execute("SELECT key, value FROM config").fetchall()
     conn.close()
-    return {"config": {r["key"]: r["value"] for r in rows}}
+    out = {}
+    for r in rows:
+        k, v = r["key"], r["value"]
+        kl = k.lower()
+        if any(s in kl for s in ("password", "api_key", "token", "secret", "clave", "contraseña")):
+            v = "••••••••" if v else ""
+        out[k] = v
+    return {"config": out}
 
 
 @app.post("/api/config")
@@ -4600,7 +4515,7 @@ def _gasto_subcontrata(conn, trip, fecha):
         return None
     # Evitar duplicados si ya se generó la subcontrata de este viaje.
     if conn.execute(
-        "SELECT 1 FROM gastos WHERE trip_id=? AND categoria='Transportes' AND concepto LIKE 'Subcontrata%'",
+        "SELECT 1 FROM gastos WHERE trip_id=? AND categoria='Transportes' AND concepto LIKE 'Subcontrata%%'",
         (trip["id"],),
     ).fetchone():
         return None
