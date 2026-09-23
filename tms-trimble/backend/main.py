@@ -20,6 +20,7 @@ import redis
 import redis.asyncio as redis_asyncio
 import tempfile
 import time
+import threading
 import urllib.parse
 import urllib.request
 import uuid
@@ -49,7 +50,7 @@ ACTIVITY_TYPES = json.load(open(BASE_DIR / "activity_types.json"))
 app = FastAPI(title="TMS Trimble", version="0.1.0")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],  # auth por Bearer token (sin cookies) + WS necesita el Origin; bajo riesgo
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -127,7 +128,7 @@ PUBLIC_PATHS = {"/manifest.webmanifest", "/sw.js", "/apple-touch-icon.png",
                 "/api/webhooks/transfollow"}
 
 
-def _make_token(empresa, usuario, superadmin=False, ttl=7 * 86400):
+def _make_token(empresa, usuario, superadmin=False, ttl=12 * 3600):
     payload = {"empresa": empresa, "usuario": usuario, "sa": bool(superadmin),
                "exp": int(time.time()) + ttl}
     data = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode().rstrip("=")
@@ -180,11 +181,29 @@ def _verify_password(password: str, password_hash: str) -> bool:
         return False
 
 
-def _make_jwt(user_id, usuario: str, rol: str, empresa: str = "", ttl: int = 7 * 86400) -> str:
+def _make_jwt(user_id, usuario: str, rol: str, empresa: str = "", ttl: int = 12 * 3600) -> str:
     payload = {"sub": str(user_id), "rol": rol, "usuario": usuario, "exp": int(time.time()) + ttl}
     if empresa:
         payload["empresa"] = empresa
     return jwt.encode(payload, _JWT_KEY, algorithm="HS256")
+
+
+# Rate limiting de login (anti fuerza bruta, en memoria por proceso).
+_login_attempts = {}
+_login_lock = threading.Lock()
+_LOGIN_MAX_INTENTOS = 8
+_LOGIN_VENTANA_S = 300
+
+
+def _login_rate_ok(key: str) -> bool:
+    now = time.time()
+    with _login_lock:
+        times = [t for t in _login_attempts.get(key, []) if now - t < _LOGIN_VENTANA_S]
+        if len(times) >= _LOGIN_MAX_INTENTOS:
+            return False
+        times.append(now)
+        _login_attempts[key] = times
+        return True
 
 
 def _verify_jwt(token: str):
@@ -534,7 +553,7 @@ def _viajes_snapshot() -> dict:
 
 
 @app.post("/api/auth/login")
-def auth_login(req: dict):
+def auth_login(req: dict, request: Request):
     """Login del frontend React: valida contra config.usuarios (bcrypt) y devuelve JWT.
 
     Acepta `empresa` (slug) opcional para resolver el tenant; sin slug usa el tenant por defecto.
@@ -542,6 +561,9 @@ def auth_login(req: dict):
     usuario = (req.get("usuario") or "").strip()
     contrasena = req.get("contrasena") or req.get("password") or ""
     empresa = (req.get("empresa") or "").strip().lower()
+    ip = request.client.host if request.client else "?"
+    if not _login_rate_ok(f"{ip}:{usuario}"):
+        raise HTTPException(status_code=429, detail={"error": "Demasiados intentos de login. Espera unos minutos."})
     token_ctx = None
     if empresa:
         emp = _empresa_por_slug(empresa)
@@ -1611,6 +1633,8 @@ def login(req: dict, request: Request):
     ua = (request.headers.get("user-agent") or "?")[:120]
     ip = request.client.host if request.client else "?"
     print(f"[LOGIN] ip={ip} empresa={empresa!r} usuario={usuario!r} UA={ua!r}", flush=True)
+    if not _login_rate_ok(f"{ip}:{usuario}"):
+        raise HTTPException(status_code=429, detail={"error": "Demasiados intentos de login. Espera unos minutos."})
 
     # Super-admin (gestión de empresas): identificador de empresa vacío o "_admin"
     if empresa in ("", "admin", "_admin"):
