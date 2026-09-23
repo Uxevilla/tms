@@ -1,4 +1,10 @@
-"""TMS Trimble - API FastAPI que convierte formularios de viaje en envíos SOAP."""
+"""TMS Trimble - API FastAPI que convierte formularios de viaje en envíos SOAP.
+
+Punto de entrada delgado: crea la app, monta middleware, registra routers y
+arranca los workers vía lifespan. La lógica de negocio vive en services/, los
+clientes externos en clients/, la autenticación en security.py y la tenancy en
+tenancy.py. Los workers corren en workers/ sin tocar FastAPI.
+"""
 import asyncio
 import base64
 import contextvars
@@ -8,7 +14,6 @@ import hashlib
 import hmac
 import io
 import json
-import jwt
 import math
 import os
 import re
@@ -24,87 +29,30 @@ import threading
 import urllib.parse
 import urllib.request
 import uuid
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
-from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
-from passlib.context import CryptContext
 
 import config
 from config import TRANSFOLLOW_WEBHOOK_USER, TRANSFOLLOW_WEBHOOK_PASSWORD
-from soap_client import TrimbleClient
-from transfollow_client import TransFollowClient, PROD_BASE_URL, build_waybill
 
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 DATA_DIR.mkdir(exist_ok=True)
 DB_PATH = DATA_DIR / "history.db"
 
-# Tipos de actividad: nombre -> referencia (la REFERENCIA va en activity.type)
-ACTIVITY_TYPES = json.load(open(BASE_DIR / "activity_types.json"))
-
-app = FastAPI(title="TMS Trimble", version="0.1.0")
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # auth por Bearer token (sin cookies) + WS necesita el Origin; bajo riesgo
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-
-@app.exception_handler(ValueError)
-async def value_error_handler(request: Request, exc: ValueError):
-    return JSONResponse(status_code=400, content={"error": str(exc)})
-
-
-@app.middleware("http")
-async def no_cache_static(request, call_next):
-    """Evita que el navegador cachee el frontend (app.js/css/html)."""
-    response = await call_next(request)
-    path = request.url.path
-    if path == "/" or path.endswith((".js", ".css", ".html")):
-        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
-    return response
-
-
-# ---------------------------------------------------------------------- #
-from core import *  # constantes y funciones puras (estados, plan contable, peajes, importes)
-from models import *  # modelos Pydantic de la API
-from db import *  # conexión, esquema y contexto multi-tenant
-
-# Multi-tenant: contexto de cliente (empresa) + autenticación por token
-# ---------------------------------------------------------------------- #
-
-# ---------------------------------------------------------------------- #
-# Redis: productor (Stream telemetria:ingesta) + Pub/Sub de operaciones
-# ---------------------------------------------------------------------- #
-REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
-REDIS_STREAM = os.environ.get("REDIS_STREAM", "telemetria:ingesta")
-REDIS_CHANNEL = os.environ.get("REDIS_CHANNEL", "canal_operaciones")
-
-_redis_sync = None  # cliente síncrono compartido (pool thread-safe)
-
-
-PUBLIC_PATHS = {"/manifest.webmanifest", "/sw.js", "/apple-touch-icon.png",
-                "/favicon.ico", "/api/health",
-                "/api/auth/login", "/api/auth/superadmin",
-                # Endpoints del frontend React: protegidos por JWT dentro del endpoint
-                # (require_jwt / require_role), no por el token HMAC del frontend antiguo.
-                "/api/viajes", "/api/telemetria/activa", "/api/telemetria/trayectoria",
-                # Webhook externo de TransFollow (sin token TMS): validar firma antes de producción.
-                "/api/webhooks/transfollow"}
-
-
-_SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{1,31}$")
-
-
 # ----------------------------------------------------------------------
-# JWT — autenticación del frontend React (nuevo)
+# Capas: core, modelos, db, seguridad, tenancy, clientes y servicios.
+# Los servicios se reexportan desde aquí para compatibilidad con los tests
+# (que usan main._auditar, main._registrar_asiento, etc.).
 # ----------------------------------------------------------------------
+from core import *
+from models import *
+from db import *
 
 from security import (DEFAULT_ADMIN_USER, DEFAULT_ADMIN_PASSWORD, _JWT_KEY,
                       _hash_password, _verify_password, _make_jwt, _login_rate_ok,
@@ -126,31 +74,88 @@ from services.mensajeria import _save_mensaje, _store_mensaje, _extraer_pales, _
 from services.mantenimiento import _insertar_alerta_publica, _revisar_caducidades, _revisar_revision_fecha, _revisar_mantenimiento
 from services.empresa import _empresa
 from services.contabilidad import _categoria_cuenta, _next_referencia, _auditar, _post_asiento, _registrar_asiento, _norm_fecha, _norm_total, _gasto_subcontrata, _facturar_viaje
-from routers.auth import router as auth_router
-app.include_router(auth_router)
-from routers.finanzas import router as finanzas_router
-app.include_router(finanzas_router)
-from routers.empresas import router as empresas_router
-app.include_router(empresas_router)
-from routers.flota import router as flota_router
-app.include_router(flota_router)
-from routers.gastos import router as gastos_router
-app.include_router(gastos_router)
-from routers.integraciones import router as integraciones_router
-app.include_router(integraciones_router)
-from routers.maestros import router as maestros_router
-app.include_router(maestros_router)
-from routers.mensajeria import router as mensajeria_router
-app.include_router(mensajeria_router)
-from routers.viajes import router as viajes_router
-app.include_router(viajes_router)
+
+from workers.ingesta import run as ingesta_run
+from workers.mantenimiento import run as mantenimiento_run
+from workers.facturacion import run as facturacion_run
 
 # ----------------------------------------------------------------------
-# Frontend React (nuevo): snapshot de viajes + WebSocket de operaciones
+# Constantes de entorno y de negocio
 # ----------------------------------------------------------------------
+REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
+REDIS_STREAM = os.environ.get("REDIS_STREAM", "telemetria:ingesta")
+REDIS_CHANNEL = os.environ.get("REDIS_CHANNEL", "canal_operaciones")
 
-# Estados de viaje gobernados por la telemática Trimble (macros del FleetXPS).
-# (estados del viaje + mapa de códigos Trimble movidos a core.py)
+_redis_sync = None  # cliente síncrono compartido (pool thread-safe)
+
+PUBLIC_PATHS = {"/manifest.webmanifest", "/sw.js", "/apple-touch-icon.png",
+                "/favicon.ico", "/api/health",
+                "/api/auth/login", "/api/auth/superadmin",
+                # Endpoints del frontend React: protegidos por JWT dentro del endpoint
+                # (require_jwt / require_role), no por el token HMAC del frontend antiguo.
+                "/api/viajes", "/api/telemetria/activa", "/api/telemetria/trayectoria",
+                # Webhook externo de TransFollow (sin token TMS): validar firma antes de producción.
+                "/api/webhooks/transfollow"}
+
+_SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{1,31}$")
+
+# Límite de tamaño para documentos DMS (Trimble: ~3000 KB en base64 ≈ 2 MB reales)
+MAX_DOC_MB = 2
+MAX_DOC_B64 = MAX_DOC_MB * 1024 * 1024 * 4 // 3
+
+# --- Safe-Dispatching (tacógrafo predictivo) -------------------------------
+# Límites legales de conducción (Reglamento UE 561/2006).
+_MAX_CONDUCCION_CONTINUA_MIN = 270.0   # 4,5 h de conducción continua
+_MAX_DIA_CONDUCCION_MIN = 540.0        # 9 h diarias
+_EXT_DIA_CONDUCCION_MIN = 600.0        # 10 h diarias (máx 2 días/semana)
+
+# --- Automatización de dietas (RRHH) ---------------------------------------
+_DIETA_IMPORTE = {
+    "dieta": 26.67,           # dieta completa (manutención)
+    "dieta_comida": 12.00,
+    "dieta_cena": 14.67,
+    "pernocta": 30.00,        # pernocta fuera de residencia
+}
+
+
+# ----------------------------------------------------------------------
+# Lifespan: bootstrap de tenancy + arranque/cancelación de workers.
+# Sustituye a los 4 @app.on_event("startup") (obsoletos en Starlette).
+# ----------------------------------------------------------------------
+@asynccontextmanager
+async def lifespan(app):
+    if not TRANSFOLLOW_WEBHOOK_PASSWORD:
+        print("[seguridad] AVISO: TRANSFOLLOW_WEBHOOK_PASSWORD sin configurar → "
+              "el webhook de TransFollow rechaza todas las peticiones (fail closed).")
+    await asyncio.to_thread(_bootstrap)
+    tasks = [asyncio.create_task(w()) for w in (ingesta_run, mantenimiento_run, facturacion_run)]
+    yield
+    for t in tasks:
+        t.cancel()
+
+
+app = FastAPI(title="TMS Trimble", version="0.1.0", lifespan=lifespan)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # auth por Bearer token (sin cookies) + WS necesita el Origin; bajo riesgo
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+@app.exception_handler(ValueError)
+async def value_error_handler(request: Request, exc: ValueError):
+    return JSONResponse(status_code=400, content={"error": str(exc)})
+
+
+@app.middleware("http")
+async def no_cache_static(request, call_next):
+    """Evita que el navegador cachee el frontend (app.js/css/html)."""
+    response = await call_next(request)
+    path = request.url.path
+    if path == "/" or path.endswith((".js", ".css", ".html")):
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    return response
 
 
 @app.websocket("/ws/operaciones")
@@ -233,65 +238,11 @@ async def ws_operaciones(websocket: WebSocket):
                 pass
 
 
-async def _poll_ingesta():
-    """Bucle de ingesta asíncrono: trazas/archivos y mensajería EN PARALELO.
-
-    Los mensajes se sondean cada 2s en un bucle propio para que el chat no sufra
-    el delay del procesado de trazas (que corre cada 5s en otro bucle).
-    """
-
-    async def _loop_files():
-        while True:
-            try:
-                await asyncio.to_thread(_sync_files)
-            except Exception as e:
-                print(f"[ingesta] error _sync_files: {e}")
-            await asyncio.sleep(5)
-
-    async def _loop_mensajes():
-        while True:
-            try:
-                await asyncio.to_thread(_sync_mensajes)
-            except Exception as e:
-                print(f"[ingesta] error _sync_mensajes: {e}")
-            await asyncio.sleep(2)
-
-    await asyncio.gather(_loop_files(), _loop_mensajes())
-
-
-@app.on_event("startup")
-async def _arrancar_ingesta():
-    """Arranca el productor en segundo plano al levantar la API."""
-    asyncio.create_task(_poll_ingesta())
-
-
-@app.on_event("startup")
-async def _arrancar_mantenimiento():
-    """Arranca el revisor de mantenimiento predictivo en segundo plano."""
-    asyncio.create_task(_poll_mantenimiento())
-
-
-@app.on_event("startup")
-async def _arrancar_facturacion():
-    """Arranca el listener de facturación automática en segundo plano."""
-    asyncio.create_task(_facturacion_listener())
-
-
-@app.on_event("startup")
-async def _arrancar_bootstrap():
-    """Crea la BD maestra + siembra RBAC/config del primer cliente al arrancar."""
-    if not TRANSFOLLOW_WEBHOOK_PASSWORD:
-        print("[seguridad] AVISO: TRANSFOLLOW_WEBHOOK_PASSWORD sin configurar → "
-              "el webhook de TransFollow rechaza todas las peticiones (fail closed).")
-    await asyncio.to_thread(_bootstrap)
-
-
 @app.middleware("http")
 async def require_auth(request, call_next):
     """Autenticación por token de sesión (Bearer). Resuelve el tenant del request."""
     path = request.url.path
     # Público: frontend estático, recursos PWA y endpoints de login/health.
-    # Solo se protegen los endpoints de datos (/api/*).
     if not path.startswith("/api/") or path in PUBLIC_PATHS or path.startswith("/icon-") \
             or path.startswith("/api/mantenimiento/") or path.startswith("/api/contabilidad/borradores") \
             or path.startswith("/api/contabilidad/liquidaciones"):
@@ -326,128 +277,29 @@ async def require_auth(request, call_next):
     _usuario_ctx.set(request.state.usuario or "sistema")
     return await call_next(request)
 
-# Límite de tamaño para documentos DMS (Trimble: ~3000 KB en base64 ≈ 2 MB reales)
-MAX_DOC_MB = 2
-MAX_DOC_B64 = MAX_DOC_MB * 1024 * 1024 * 4 // 3
 
-# --- Safe-Dispatching (tacógrafo predictivo) -------------------------------
-# Límites legales de conducción (Reglamento UE 561/2006). Se comparan contra
-# el DSTAT (traza 82) decodificado, no contra poll_driving_times.
-_MAX_CONDUCCION_CONTINUA_MIN = 270.0   # 4,5 h de conducción continua
-_MAX_DIA_CONDUCCION_MIN = 540.0        # 9 h diarias
-_EXT_DIA_CONDUCCION_MIN = 600.0        # 10 h diarias (máx 2 días/semana)
-
-# --- Automatización de dietas (RRHH) ---------------------------------------
-# Importes por tipo de dieta (€). AJUSTAR a la política real de dietas.
-_DIETA_IMPORTE = {
-    "dieta": 26.67,           # dieta completa (manutención)
-    "dieta_comida": 12.00,
-    "dieta_cena": 14.67,
-    "pernocta": 30.00,        # pernocta fuera de residencia
-}
-
-
-# ---------------------------------------------------------------------- #
-# Persistencia (PostgreSQL / TimescaleDB)
-# ---------------------------------------------------------------------- #
-
-
-
-# (categorías + plan contable + mapeos de cuentas movidos a core.py)
-
-
-# (peaje categorías + categorías de vehículo + estados finales movidos a core.py)
-
-
-
-
-# ---------------------------------------------------------------------- #
-# Endpoints
-# ---------------------------------------------------------------------- #
-# ---- helpers de planificación (pedido → asignar) ----
-
-# (_calcular_importes movido a core.py)
-
-
-# ---------------------------------------------------------------------- #
-# Sincronización de estados (en vivo) y archivos del conductor
-# ---------------------------------------------------------------------- #
-MANTENIMIENTO_INTERVALO = int(os.environ.get("MANTENIMIENTO_INTERVALO", "3600"))  # segundos
-
-
-async def _poll_mantenimiento():
-    """Bucle de revisión de mantenimiento (cada MANTENIMIENTO_INTERVALO segundos)."""
-    while True:
-        try:
-            await asyncio.to_thread(_revisar_mantenimiento)
-        except Exception as e:
-            print(f"[mantenimiento] error: {e}")
-        await asyncio.sleep(MANTENIMIENTO_INTERVALO)
-
-
-async def _facturacion_listener():
-    """Escucha canal_operaciones y factura automáticamente los viajes entregados."""
-    while True:
-        pubsub = None
-        r = None
-        try:
-            r = redis_asyncio.from_url(REDIS_URL, decode_responses=True)
-            pubsub = r.pubsub()
-            await pubsub.subscribe(REDIS_CHANNEL)
-            while True:
-                msg = await pubsub.get_message(ignore_subscribe_messages=True, timeout=5.0)
-                if not msg or msg.get("type") != "message":
-                    continue
-                try:
-                    ev = json.loads(msg.get("data") or "{}")
-                except (ValueError, TypeError):
-                    continue
-                if ev.get("tipo") == "estado" and ev.get("estado") == "Entregado" and ev.get("id"):
-                    await asyncio.to_thread(_facturar_viaje, ev["id"])
-        except asyncio.CancelledError:
-            raise
-        except Exception as e:
-            print(f"[facturacion] error de suscripción: {e}")
-        finally:
-            if pubsub is not None:
-                try:
-                    await pubsub.unsubscribe(REDIS_CHANNEL)
-                    await pubsub.aclose()
-                except Exception:
-                    pass
-            if r is not None:
-                try:
-                    await r.aclose()
-                except Exception:
-                    pass
-        await asyncio.sleep(5)  # reintentar la suscripción si Redis cayó
-
-
-# Credenciales del webhook de TransFollow (Basic auth). Sin contraseña configurada
-# el webhook NO valida autenticación (solo desarrollo); configúrala en producción.
-
-
-# ======================================================================
-# Gastos operativos de vehículo (combustible/peajes) + OCR de facturas
-# ======================================================================
-
-
-
-# ------------------------------------------------------------------ #
-# Mensajería independiente (sección del Ribbon, sin viaje asociado)   #
-# ------------------------------------------------------------------ #
-# ---------------------------------------------------------------------- #
-# contabilidad  →  routers/contabilidad.py
-# ---------------------------------------------------------------------- #
+# ----------------------------------------------------------------------
+# Routers por dominio
+# ----------------------------------------------------------------------
+from routers.auth import router as auth_router
+app.include_router(auth_router)
+from routers.finanzas import router as finanzas_router
+app.include_router(finanzas_router)
+from routers.empresas import router as empresas_router
+app.include_router(empresas_router)
+from routers.flota import router as flota_router
+app.include_router(flota_router)
+from routers.gastos import router as gastos_router
+app.include_router(gastos_router)
+from routers.integraciones import router as integraciones_router
+app.include_router(integraciones_router)
+from routers.maestros import router as maestros_router
+app.include_router(maestros_router)
+from routers.mensajeria import router as mensajeria_router
+app.include_router(mensajeria_router)
+from routers.viajes import router as viajes_router
+app.include_router(viajes_router)
 from routers.contabilidad import router as contabilidad_router
 app.include_router(contabilidad_router)
-
-
-# ---------------------------------------------------------------------- #
-# Recursos Humanos (RRHH): empleados, nóminas, ausencias  →  routers/rrhh.py
-# ---------------------------------------------------------------------- #
 from routers.rrhh import router as rrhh_router
 app.include_router(rrhh_router)
-# ---------------------------------------------------------------------- #
-# Frontend vanilla retirado: el frontend React se sirve vía nginx (tms-stack).
-# ---------------------------------------------------------------------- #
