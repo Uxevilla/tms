@@ -561,4 +561,11 @@ def _db():
             conn.rollback()
     return _Conn(conn, pool)
 
-__all__ = ["_tenant_ctx", "_usuario_ctx", "_schema_done", "_Conn", "_SCHEMA", "_db"]
+def _get_config(key, default=""):
+    conn = _db()
+    row = conn.execute("SELECT value FROM config WHERE key=?", (key,)).fetchone()
+    conn.close()
+    return row["value"] if row else default
+
+
+__all__ = ["_tenant_ctx", "_usuario_ctx", "_schema_done", "_Conn", "_SCHEMA", "_db", "_get_config"]
