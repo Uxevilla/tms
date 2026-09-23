@@ -356,6 +356,9 @@ def enviar_trip(trip_id: str, force: bool = False):
 
 
 
+@router.get("/api/trips/status")
+
+
 @router.get("/api/trips/{trip_id}")
 def get_trip(trip_id: str):
     conn = _db()
@@ -464,7 +467,6 @@ def trip_tramos(trip_id: str):
 
 
 
-@router.get("/api/trips/status")
 def trips_status():
     _sync_status()
     conn = _db()
