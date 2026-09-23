@@ -77,8 +77,6 @@ from db import *  # conexión, esquema y contexto multi-tenant
 
 # Multi-tenant: contexto de cliente (empresa) + autenticación por token
 # ---------------------------------------------------------------------- #
-_client_cache = {}
-_tf_cache = {}
 
 # ---------------------------------------------------------------------- #
 # Redis: productor (Stream telemetria:ingesta) + Pub/Sub de operaciones
@@ -137,56 +135,8 @@ from security import (DEFAULT_ADMIN_USER, DEFAULT_ADMIN_PASSWORD, _JWT_KEY,
 from tenancy import (_ensure_master, _bootstrap, _seed_tenant_config, _seed_rbac,
                       _provision_tenant, _db_master, _empresa_por_slug, _es_superadmin,
                       FIRST_TENANT_SLUG, FIRST_TENANT_NAME)
-
-def get_client():
-    """Cliente SOAP del tenant actual (cacheado por credenciales Trimble)."""
-    t = _tenant_ctx.get()
-    if not t:
-        u = config.DEFAULT_TRIMBLE_USERNAME
-        p = config.DEFAULT_TRIMBLE_PASSWORD
-        c = config.DEFAULT_TRIMBLE_CUSTOMER
-        term = config.DEFAULT_TRIMBLE_TERMINAL
-    else:
-        conn = _db()
-        try:
-            rows = conn.execute(
-                "SELECT key, value FROM config WHERE key IN (?,?,?,?)",
-                ("trimble_username", "trimble_password", "trimble_customer", "trimble_terminal"),
-            ).fetchall()
-        finally:
-            conn.close()
-        cfg = {r["key"]: r["value"] for r in rows}
-        u = cfg.get("trimble_username", "") or ""
-        p = cfg.get("trimble_password", "") or ""
-        c = cfg.get("trimble_customer", "") or ""
-        term = cfg.get("trimble_terminal", "") or ""
-        if not u or not c:
-            raise HTTPException(status_code=503, detail={"error": "Trimble no configurado para este cliente"})
-    key = (u, c)
-    if key not in _client_cache:
-        _client_cache[key] = TrimbleClient(u, p, c, term)
-    return _client_cache[key]
-
-
-def get_transfollow_client():
-    """Cliente REST de TransFollow del tenant actual (cacheado)."""
-    conn = _db()
-    try:
-        rows = conn.execute(
-            "SELECT key, value FROM config WHERE key IN (?,?)",
-            ("transfollow_api_key", "transfollow_base_url"),
-        ).fetchall()
-    finally:
-        conn.close()
-    cfg = {r["key"]: r["value"] for r in rows}
-    api_key = cfg.get("transfollow_api_key", "") or ""
-    if not api_key:
-        raise HTTPException(status_code=503, detail={"error": "TransFollow no configurado para este cliente"})
-    base_url = cfg.get("transfollow_base_url", "") or PROD_BASE_URL
-    if api_key not in _tf_cache:
-        _tf_cache[api_key] = TransFollowClient(api_key, base_url)
-    return _tf_cache[api_key]
-
+from clients.trimble import get_client, _client_cache
+from clients.transfollow import get_transfollow_client, _tf_cache
 
 # ----------------------------------------------------------------------
 # Frontend React (nuevo): snapshot de viajes + WebSocket de operaciones
