@@ -61,6 +61,14 @@ function estaEnMovimiento(v: MapaVehiculo): boolean {
   return (v.velocidad ?? 0) > UMBRAL_MOVIMIENTO_KMH;
 }
 
+/** Minutos → "Xh Ym" (o "Ym" si < 1h). */
+function fmtMin(v: number): string {
+  const total = Math.round(v);
+  const h = Math.floor(total / 60);
+  const m = total % 60;
+  return h > 0 ? `${h}h ${m}m` : `${m}m`;
+}
+
 /** Marcador según estado: punto negro si está parado; flecha orientada al rumbo si se mueve. */
 function iconoVehiculo(v: MapaVehiculo): L.DivIcon {
   if (!estaEnMovimiento(v)) {
@@ -249,25 +257,25 @@ function PanelVehiculo({ v, onClose }: { v: MapaVehiculo; onClose: () => void })
             {dstat.day_driving_min != null && (
               <div className={fila}>
                 <span>Conducción hoy</span>
-                <span>{dstat.day_driving_min} min</span>
+                <span>{fmtMin(dstat.day_driving_min)}</span>
               </div>
             )}
             {dstat.dia_restante_min != null && (
               <div className={fila}>
                 <span>Restante hoy</span>
-                <span>{dstat.dia_restante_min} min</span>
+                <span>{fmtMin(dstat.dia_restante_min)}</span>
               </div>
             )}
             {dstat.conduccion_continua_restante_min != null && (
               <div className={fila}>
                 <span>Continua restante</span>
-                <span>{dstat.conduccion_continua_restante_min} min</span>
+                <span>{fmtMin(dstat.conduccion_continua_restante_min)}</span>
               </div>
             )}
             {dstat.remaining_week_available_min != null && (
               <div className={fila}>
                 <span>Semana restante</span>
-                <span>{dstat.remaining_week_available_min} min</span>
+                <span>{fmtMin(dstat.remaining_week_available_min)}</span>
               </div>
             )}
             {dstat.next_rest_due && (
