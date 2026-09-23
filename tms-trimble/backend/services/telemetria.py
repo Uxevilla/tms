@@ -1,0 +1,144 @@
+"""Servicios de negocio (lógica compartida; sin FastAPI)."""
+
+import datetime
+import json
+import os
+import secrets
+import urllib.parse
+import urllib.request
+
+import config
+from db import *
+from core import *
+from security import *
+from tenancy import *
+from clients.trimble import get_client
+from clients.transfollow import get_transfollow_client
+from clients.ptv import _ptv_route, _calc_ruta, _haversine_km
+from clients.geocoding import _buscar_photon, reverse_geocode
+
+import base64
+import io
+import re
+import subprocess
+import uuid
+
+import psycopg2
+import redis
+
+from models import *
+from config import TRANSFOLLOW_WEBHOOK_USER, TRANSFOLLOW_WEBHOOK_PASSWORD
+
+from config import REDIS_URL, REDIS_STREAM, REDIS_CHANNEL, ACTIVITY_TYPES
+
+
+_redis_sync = None
+
+
+def _get_redis():
+    """Cliente Redis síncrono para el productor (xadd/publish)."""
+    global _redis_sync
+    if _redis_sync is None:
+        _redis_sync = redis.Redis.from_url(REDIS_URL, decode_responses=True)
+    return _redis_sync
+
+
+def _set_viaje_activo(vehiculo_id, trip_id):
+    """Marca el viaje activo de un vehículo en Redis (lo lee ingest_worker)."""
+    try:
+        _get_redis().set(f"vehiculo:{vehiculo_id}:viaje_activo", trip_id)
+    except Exception:
+        pass
+
+
+def _del_viaje_activo(vehiculo_id):
+    """Limpia el viaje activo del vehículo (viaje finalizado/cancelado)."""
+    try:
+        _get_redis().delete(f"vehiculo:{vehiculo_id}:viaje_activo")
+    except Exception:
+        pass
+
+
+def _json_safe(obj):
+    """Convierte Decimal (psycopg2 NUMERIC) a float para que json.dumps/send_json no fallen."""
+    from decimal import Decimal
+    if isinstance(obj, dict):
+        return {k: _json_safe(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_json_safe(v) for v in obj]
+    if isinstance(obj, Decimal):
+        return float(obj)
+    return obj
+
+
+def _viajes_snapshot() -> dict:
+    """Mapa {id: viaje} con la forma que espera el frontend React (incl. lat/lng)."""
+    conn = _db()
+    try:
+        rows = conn.execute(
+            "SELECT t.id, COALESCE(t.referencia, '') AS referencia, COALESCE(v.matricula, t.matricula, '') AS matricula, "
+            "COALESCE(t.conductor, '') AS conductor, "
+            "COALESCE(t.origen, '') AS origen, COALESCE(t.destino, '') AS destino, "
+            "COALESCE(t.estado, 'planificado') AS estado, t.creado, "
+            "t.fecha_esperada_carga, t.fecha_esperada_descarga, "
+            "COALESCE(t.cliente, '') AS cliente, t.precio, "
+            "COALESCE(t.estado_pago, 'pendiente') AS estado_pago, "
+            "t.km_total, t.km_real, t.km_fuente, t.peaje_km, t.peaje_estimado, t.tiempo_min, "
+            "t.modo_tarifa, t.tarifa_id, t.precio_unitario, t.kilos, t.subcontratado, t.proveedor_id, t.coste, "
+            "(SELECT string_agg(actividad, ' → ' ORDER BY orden) FROM paradas WHERE trip_id = t.id) AS itinerario, "
+            "(SELECT COUNT(*) FROM files WHERE trip_id = t.id) AS n_documentos, "
+            "(SELECT COUNT(*) FROM tramos WHERE trip_id = t.id) AS n_tramos, "
+            "tl.speed_kmh AS velocidad, tl.heading, tl.odometer_km, tl.lat, tl.lng "
+            "FROM trips t "
+            "LEFT JOIN vehiculos v ON v.id = t.terminal "
+            "LEFT JOIN LATERAL ("
+            "  SELECT speed_kmh, heading, odometer_km, lat, lng FROM telemetria.posiciones_gps "
+            "  WHERE vehiculo_id = t.terminal ORDER BY time DESC LIMIT 1"
+            ") tl ON true "
+            "ORDER BY t.creado DESC NULLS LAST LIMIT 500"
+        ).fetchall()
+    finally:
+        conn.close()
+    out = {}
+    for r in rows:
+        estado = _map_estado(r["estado"])
+        out[r["id"]] = {
+            "id": r["id"],
+            "referencia": r["referencia"] or "",
+            "matricula": r["matricula"] or "",
+            "conductor": r["conductor"] or "",
+            "origen": r["origen"] or "",
+            "destino": r["destino"] or "",
+            "estado": estado,
+            "progreso": _progreso(estado),
+            "velocidad": r["velocidad"],
+            "heading": r["heading"],
+            "odometer_km": (r["odometer_km"] / 1000.0) if r["odometer_km"] is not None else None,
+            "lat": r["lat"],
+            "lng": r["lng"],
+            "eta": None,
+            "ultima_actualizacion": r["creado"] or "",
+            "fecha_esperada_carga": r["fecha_esperada_carga"] or "",
+            "fecha_esperada_descarga": r["fecha_esperada_descarga"] or "",
+            "cliente": r["cliente"] or "",
+            "precio": r["precio"],
+            "estado_pago": r["estado_pago"] or "",
+            "km_total": r["km_total"],
+            "km_real": r["km_real"],
+            "km_fuente": r["km_fuente"] or "planificado",
+            "peaje_km": r["peaje_km"],
+            "peaje_estimado": r["peaje_estimado"],
+            "tiempo_min": r["tiempo_min"],
+            "itinerario": r["itinerario"] or "",
+            "n_documentos": r["n_documentos"] or 0,
+            "n_tramos": r["n_tramos"] or 0,
+            "disponibilidad": "En_Viaje" if r["id"] else "Libre",
+            "modo_tarifa": r["modo_tarifa"] or "viaje",
+            "tarifa_id": r["tarifa_id"],
+            "precio_unitario": r["precio_unitario"],
+            "kilos": r["kilos"] or 0,
+            "subcontratado": bool(r["subcontratado"]),
+            "proveedor_id": r["proveedor_id"],
+            "coste": r["coste"] or 0,
+        }
+    return _json_safe(out)

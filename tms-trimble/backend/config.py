@@ -66,3 +66,18 @@ PTV_KEYS = ("ptv_api_key",)
 SMTP_KEYS = ("smtp_host", "smtp_port", "smtp_user", "smtp_password", "smtp_from")
 TRANSFOLLOW_KEYS = ("transfollow_api_key", "transfollow_base_url")
 AUTH_KEYS = ("auth_users", "auth_password")
+
+
+# Redis: productor (Stream telemetria:ingesta) + Pub/Sub de operaciones
+REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
+REDIS_STREAM = os.environ.get("REDIS_STREAM", "telemetria:ingesta")
+REDIS_CHANNEL = os.environ.get("REDIS_CHANNEL", "canal_operaciones")
+
+# Tipos de actividad: nombre -> referencia (la REFERENCIA va en activity.type)
+import json as _json
+from pathlib import Path as _Path
+ACTIVITY_TYPES = _json.load(open(_Path(__file__).resolve().parent / "activity_types.json"))
+
+# Webhook de TransFollow (Basic auth)
+TRANSFOLLOW_WEBHOOK_USER = os.environ.get("TRANSFOLLOW_WEBHOOK_USER", "transfollow")
+TRANSFOLLOW_WEBHOOK_PASSWORD = os.environ.get("TRANSFOLLOW_WEBHOOK_PASSWORD", "")
