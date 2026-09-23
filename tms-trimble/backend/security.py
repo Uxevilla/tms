@@ -86,3 +86,8 @@ def require_role(required_roles):
             raise HTTPException(status_code=403, detail={"error": "Permisos insuficientes"})
         return payload
     return _check
+
+__all__ = ["_pwd_context", "DEFAULT_ADMIN_USER", "DEFAULT_ADMIN_PASSWORD", "_JWT_KEY",
+           "_hash_password", "_verify_password", "_make_jwt", "_verify_jwt",
+           "_login_rate_ok", "_login_attempts", "_login_lock",
+           "_LOGIN_MAX_INTENTOS", "_LOGIN_VENTANA_S", "require_jwt", "require_role"]

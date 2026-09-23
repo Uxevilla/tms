@@ -195,3 +195,7 @@ def _empresa_por_slug(slug):
 def _es_superadmin():
     t = _tenant_ctx.get()
     return bool(t and t.get("superadmin"))
+
+__all__ = ["_master_ready", "FIRST_TENANT_SLUG", "FIRST_TENANT_NAME",
+           "_ensure_master", "_bootstrap", "_seed_tenant_config", "_seed_rbac",
+           "_provision_tenant", "_db_master", "_empresa_por_slug", "_es_superadmin"]
