@@ -89,13 +89,12 @@ def crear_ecmr(req: dict):
 
 
 @router.get("/api/export")
-def export_xlsx(tipo: str = "trips"):
+def export_xlsx(tipo: str = "trips", conn = Depends(get_conn)):
     """Descarga Excel (.xlsx) del histórico (trips), gastos o ingresos."""
     from openpyxl import Workbook
     from openpyxl.styles import Font, PatternFill, Alignment
     from openpyxl.utils import get_column_letter
 
-    conn = _db()
     wb = Workbook()
     ws = wb.active
     ws.title = (tipo or "hoja")[:28]
@@ -272,7 +271,6 @@ def export_xlsx(tipo: str = "trips"):
         data = [[r[c] if c in r.keys() else "" for c in cols] for r in rows]
         _write(cols, data)
 
-    conn.close()
 
     # Ajustar ancho de columnas al contenido
     for col_cells in ws.columns:

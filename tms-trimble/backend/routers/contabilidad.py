@@ -6,7 +6,7 @@ import io
 from fastapi import APIRouter, HTTPException, Depends
 
 import config
-from db import _db
+from db import _db, get_conn
 from core import *
 from models import *
 import main as _m
@@ -62,10 +62,8 @@ def _suma_cuenta(conn, cuenta, desde="", hasta=""):
 @router.get("/api/contabilidad/cuentas")
 
 
-def contabilidad_cuentas():
-    conn = _db()
+def contabilidad_cuentas(conn = Depends(get_conn)):
     rows = conn.execute("SELECT * FROM cuentas ORDER BY orden, codigo").fetchall()
-    conn.close()
     return {"cuentas": [dict(r) for r in rows]}
 
 
@@ -74,8 +72,7 @@ def contabilidad_cuentas():
 @router.post("/api/contabilidad/cuentas")
 
 
-def upsert_cuenta(c: CuentaContable):
-    conn = _db()
+def upsert_cuenta(c: CuentaContable, conn = Depends(get_conn)):
     conn.execute(
         "INSERT INTO cuentas (codigo, nombre, grupo, tipo, orden) VALUES (?,?,?,?,?) "
         "ON CONFLICT (codigo) DO UPDATE SET nombre=EXCLUDED.nombre, grupo=EXCLUDED.grupo, "
@@ -83,7 +80,6 @@ def upsert_cuenta(c: CuentaContable):
         (c.codigo.strip(), c.nombre.strip(), c.grupo.strip(), c.tipo.strip(), c.orden),
     )
     conn.commit()
-    conn.close()
     return {"ok": True}
 
 
@@ -92,15 +88,12 @@ def upsert_cuenta(c: CuentaContable):
 @router.delete("/api/contabilidad/cuentas/{codigo}")
 
 
-def del_cuenta(codigo: str):
-    conn = _db()
+def del_cuenta(codigo: str, conn = Depends(get_conn)):
     n = conn.execute("SELECT COUNT(*) AS n FROM apuntes WHERE cuenta=?", (codigo,)).fetchone()["n"]
     if n:
-        conn.close()
         raise HTTPException(status_code=409, detail={"error": "La cuenta tiene apuntes; no se puede borrar."})
     conn.execute("DELETE FROM cuentas WHERE codigo=?", (codigo,))
     conn.commit()
-    conn.close()
     return {"ok": True}
 
 
@@ -109,8 +102,7 @@ def del_cuenta(codigo: str):
 @router.get("/api/contabilidad/asientos")
 
 
-def contabilidad_asientos(desde: str = "", hasta: str = ""):
-    conn = _db()
+def contabilidad_asientos(desde: str = "", hasta: str = "", conn = Depends(get_conn)):
     conds, params = [], []
     if desde:
         conds.append("fecha >= ?"); params.append(desde)
@@ -130,7 +122,6 @@ def contabilidad_asientos(desde: str = "", hasta: str = ""):
         ).fetchall()
         for r in arows:
             apuntes.setdefault(r["asiento_id"], []).append(dict(r))
-    conn.close()
     return {"asientos": [dict(r) for r in rows], "apuntes": apuntes}
 
 
@@ -155,18 +146,14 @@ def contabilidad_crear_asiento(a: AsientoManual):
 @router.delete("/api/contabilidad/asientos/{asiento_id}")
 
 
-def contabilidad_del_asiento(asiento_id: int):
-    conn = _db()
+def contabilidad_del_asiento(asiento_id: int, conn = Depends(get_conn)):
     row = conn.execute("SELECT origen FROM asientos WHERE id=?", (asiento_id,)).fetchone()
     if not row:
-        conn.close()
         raise HTTPException(status_code=404, detail={"error": "Asiento no encontrado."})
     if row["origen"] != "manual":
-        conn.close()
         raise HTTPException(status_code=409, detail={"error": "Es un asiento automático; borra la factura o el gasto asociado."})
     conn.execute("DELETE FROM asientos WHERE id=?", (asiento_id,))
     conn.commit()
-    conn.close()
     return {"ok": True}
 
 
@@ -175,8 +162,7 @@ def contabilidad_del_asiento(asiento_id: int):
 @router.get("/api/contabilidad/balance")
 
 
-def contabilidad_balance(desde: str = "", hasta: str = ""):
-    conn = _db()
+def contabilidad_balance(desde: str = "", hasta: str = "", conn = Depends(get_conn)):
     conds, params = [], []
     if desde:
         conds.append("a.fecha >= ?"); params.append(desde)
@@ -188,7 +174,6 @@ def contabilidad_balance(desde: str = "", hasta: str = ""):
         f"FROM apuntes p JOIN asientos a ON a.id=p.asiento_id JOIN cuentas c ON c.codigo=p.cuenta "
         f"{where} GROUP BY p.cuenta, c.nombre, c.grupo, c.tipo, c.orden ORDER BY c.orden, p.cuenta", params,
     ).fetchall()
-    conn.close()
     total_debe = total_haber = 0.0
     cuentas = []
     for r in rows:
@@ -205,8 +190,7 @@ def contabilidad_balance(desde: str = "", hasta: str = ""):
 @router.get("/api/contabilidad/pyg")
 
 
-def contabilidad_pyg(desde: str = "", hasta: str = ""):
-    conn = _db()
+def contabilidad_pyg(desde: str = "", hasta: str = "", conn = Depends(get_conn)):
     conds, params = [], []
     if desde:
         conds.append("a.fecha >= ?"); params.append(desde)
@@ -223,7 +207,6 @@ def contabilidad_pyg(desde: str = "", hasta: str = ""):
         f"WHERE {' AND '.join(conds + ['c.tipo=?'])} GROUP BY p.cuenta, c.nombre, c.orden ORDER BY c.orden",
         params + ["ingreso"],
     ).fetchall()
-    conn.close()
     tg = sum(float(r["importe"] or 0) for r in gastos)
     ti = sum(float(r["importe"] or 0) for r in ingresos)
     return {
@@ -240,10 +223,8 @@ def contabilidad_pyg(desde: str = "", hasta: str = ""):
 @router.get("/api/contabilidad/situacion")
 
 
-def contabilidad_situacion(hasta: str = ""):
-    conn = _db()
+def contabilidad_situacion(hasta: str = "", conn = Depends(get_conn)):
     sums = _sumas_por_tipo(conn, "", hasta)
-    conn.close()
     def saldo(tipo):
         d, h = sums.get(tipo, [0, 0])
         return d - h
@@ -267,8 +248,7 @@ def contabilidad_situacion(hasta: str = ""):
 @router.get("/api/contabilidad/dashboard")
 
 
-def contabilidad_dashboard(desde: str = "", hasta: str = ""):
-    conn = _db()
+def contabilidad_dashboard(desde: str = "", hasta: str = "", conn = Depends(get_conn)):
     sums = _sumas_por_tipo(conn, desde, hasta)
     def saldo(tipo):
         d, h = sums.get(tipo, [0, 0])
@@ -287,7 +267,6 @@ def contabilidad_dashboard(desde: str = "", hasta: str = ""):
     frows = conn.execute(
         "SELECT estado, COUNT(*) AS n, COALESCE(SUM(total),0) AS total FROM facturas GROUP BY estado"
     ).fetchall()
-    conn.close()
     fact = {"emitida": 0, "cobrada": 0}
     for r in frows:
         fact[r["estado"]] = round(float(r["total"] or 0), 2)
@@ -317,17 +296,15 @@ def contabilidad_cierre_get():
 @router.post("/api/contabilidad/cierre")
 
 
-def contabilidad_cierre(req: dict):
+def contabilidad_cierre(req: dict, conn = Depends(get_conn)):
     fecha = (req.get("fecha") or "").strip()
     if not fecha:
         raise HTTPException(status_code=400, detail={"error": "Indica la fecha de cierre."})
-    conn = _db()
     conn.execute(
         "INSERT INTO config (key, value) VALUES (?,?) ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value",
         ("cierre_fecha", fecha),
     )
     conn.commit()
-    conn.close()
     return {"ok": True, "cierre_fecha": fecha}
 
 
@@ -336,12 +313,10 @@ def contabilidad_cierre(req: dict):
 @router.get("/api/contabilidad/tesoreria-prevision")
 
 
-def contabilidad_tesoreria_prevision():
-    conn = _db()
+def contabilidad_tesoreria_prevision(conn = Depends(get_conn)):
     saldo = conn.execute("SELECT SUM(debe)-SUM(haber) AS v FROM apuntes WHERE cuenta IN ('570','572')").fetchone()["v"] or 0
     fact = conn.execute("SELECT fecha, COALESCE(SUM(total),0) AS t FROM facturas WHERE estado != 'cobrada' GROUP BY fecha").fetchall()
     gast = conn.execute("SELECT fecha, COALESCE(SUM(importe),0) AS t FROM gastos WHERE COALESCE(pagado,false)=false AND COALESCE(importe,0)>0 GROUP BY fecha").fetchall()
-    conn.close()
     hoy = datetime.date.today()
     months = []
     for i in range(3):
@@ -378,10 +353,9 @@ def contabilidad_tesoreria_prevision():
 @router.get("/api/contabilidad/modelo347")
 
 
-def contabilidad_modelo347(anio: str = ""):
+def contabilidad_modelo347(anio: str = "", conn = Depends(get_conn)):
     if not anio:
         anio = str(datetime.date.today().year)
-    conn = _db()
     cli = conn.execute(
         "SELECT COALESCE(NULLIF(cliente_nombre,''),'Sin nombre') AS tercero, SUM(total) AS total "
         "FROM facturas WHERE substr(fecha,1,4)=? GROUP BY 1 ORDER BY total DESC", (anio,)
@@ -391,7 +365,6 @@ def contabilidad_modelo347(anio: str = ""):
         "FROM gastos g LEFT JOIN proveedores p ON g.proveedor_id=p.id "
         "WHERE substr(g.fecha,1,4)=? AND COALESCE(g.proveedor_id,0) > 0 GROUP BY 1 ORDER BY total DESC", (anio,)
     ).fetchall()
-    conn.close()
     LIMITE = 3005.06
     clientes = [{"tercero": r["tercero"], "total": round(float(r["total"] or 0), 2)} for r in cli if float(r["total"] or 0) > LIMITE]
     proveedores = [{"tercero": r["tercero"], "total": round(float(r["total"] or 0), 2)} for r in prov if float(r["total"] or 0) > LIMITE]
@@ -405,8 +378,7 @@ def contabilidad_modelo347(anio: str = ""):
 @router.get("/api/contabilidad/tesoreria")
 
 
-def contabilidad_tesoreria():
-    conn = _db()
+def contabilidad_tesoreria(conn = Depends(get_conn)):
     saldo = conn.execute(
         "SELECT SUM(debe)-SUM(haber) AS v FROM apuntes WHERE cuenta IN ('570','572')"
     ).fetchone()["v"] or 0
@@ -427,7 +399,6 @@ def contabilidad_tesoreria():
         "GROUP BY a.id, a.fecha, a.concepto, a.origen "
         "ORDER BY a.fecha DESC, a.id DESC LIMIT 100"
     ).fetchall()
-    conn.close()
     return {
         "saldo": round(float(saldo), 2),
         "gastos_pendientes": [dict(r) for r in gpend],
@@ -441,8 +412,7 @@ def contabilidad_tesoreria():
 @router.get("/api/contabilidad/impuestos")
 
 
-def contabilidad_impuestos(desde: str = "", hasta: str = ""):
-    conn = _db()
+def contabilidad_impuestos(desde: str = "", hasta: str = "", conn = Depends(get_conn)):
     conds, params = [], []
     if desde:
         conds.append("a.fecha >= ?"); params.append(desde)
@@ -478,7 +448,6 @@ def contabilidad_impuestos(desde: str = "", hasta: str = ""):
     ret = conn.execute(
         "SELECT SUM(haber)-SUM(debe) AS v FROM apuntes WHERE cuenta='4751'"
     ).fetchone()["v"] or 0
-    conn.close()
     tot_rep = sum(t["repercutido"] for t in trimestres)
     tot_sop = sum(t["soportado"] for t in trimestres)
     return {
@@ -497,8 +466,7 @@ def contabilidad_impuestos(desde: str = "", hasta: str = ""):
 @router.get("/api/contabilidad/inmovilizado")
 
 
-def contabilidad_inmovilizado():
-    conn = _db()
+def contabilidad_inmovilizado(conn = Depends(get_conn)):
     rows = conn.execute(
         "SELECT id, categoria, matricula, marca, modelo, coste_adquisicion, fecha_adquisicion, vida_util, valor_residual "
         "FROM vehiculos WHERE COALESCE(coste_adquisicion,0) > 0 ORDER BY matricula"
@@ -509,7 +477,6 @@ def contabilidad_inmovilizado():
     adq_docs = {r["documento"] for r in conn.execute(
         "SELECT documento FROM asientos WHERE origen='adquisicion'"
     ).fetchall()}
-    conn.close()
     hoy = datetime.date.today()
     items = []
     for r in rows:
@@ -541,14 +508,12 @@ def contabilidad_inmovilizado():
 @router.post("/api/contabilidad/inmovilizado/{veh_id}")
 
 
-def set_amortizacion(veh_id: str, a: AmortizacionRequest):
-    conn = _db()
+def set_amortizacion(veh_id: str, a: AmortizacionRequest, conn = Depends(get_conn)):
     conn.execute(
         "UPDATE vehiculos SET coste_adquisicion=?, fecha_adquisicion=?, vida_util=?, valor_residual=? WHERE id=?",
         (a.coste_adquisicion, a.fecha_adquisicion, a.vida_util, a.valor_residual, veh_id),
     )
     conn.commit()
-    conn.close()
     return {"ok": True}
 
 
@@ -557,21 +522,17 @@ def set_amortizacion(veh_id: str, a: AmortizacionRequest):
 @router.post("/api/contabilidad/inmovilizado/{veh_id}/adquisicion")
 
 
-def registrar_adquisicion(veh_id: str):
-    conn = _db()
+def registrar_adquisicion(veh_id: str, conn = Depends(get_conn)):
     v = conn.execute("SELECT * FROM vehiculos WHERE id=?", (veh_id,)).fetchone()
     if not v:
-        conn.close()
         raise HTTPException(status_code=404, detail={"error": "Vehículo no encontrado."})
     coste = float(v["coste_adquisicion"] or 0)
     if coste <= 0:
-        conn.close()
         raise HTTPException(status_code=400, detail={"error": "El vehículo no tiene coste de adquisición."})
     exist = conn.execute(
         "SELECT id FROM asientos WHERE origen='adquisicion' AND documento=?", (f"adquisicion-{veh_id}",)
     ).fetchone()
     if exist:
-        conn.close()
         raise HTTPException(status_code=409, detail={"error": "Este vehículo ya tiene asiento de adquisición."})
     fecha = (v["fecha_adquisicion"] or "")[:10] or datetime.date.today().isoformat()
     nombre = v["matricula"] or veh_id
@@ -582,7 +543,6 @@ def registrar_adquisicion(veh_id: str):
         origen="adquisicion", documento=f"adquisicion-{veh_id}", conn=conn,
     )
     conn.commit()
-    conn.close()
     return {"ok": True, "asiento_id": aid, "coste": coste}
 
 
@@ -591,7 +551,7 @@ def registrar_adquisicion(veh_id: str):
 @router.post("/api/contabilidad/amortizar")
 
 
-def contabilidad_amortizar(periodo: str = ""):
+def contabilidad_amortizar(periodo: str = "", conn = Depends(get_conn)):
     hoy = datetime.date.today()
     if not periodo:
         periodo = f"{hoy.year:04d}-{hoy.month:02d}"  # mes actual por defecto
@@ -605,12 +565,10 @@ def contabilidad_amortizar(periodo: str = ""):
         if m == 2 and (y % 4 == 0 and (y % 100 != 0 or y % 400 == 0)):
             last = 29
         fecha = f"{y:04d}-{m:02d}-{last:02d}"
-    conn = _db()
     exist = conn.execute(
         "SELECT id FROM asientos WHERE origen='amortizacion' AND documento=?", (f"amortizacion-{periodo}",)
     ).fetchone()
     if exist:
-        conn.close()
         raise HTTPException(status_code=409, detail={"error": f"Ya hay amortización para {periodo}."})
     rows = conn.execute(
         "SELECT id, matricula, coste_adquisicion, valor_residual, vida_util FROM vehiculos WHERE COALESCE(coste_adquisicion,0) > 0"
@@ -629,12 +587,10 @@ def contabilidad_amortizar(periodo: str = ""):
             lineas.append(("281", 0, cuota, f"Amortización {nombre}"))
             total += cuota
     if not lineas:
-        conn.close()
         raise HTTPException(status_code=400, detail={"error": "No hay vehículos con datos de amortización."})
     aid = _post_asiento(fecha, f"Amortización {'anual' if es_anual else 'mensual'} {periodo}", lineas,
                         origen="amortizacion", documento=f"amortizacion-{periodo}", conn=conn)
     conn.commit()
-    conn.close()
     return {"ok": True, "asiento_id": aid, "total": round(total, 2), "periodo": periodo, "mensual": not es_anual}
 
 
@@ -643,8 +599,7 @@ def contabilidad_amortizar(periodo: str = ""):
 @router.get("/api/contabilidad/explotacion")
 
 
-def contabilidad_explotacion(desde: str = "", hasta: str = ""):
-    conn = _db()
+def contabilidad_explotacion(desde: str = "", hasta: str = "", conn = Depends(get_conn)):
     conds, params = [], []
     if desde:
         conds.append("a.fecha >= ?"); params.append(desde)
@@ -657,7 +612,6 @@ def contabilidad_explotacion(desde: str = "", hasta: str = ""):
         f"FROM apuntes p JOIN asientos a ON a.id=p.asiento_id JOIN cuentas c ON c.codigo=p.cuenta "
         f"{where} GROUP BY substr(a.fecha,1,7), c.tipo ORDER BY mes", params,
     ).fetchall()
-    conn.close()
     by_mes = {}
     for r in rows:
         d = by_mes.setdefault(r["mes"], {"ingresos": 0.0, "gastos": 0.0})
@@ -680,9 +634,8 @@ def contabilidad_explotacion(desde: str = "", hasta: str = ""):
 @router.get("/api/contabilidad/explotacion-vehiculos")
 
 
-def contabilidad_explotacion_vehiculos():
+def contabilidad_explotacion_vehiculos(conn = Depends(get_conn)):
     """Explotación por vehículo: ingresos y gastos directos por tractora + gastos generales repartibles."""
-    conn = _db()
     trips = conn.execute(
         "SELECT COALESCE(NULLIF(terminal,''),'General') AS veh, COALESCE(SUM(precio),0) AS ingresos, "
         "COALESCE(SUM(COALESCE(km_real, km_total)),0) AS km, COALESCE(SUM(km_vacio),0) AS km_vacio FROM trips GROUP BY 1"
@@ -690,7 +643,6 @@ def contabilidad_explotacion_vehiculos():
     gastos = conn.execute(
         "SELECT COALESCE(NULLIF(terminal,''),'General') AS veh, COALESCE(SUM(importe),0) AS gastos FROM gastos GROUP BY 1"
     ).fetchall()
-    conn.close()
     by = {}
     for r in trips:
         by[r["veh"]] = {"vehiculo": r["veh"], "ingresos": float(r["ingresos"] or 0),
@@ -716,14 +668,13 @@ def contabilidad_explotacion_vehiculos():
 @router.get("/api/contabilidad/reconciliacion-km")
 
 
-def contabilidad_reconciliacion_km(desde: str = "", hasta: str = ""):
+def contabilidad_reconciliacion_km(desde: str = "", hasta: str = "", conn = Depends(get_conn)):
     """Reconciliación de km por vehículo: Δ odómetro (telemetría) vs Σ km de viajes.
 
     km_odometro = odómetro_fin - odómetro_inicio en el periodo (MIN/MAX odometer_km).
     km_viajes   = Σ km_efectivo (COALESCE(km_real, km_total)) de los viajes del periodo.
     km_vacio    = km_odometro - km_viajes (km huérfano: maniobras/reposicionamiento/viajes sin registrar).
     """
-    conn = _db()
 
     conds_t = ["COALESCE(NULLIF(t.terminal,''),'') <> ''"]
     params_t = []
@@ -750,7 +701,6 @@ def contabilidad_reconciliacion_km(desde: str = "", hasta: str = ""):
         f"SELECT vehiculo_id AS veh, MIN(odometer_km) AS odo_inicio, MAX(odometer_km) AS odo_fin "
         f"FROM telemetria.posiciones_gps{where_o} GROUP BY vehiculo_id", params_o,
     ).fetchall()
-    conn.close()
 
     by = {}
     for r in odos:
@@ -794,15 +744,13 @@ def contabilidad_reconciliacion_km(desde: str = "", hasta: str = ""):
 @router.get("/api/contabilidad/auditoria")
 
 
-def contabilidad_auditoria(limite: int = 200, user: dict = Depends(_m.require_role(["admin"]))):
+def contabilidad_auditoria(limite: int = 200, user: dict = Depends(_m.require_role(["admin"])), conn = Depends(get_conn)):
     """Pista de auditoría contable (solo administradores): quién hizo qué y cuándo."""
     limite = max(1, min(int(limite), 1000))
-    conn = _db()
     rows = conn.execute(
         "SELECT id, tabla, registro_id, accion, usuario, antes, despues, ts "
         "FROM audit_log ORDER BY id DESC LIMIT ?", (limite,)
     ).fetchall()
-    conn.close()
     return {"auditoria": [dict(r) for r in rows]}
 
 
@@ -811,10 +759,8 @@ def contabilidad_auditoria(limite: int = 200, user: dict = Depends(_m.require_ro
 @router.get("/api/contabilidad/facturas")
 
 
-def contabilidad_facturas():
-    conn = _db()
+def contabilidad_facturas(conn = Depends(get_conn)):
     rows = conn.execute("SELECT * FROM facturas ORDER BY fecha DESC, id DESC").fetchall()
-    conn.close()
     return {"facturas": [dict(r) for r in rows]}
 
 
@@ -823,8 +769,7 @@ def contabilidad_facturas():
 @router.get("/api/contabilidad/facturables")
 
 
-def contabilidad_facturables():
-    conn = _db()
+def contabilidad_facturables(conn = Depends(get_conn)):
     rows = conn.execute(
         "SELECT t.id, t.referencia, t.cliente, t.precio, t.iva, t.origen, t.destino, t.creado, t.estado "
         "FROM trips t "
@@ -834,21 +779,18 @@ def contabilidad_facturables():
         "AND LOWER(COALESCE(t.estado,'')) NOT IN ('sin_asignar','cancelado','canceled','rechazado','refused','error') "
         "ORDER BY t.creado DESC LIMIT 200"
     ).fetchall()
-    conn.close()
     return {"viajes": [dict(r) for r in rows]}
 
 
 
 
-def _costes_reales_viaje(trip):
+def _costes_reales_viaje(trip, conn = Depends(get_conn)):
     """Costes reales del viaje: peajes estimados + gastos vinculados exactamente al viaje."""
     peaje = float(trip["peaje_estimado"] or 0)
-    conn = _db()
     row = conn.execute(
         "SELECT COALESCE(SUM(importe), 0) AS total FROM gastos WHERE trip_id=?",
         (trip["id"],),
     ).fetchone()
-    conn.close()
     gastos = float(row["total"] or 0) if row else 0.0
     coste = round(peaje + gastos, 2)
     margen = round(float(trip["precio"] or 0) - coste, 2)
@@ -904,7 +846,7 @@ def _liquidar_conductor(trip, conn):
 
 
 
-def _crear_factura_borrador(trip):
+def _crear_factura_borrador(trip, conn = Depends(get_conn)):
     """Crea una factura en estado Borrador (sin asiento) para un viaje entregado."""
     # Subcontratación: registrar el gasto (624/410) antes de calcular costes/margen.
     if trip["subcontratado"]:
@@ -917,7 +859,6 @@ def _crear_factura_borrador(trip):
     iva = round(float(trip["iva"] or 21), 2)
     cuota = round(base * iva / 100.0, 2)
     total = round(base + cuota, 2)
-    conn = _db()
     cur = conn.execute(
         "INSERT INTO facturas (numero, fecha, trip_id, cliente_id, cliente_nombre, base, iva, cuota_iva, total, estado, coste, margen, creado) "
         "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id",
@@ -934,7 +875,6 @@ def _crear_factura_borrador(trip):
     )
     _liquidar_conductor(trip, conn)
     conn.commit()
-    conn.close()
     return factura_id
 
 
@@ -992,27 +932,22 @@ def _crear_factura(conn, trips, cliente_id, cliente_nombre, fecha):
 @router.post("/api/contabilidad/facturas/agrupada")
 
 
-def contabilidad_factura_agrupada(req: dict):
+def contabilidad_factura_agrupada(req: dict, conn = Depends(get_conn)):
     trip_ids = [t for t in (req.get("trip_ids") or []) if t]
     if not trip_ids:
         raise HTTPException(status_code=400, detail={"error": "Selecciona al menos un viaje para facturar."})
-    conn = _db()
     ph = ",".join("?" for _ in trip_ids)
     trips = conn.execute(f"SELECT * FROM trips WHERE id IN ({ph}) ORDER BY creado", trip_ids).fetchall()
     if len(trips) != len(set(trip_ids)):
-        conn.close()
         raise HTTPException(status_code=404, detail={"error": "Algún viaje seleccionado no existe."})
     clientes = {t["cliente_id"] for t in trips}
     if len(clientes) > 1:
-        conn.close()
         raise HTTPException(status_code=409, detail={"error": "Todos los viajes deben ser del mismo cliente para agruparlos."})
     for t in trips:
         if conn.execute("SELECT 1 FROM facturas WHERE trip_id=?", (t["id"],)).fetchone() or \
            conn.execute("SELECT 1 FROM factura_lineas WHERE trip_id=?", (t["id"],)).fetchone():
-            conn.close()
             raise HTTPException(status_code=409, detail={"error": f"El viaje {t['id']} ya tiene factura."})
         if float(t["precio"] or 0) <= 0:
-            conn.close()
             raise HTTPException(status_code=400, detail={"error": f"El viaje {t['id']} no tiene precio."})
     cliente_nombre = trips[0]["cliente"] or ""
     cliente_id = trips[0]["cliente_id"]
@@ -1031,18 +966,14 @@ def contabilidad_factura_agrupada(req: dict):
 @router.post("/api/contabilidad/facturas/{trip_id}")
 
 
-def contabilidad_generar_factura(trip_id: str):
-    conn = _db()
+def contabilidad_generar_factura(trip_id: str, conn = Depends(get_conn)):
     trip = conn.execute("SELECT * FROM trips WHERE id=?", (trip_id,)).fetchone()
     if not trip:
-        conn.close()
         raise HTTPException(status_code=404, detail={"error": "Viaje no encontrado."})
     if conn.execute("SELECT 1 FROM facturas WHERE trip_id=?", (trip_id,)).fetchone() or \
        conn.execute("SELECT 1 FROM factura_lineas WHERE trip_id=?", (trip_id,)).fetchone():
-        conn.close()
         raise HTTPException(status_code=409, detail={"error": "Este viaje ya tiene factura."})
     if float(trip["precio"] or 0) <= 0:
-        conn.close()
         raise HTTPException(status_code=400, detail={"error": "El viaje no tiene precio."})
     fecha = (trip["creado"] or "")[:10] or datetime.date.today().isoformat()
     try:
@@ -1063,9 +994,8 @@ def contabilidad_generar_factura(trip_id: str):
 @router.get("/api/contabilidad/borradores")
 
 
-def contabilidad_borradores(user: dict = Depends(_m.require_role(["admin"]))):
+def contabilidad_borradores(user: dict = Depends(_m.require_role(["admin"])), conn = Depends(get_conn)):
     """Facturas autogeneradas en estado Borrador, listas para validar y emitir."""
-    conn = _db()
     rows = conn.execute(
         "SELECT f.id, f.numero, f.fecha, f.trip_id, f.cliente_nombre, f.base, f.iva, "
         "f.cuota_iva, f.total, f.coste, f.margen, f.creado, t.origen, t.destino "
@@ -1077,7 +1007,6 @@ def contabilidad_borradores(user: dict = Depends(_m.require_role(["admin"]))):
         d = dict(r)
         d["desglose"] = _desglose_costes(conn, r["trip_id"])
         salida.append(d)
-    conn.close()
     return {"borradores": salida}
 
 
@@ -1086,9 +1015,8 @@ def contabilidad_borradores(user: dict = Depends(_m.require_role(["admin"]))):
 @router.get("/api/contabilidad/liquidaciones")
 
 
-def contabilidad_liquidaciones(user: dict = Depends(_m.require_role(["admin"]))):
+def contabilidad_liquidaciones(user: dict = Depends(_m.require_role(["admin"])), conn = Depends(get_conn)):
     """Liquidaciones de conductores autogeneradas (modelo variable por km)."""
-    conn = _db()
     rows = conn.execute(
         "SELECT l.id, c.nombre AS conductor, l.viaje_id, l.fecha, "
         "COALESCE(t.km_total, 0) AS km_total, COALESCE(c.tarifa_km, 0) AS tarifa, "
@@ -1099,7 +1027,6 @@ def contabilidad_liquidaciones(user: dict = Depends(_m.require_role(["admin"])))
         "WHERE l.conductor_id IS NOT NULL "
         "ORDER BY l.fecha DESC, l.id DESC"
     ).fetchall()
-    conn.close()
     return {"liquidaciones": [dict(r) for r in rows]}
 
 
@@ -1144,7 +1071,7 @@ def contabilidad_emitir_borrador(factura_id: int,
 
 
 
-def _generar_factura_pdf(factura_id):
+def _generar_factura_pdf(factura_id, conn = Depends(get_conn)):
     import io
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.units import mm
@@ -1152,15 +1079,12 @@ def _generar_factura_pdf(factura_id):
     from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 
-    conn = _db()
     f = conn.execute("SELECT * FROM facturas WHERE id=?", (factura_id,)).fetchone()
     if not f:
-        conn.close()
         raise HTTPException(status_code=404, detail={"error": "Factura no encontrada."})
     lineas = conn.execute("SELECT * FROM factura_lineas WHERE factura_id=? ORDER BY id", (factura_id,)).fetchall()
     cliente = conn.execute("SELECT * FROM clientes WHERE id=?", (f["cliente_id"],)).fetchone() if f["cliente_id"] else None
     emp = _m._empresa()
-    conn.close()
 
     def eur(n):
         v = f"{float(n or 0):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
@@ -1272,13 +1196,11 @@ def factura_pdf(factura_id: int):
 @router.post("/api/contabilidad/facturas/{factura_id}/enviar")
 
 
-def factura_enviar(factura_id: int, req: dict):
+def factura_enviar(factura_id: int, req: dict, conn = Depends(get_conn)):
     email_to = (req.get("email") or "").strip()
     if not email_to:
         raise HTTPException(status_code=400, detail={"error": "Indica el email del destinatario."})
-    conn = _db()
     f = conn.execute("SELECT * FROM facturas WHERE id=?", (factura_id,)).fetchone()
-    conn.close()
     if not f:
         raise HTTPException(status_code=404, detail={"error": "Factura no encontrada."})
     pdf = _generar_factura_pdf(factura_id)
@@ -1296,14 +1218,11 @@ def factura_enviar(factura_id: int, req: dict):
 @router.post("/api/contabilidad/facturas/{factura_id}/cobrar")
 
 
-def contabilidad_cobrar_factura(factura_id: int):
-    conn = _db()
+def contabilidad_cobrar_factura(factura_id: int, conn = Depends(get_conn)):
     f = conn.execute("SELECT * FROM facturas WHERE id=?", (factura_id,)).fetchone()
     if not f:
-        conn.close()
         raise HTTPException(status_code=404, detail={"error": "Factura no encontrada."})
     if f["estado"] == "cobrada":
-        conn.close()
         return {"ok": True, "ya_cobrada": True}
     total = round(float(f["total"] or 0), 2)
     fecha = (f["fecha"] or "")[:10] or datetime.date.today().isoformat()
@@ -1315,7 +1234,6 @@ def contabilidad_cobrar_factura(factura_id: int):
     )
     conn.execute("UPDATE facturas SET estado='cobrada' WHERE id=?", (factura_id,))
     conn.commit()
-    conn.close()
     return {"ok": True, "asiento_id": asiento_id}
 
 

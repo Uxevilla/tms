@@ -106,10 +106,8 @@ def entrar_empresa(slug: str):
 
 
 @router.get("/api/config")
-def get_config():
-    conn = _db()
+def get_config(conn = Depends(get_conn)):
     rows = conn.execute("SELECT key, value FROM config").fetchall()
-    conn.close()
     out = {}
     for r in rows:
         k, v = r["key"], r["value"]
@@ -123,10 +121,8 @@ def get_config():
 
 
 @router.get("/api/empresa")
-def get_empresa():
-    conn = _db()
+def get_empresa(conn = Depends(get_conn)):
     row = conn.execute("SELECT * FROM empresa WHERE id=1").fetchone()
-    conn.close()
     return {"empresa": dict(row) if row else {}}
 
 
@@ -158,15 +154,13 @@ def list_empresas():
 
 
 @router.post("/api/config")
-def set_config(req: dict):
-    conn = _db()
+def set_config(req: dict, conn = Depends(get_conn)):
     for k, v in req.items():
         conn.execute(
             "INSERT INTO config (key, value) VALUES (?,?) ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value",
             (k, str(v)),
         )
     conn.commit()
-    conn.close()
     # Si cambian credenciales Trimble, invalidar el cliente SOAP cacheado
     if any(k.startswith("trimble_") for k in req.keys()):
         _client_cache.clear()
@@ -176,8 +170,7 @@ def set_config(req: dict):
 
 
 @router.post("/api/empresa")
-def set_empresa(e: Empresa):
-    conn = _db()
+def set_empresa(e: Empresa, conn = Depends(get_conn)):
     conn.execute(
         "INSERT INTO empresa (id, nombre, cif, direccion, poblacion, cp, pais, telefono, email, web, iva, iban) "
         "VALUES (1,?,?,?,?,?,?,?,?,?,?,?) "
@@ -187,7 +180,6 @@ def set_empresa(e: Empresa):
         (e.nombre, e.cif, e.direccion, e.poblacion, e.cp, e.pais, e.telefono, e.email, e.web, e.iva, e.iban),
     )
     conn.commit()
-    conn.close()
     return {"ok": True}
 
 

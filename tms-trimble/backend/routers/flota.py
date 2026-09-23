@@ -35,8 +35,7 @@ router = APIRouter()
 
 
 @router.post("/api/mantenimientos")
-def add_mantenimiento(m: Mantenimiento):
-    conn = _db()
+def add_mantenimiento(m: Mantenimiento, conn = Depends(get_conn)):
     cur = conn.execute(
         "INSERT INTO mantenimientos (vehiculo_id, tipo, fecha, fecha_fin, km, coste, notas, hecho, creado) "
         "VALUES (?,?,?,?,?,?,?,?,?) RETURNING id",
@@ -67,22 +66,18 @@ def add_mantenimiento(m: Mantenimiento):
                                origen="Gasto_Vehiculo", origen_id=str(gid), conn=conn)
         except ValueError as e:
             conn.rollback()
-            conn.close()
             raise HTTPException(status_code=400, detail={"error": str(e)})
     conn.commit()
-    conn.close()
     return {"ok": True, "id": mid}
 
 
 
 
 @router.post("/api/vehiculos")
-def add_vehiculo(v: Vehiculo):
-    conn = _db()
+def add_vehiculo(v: Vehiculo, conn = Depends(get_conn)):
     coste = float(v.coste_adquisicion or 0)
     # Compra (coste>0) o renting/leasing exigen proveedor vinculado.
     if (v.tipo_tenencia in ("Renting", "Leasing") or coste > 0) and not v.proveedor_id:
-        conn.close()
         raise HTTPException(status_code=400, detail={"error": "Indica el proveedor (proveedor_id) para este vehículo."})
     conn.execute(
         "INSERT INTO vehiculos (id, categoria, matricula, marca, modelo, anno, itv, seguro, peaje_categoria, "
@@ -119,24 +114,20 @@ def add_vehiculo(v: Vehiculo):
                 )
             except ValueError as exc:
                 conn.rollback()
-                conn.close()
                 raise HTTPException(status_code=400, detail={"error": str(exc)})
     conn.commit()
-    conn.close()
     return {"ok": True}
 
 
 
 
 @router.post("/api/vehiculos/{veh_id}/documentos")
-def add_vehiculo_documentos(veh_id: str, req: dict):
+def add_vehiculo_documentos(veh_id: str, req: dict, conn = Depends(get_conn)):
     """Guarda los PDF del vehículo (base64), con source='vehiculo'."""
     docs = req.get("documentos") or []
     if not docs:
         return {"ok": True, "guardados": 0}
-    conn = _db()
     if not conn.execute("SELECT id FROM vehiculos WHERE id=?", (veh_id,)).fetchone():
-        conn.close()
         raise HTTPException(status_code=404, detail={"error": "Vehículo no encontrado."})
     guardados = 0
     for d in docs:
@@ -152,40 +143,33 @@ def add_vehiculo_documentos(veh_id: str, req: dict):
         )
         guardados += 1
     conn.commit()
-    conn.close()
     return {"ok": True, "guardados": guardados}
 
 
 
 
 @router.delete("/api/vehiculos/{veh_id}")
-def del_vehiculo(veh_id: str):
-    conn = _db()
+def del_vehiculo(veh_id: str, conn = Depends(get_conn)):
     conn.execute("DELETE FROM vehiculos WHERE id=?", (veh_id,))
     conn.commit()
-    conn.close()
     return {"ok": True}
 
 
 
 
 @router.delete("/api/vehiculos/{veh_id}/documentos/{file_id}")
-def del_vehiculo_documento(veh_id: str, file_id: int):
-    conn = _db()
+def del_vehiculo_documento(veh_id: str, file_id: int, conn = Depends(get_conn)):
     conn.execute("DELETE FROM files WHERE id=? AND vehiculo_id=? AND source='vehiculo'", (file_id, veh_id))
     conn.commit()
-    conn.close()
     return {"ok": True}
 
 
 
 
 @router.delete("/api/mantenimientos/{mid}")
-def delete_mantenimiento(mid: int):
-    conn = _db()
+def delete_mantenimiento(mid: int, conn = Depends(get_conn)):
     conn.execute("DELETE FROM mantenimientos WHERE id=?", (mid,))
     conn.commit()
-    conn.close()
     return {"ok": True}
 
 
@@ -210,8 +194,7 @@ def drivers():
 
 
 @router.get("/api/alertas")
-def list_alertas(estado: str = ""):
-    conn = _db()
+def list_alertas(estado: str = "", conn = Depends(get_conn)):
     base = (
         "SELECT a.id, a.vehiculo_id, a.codigo, a.severidad, a.mensaje, a.estado, a.creado_en, "
         "i.reporte_id, v.matricula, v.marca, v.modelo "
@@ -223,16 +206,14 @@ def list_alertas(estado: str = ""):
         rows = conn.execute(base + " WHERE a.estado=? ORDER BY a.creado_en DESC", (estado,)).fetchall()
     else:
         rows = conn.execute(base + " ORDER BY a.creado_en DESC").fetchall()
-    conn.close()
     return {"alertas": [dict(r) for r in rows]}
 
 
 
 
 @router.get("/api/documentos")
-def list_documentos():
+def list_documentos(conn = Depends(get_conn)):
     """Gestor documental global: unifica files (e-CMR, pedidos, vehículos) y facturas OCR de gastos."""
-    conn = _db()
     rows = conn.execute(
         """
         SELECT f.id, 'files' AS origen, f.name AS nombre, f.source, f.formato, f.ftime AS fecha,
@@ -249,7 +230,6 @@ def list_documentos():
         ORDER BY fecha DESC
         """,
     ).fetchall()
-    conn.close()
     out = []
     for r in rows:
         nombre = r["nombre"] or "documento.pdf"
@@ -285,8 +265,7 @@ def list_documentos():
 
 
 @router.get("/api/mantenimientos")
-def list_mantenimientos(vehiculo_id: str = ""):
-    conn = _db()
+def list_mantenimientos(vehiculo_id: str = "", conn = Depends(get_conn)):
     if vehiculo_id:
         rows = conn.execute(
             "SELECT m.*, v.matricula, v.categoria FROM mantenimientos m LEFT JOIN vehiculos v ON v.id=m.vehiculo_id "
@@ -296,17 +275,14 @@ def list_mantenimientos(vehiculo_id: str = ""):
         rows = conn.execute(
             "SELECT m.*, v.matricula, v.categoria FROM mantenimientos m LEFT JOIN vehiculos v ON v.id=m.vehiculo_id ORDER BY m.fecha"
         ).fetchall()
-    conn.close()
     return {"mantenimientos": [dict(r) for r in rows]}
 
 
 
 
 @router.get("/api/tarifas-peaje")
-def list_tarifas_peaje():
-    conn = _db()
+def list_tarifas_peaje(conn = Depends(get_conn)):
     rows = conn.execute("SELECT categoria, eur_km FROM tarifas_peaje ORDER BY eur_km").fetchall()
-    conn.close()
     labels = {k: v["label"] for k, v in _PEAJE_CATEGORIAS.items()}
     return {
         "tarifas": [
@@ -320,12 +296,10 @@ def list_tarifas_peaje():
 
 
 @router.get("/api/vehiculos/{veh_id}/documentos")
-def list_vehiculo_documentos(veh_id: str):
-    conn = _db()
+def list_vehiculo_documentos(veh_id: str, conn = Depends(get_conn)):
     rows = conn.execute(
         "SELECT id, name, content_b64 FROM files WHERE vehiculo_id=? AND source='vehiculo' ORDER BY id", (veh_id,)
     ).fetchall()
-    conn.close()
     docs = []
     for r in rows:
         c = r["content_b64"] or ""
@@ -337,13 +311,11 @@ def list_vehiculo_documentos(veh_id: str):
 
 
 @router.get("/api/vehiculos")
-def list_vehiculos(categoria: str = ""):
-    conn = _db()
+def list_vehiculos(categoria: str = "", conn = Depends(get_conn)):
     if categoria:
         rows = conn.execute("SELECT * FROM vehiculos WHERE categoria=? ORDER BY id", (categoria,)).fetchall()
     else:
         rows = conn.execute("SELECT * FROM vehiculos ORDER BY id").fetchall()
-    conn.close()
     activos = _vehiculos_en_curso()
     return {"vehiculos": [{**dict(r), "disponible": r["id"] not in activos} for r in rows]}
 
@@ -351,9 +323,8 @@ def list_vehiculos(categoria: str = ""):
 
 
 @router.get("/api/vehiculos/disponibles")
-def list_vehiculos_disponibles(fecha_esperada_carga: str = "", categoria: str = ""):
+def list_vehiculos_disponibles(fecha_esperada_carga: str = "", categoria: str = "", conn = Depends(get_conn)):
     """Vehículos con disponibilidad para una fecha de carga: bloquea si tiene mantenimiento solapado o viaje en curso."""
-    conn = _db()
     fecha = (fecha_esperada_carga or "")[:10]
     en_curso = _vehiculos_en_curso()
     conds, params = [], []
@@ -398,7 +369,6 @@ def list_vehiculos_disponibles(fecha_esperada_carga: str = "", categoria: str = 
             d["disponible"] = not ocupado
             d["motivo_bloqueo"] = "En viaje" if ocupado else None
             out.append(d)
-    conn.close()
     return {"vehiculos": out}
 
 
@@ -494,17 +464,15 @@ def mantenimiento_resolver(alerta_id: int,
 
 
 @router.patch("/api/documentos/{doc_id}/renombrar")
-def renombrar_documento(doc_id: str, body: dict):
+def renombrar_documento(doc_id: str, body: dict, conn = Depends(get_conn)):
     """Renombra un documento (files.name o gastos_vehiculos.factura_ref)."""
     nuevo = (body.get("nombre") or "").strip()[:120]
     if not nuevo:
         return {"ok": False, "error": "Nombre vacío"}
-    conn = _db()
     if doc_id.startswith("files:"):
         fid = int(doc_id.split(":", 1)[1])
         row = conn.execute("SELECT name FROM files WHERE id=?", (fid,)).fetchone()
         if not row:
-            conn.close()
             raise HTTPException(status_code=404, detail={"error": "No encontrado"})
         prefijo = row["name"].split("__", 1)[0] + "__" if "__" in row["name"] else ""
         conn.execute("UPDATE files SET name=? WHERE id=?", (prefijo + nuevo, fid))
@@ -512,10 +480,8 @@ def renombrar_documento(doc_id: str, body: dict):
         gid = int(doc_id.split(":", 1)[1])
         conn.execute("UPDATE gastos_vehiculos SET factura_ref=? WHERE id=?", (nuevo, gid))
     else:
-        conn.close()
         raise HTTPException(status_code=400, detail={"error": "ID inválido"})
     conn.commit()
-    conn.close()
     return {"ok": True}
 
 
@@ -524,15 +490,13 @@ def renombrar_documento(doc_id: str, body: dict):
 
 
 @router.post("/api/tarifas-peaje")
-def set_tarifa_peaje(t: TarifaPeaje):
-    conn = _db()
+def set_tarifa_peaje(t: TarifaPeaje, conn = Depends(get_conn)):
     conn.execute(
         "INSERT INTO tarifas_peaje (categoria, eur_km) VALUES (?,?) "
         "ON CONFLICT (categoria) DO UPDATE SET eur_km=EXCLUDED.eur_km",
         (t.categoria, t.eur_km),
     )
     conn.commit()
-    conn.close()
     return {"ok": True}
 
 
@@ -567,9 +531,8 @@ def tacografo_dstat(terminal: str):
 
 
 @router.get("/api/telemetria")
-def telemetria(vehiculo: str = "", desde: str = "", hasta: str = "", limit: int = 500):
+def telemetria(vehiculo: str = "", desde: str = "", hasta: str = "", limit: int = 500, conn = Depends(get_conn)):
     """Historial de telemetría (posiciones/velocidad/rumbo) de un vehículo (hypertable)."""
-    conn = _db()
     q = ("SELECT time, source, vehiculo_id, lat, lng, speed, heading, mileage "
          "FROM telemetria WHERE 1=1")
     params = []
@@ -585,7 +548,6 @@ def telemetria(vehiculo: str = "", desde: str = "", hasta: str = "", limit: int 
     q += " ORDER BY time DESC LIMIT ?"
     params.append(min(int(limit), 5000))
     rows = conn.execute(q, params).fetchall()
-    conn.close()
     return {"puntos": [dict(r) for r in rows]}
 
 
@@ -605,12 +567,10 @@ def terminals():
 
 
 @router.patch("/api/alertas/{aid}")
-def upd_alerta(aid: int, body: AlertaUpdate):
-    conn = _db()
+def upd_alerta(aid: int, body: AlertaUpdate, conn = Depends(get_conn)):
     if body.estado in ("resuelta", "descartada", "abierta"):
         conn.execute("UPDATE alertas_mantenimiento SET estado=? WHERE id=?", (body.estado, aid))
     conn.commit()
-    conn.close()
     return {"ok": True}
 
 
@@ -621,8 +581,7 @@ def upd_alerta(aid: int, body: AlertaUpdate):
 
 
 @router.patch("/api/mantenimientos/{mid}")
-def upd_mantenimiento(mid: int, m: Optional[Mantenimiento] = None):
-    conn = _db()
+def upd_mantenimiento(mid: int, m: Optional[Mantenimiento] = None, conn = Depends(get_conn)):
     if m is None:
         conn.execute("UPDATE mantenimientos SET hecho = NOT hecho WHERE id=?", (mid,))
     else:
@@ -631,31 +590,28 @@ def upd_mantenimiento(mid: int, m: Optional[Mantenimiento] = None):
             (m.vehiculo_id, m.tipo, m.fecha, m.km, m.coste, m.notas, m.hecho, mid),
         )
     conn.commit()
-    conn.close()
     return {"ok": True}
 
 
 
 
 @router.patch("/api/mantenimientos/{mid}/campos")
-def upd_mantenimiento_campos(mid: int, body: dict):
+def upd_mantenimiento_campos(mid: int, body: dict, conn = Depends(get_conn)):
     """Edición en línea parcial: estado (hecho), coste, km, fechas, tipo o notas."""
     allow = ("hecho", "coste", "km", "fecha", "fecha_fin", "notas", "tipo")
     fields = {k: body[k] for k in allow if k in body}
     if not fields:
         return {"ok": False, "error": "Sin campos editables"}
-    conn = _db()
     sets = ", ".join(f"{k}=?" for k in fields)
     conn.execute(f"UPDATE mantenimientos SET {sets} WHERE id=?", (*fields.values(), mid))
     conn.commit()
-    conn.close()
     return {"ok": True}
 
 
 
 
 @router.patch("/api/vehiculos/{veh_id}")
-def upd_vehiculo(veh_id: str, body: dict):
+def upd_vehiculo(veh_id: str, body: dict, conn = Depends(get_conn)):
     """Edita datos técnicos y costes fijos de un vehículo (ITV, seguro, costes...)."""
     allow = ("itv", "seguro", "coste_adquisicion", "valor_residual", "vida_util",
              "clase_euro", "capacidad_peso", "capacidad_palets", "mma", "ejes",
@@ -664,23 +620,19 @@ def upd_vehiculo(veh_id: str, body: dict):
     fields = {k: body[k] for k in allow if k in body}
     if not fields:
         return {"ok": False, "error": "Sin campos editables"}
-    conn = _db()
     sets = ", ".join(f"{k}=?" for k in fields)
     conn.execute(f"UPDATE vehiculos SET {sets} WHERE id=?", (*fields.values(), veh_id))
     conn.commit()
-    conn.close()
     return {"ok": True}
 
 
 
 
 @router.get("/api/vehiculos/cercano")
-def vehiculo_cercano(lat: float, lng: float):
+def vehiculo_cercano(lat: float, lng: float, conn = Depends(get_conn)):
     """Devuelve la tractora libre más cercana al punto dado (por última posición conocida)."""
     activos = _vehiculos_en_curso()
-    conn = _db()
     rows = conn.execute("SELECT id, last_lat, last_lng, matricula FROM vehiculos WHERE categoria='tractora'").fetchall()
-    conn.close()
     best = None
     for r in rows:
         if r["id"] in activos:
@@ -703,14 +655,12 @@ def vehiculos_en_curso():
 
 
 @router.get("/api/vehiculos/posiciones")
-def vehiculos_posiciones():
+def vehiculos_posiciones(conn = Depends(get_conn)):
     """Última posición conocida de cada vehículo (de las trazas de Trimble)."""
-    conn = _db()
     rows = conn.execute(
         "SELECT id, matricula, categoria, marca, modelo, last_lat, last_lng, last_position_time "
         "FROM vehiculos WHERE last_lat IS NOT NULL AND last_lng IS NOT NULL"
     ).fetchall()
-    conn.close()
     return {"vehiculos": [dict(r) for r in rows]}
 
 

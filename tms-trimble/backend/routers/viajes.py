@@ -35,14 +35,12 @@ router = APIRouter()
 
 
 @router.post("/api/trips/{trip_id}/documentos")
-def add_trip_documentos(trip_id: str, req: dict):
+def add_trip_documentos(trip_id: str, req: dict, conn = Depends(get_conn)):
     """Guarda los PDF del pedido (se suben al DMS al asignar el viaje)."""
     docs = req.get("documentos") or []
     if not docs:
         return {"ok": True, "guardados": 0}
-    conn = _db()
     if not conn.execute("SELECT id FROM trips WHERE id=?", (trip_id,)).fetchone():
-        conn.close()
         raise HTTPException(status_code=404, detail={"error": "Viaje no encontrado."})
     guardados = 0
     for d in docs:
@@ -58,46 +56,41 @@ def add_trip_documentos(trip_id: str, req: dict):
         )
         guardados += 1
     conn.commit()
-    conn.close()
     return {"ok": True, "guardados": guardados}
 
 
 
 
 @router.get("/api/telemetria/activa")
-def api_telemetria_activa(user: dict = Depends(require_role(["admin", "dispatcher"]))):
+def api_telemetria_activa(user: dict = Depends(require_role(["admin", "dispatcher"])), conn = Depends(get_conn)):
     """Última coordenada de TODOS los vehículos + disponibilidad (Libre / En_Viaje)."""
-    conn = _db()
-    try:
-        rows = conn.execute(
-            f"WITH ultima AS ("
-            f"  SELECT DISTINCT ON (vehiculo_id) vehiculo_id, lat, lng, speed_kmh, heading, odometer_km, time "
-            f"  FROM telemetria.posiciones_gps ORDER BY vehiculo_id, time DESC"
-            f"), activa AS ("
-            f"  SELECT DISTINCT ON (terminal) terminal, id, estado, fecha_esperada_descarga, "
-            f"         conductor, matricula "
-            f"  FROM trips WHERE COALESCE(estado,'') NOT IN {_ESTADOS_FINALES_SQL} "
-            f"  ORDER BY terminal, creado DESC"
-            f"), dstat AS ("
-            f"  SELECT DISTINCT ON (vehiculo_id) vehiculo_id, did "
-            f"  FROM tacografo_dstat ORDER BY vehiculo_id, COALESCE(time, creado) DESC"
-            f") "
-            f"SELECT u.vehiculo_id, u.lat, u.lng, u.speed_kmh AS velocidad, "
-            f"       u.heading, u.odometer_km, u.time, "
-            f"       a.id AS viaje_id, COALESCE(a.estado,'') AS estado, "
-            f"       a.fecha_esperada_descarga AS fecha_esperada_descarga, "
-            f"       COALESCE(v.matricula, a.matricula, '') AS matricula, "
-            f"       COALESCE(a.conductor,'') AS conductor, "
-            f"       c.nombre AS conductor_taco "
-            f"FROM ultima u "
-            f"LEFT JOIN vehiculos v ON v.id = u.vehiculo_id "
-            f"LEFT JOIN activa a ON a.terminal = u.vehiculo_id "
-            f"LEFT JOIN dstat d ON d.vehiculo_id = u.vehiculo_id "
-            f"LEFT JOIN conductores c ON c.did = d.did "
-            f"ORDER BY u.time DESC"
-        ).fetchall()
-    finally:
-        conn.close()
+    rows = conn.execute(
+        f"WITH ultima AS ("
+        f"  SELECT DISTINCT ON (vehiculo_id) vehiculo_id, lat, lng, speed_kmh, heading, odometer_km, time "
+        f"  FROM telemetria.posiciones_gps ORDER BY vehiculo_id, time DESC"
+        f"), activa AS ("
+        f"  SELECT DISTINCT ON (terminal) terminal, id, estado, fecha_esperada_descarga, "
+        f"         conductor, matricula "
+        f"  FROM trips WHERE COALESCE(estado,'') NOT IN {_ESTADOS_FINALES_SQL} "
+        f"  ORDER BY terminal, creado DESC"
+        f"), dstat AS ("
+        f"  SELECT DISTINCT ON (vehiculo_id) vehiculo_id, did "
+        f"  FROM tacografo_dstat ORDER BY vehiculo_id, COALESCE(time, creado) DESC"
+        f") "
+        f"SELECT u.vehiculo_id, u.lat, u.lng, u.speed_kmh AS velocidad, "
+        f"       u.heading, u.odometer_km, u.time, "
+        f"       a.id AS viaje_id, COALESCE(a.estado,'') AS estado, "
+        f"       a.fecha_esperada_descarga AS fecha_esperada_descarga, "
+        f"       COALESCE(v.matricula, a.matricula, '') AS matricula, "
+        f"       COALESCE(a.conductor,'') AS conductor, "
+        f"       c.nombre AS conductor_taco "
+        f"FROM ultima u "
+        f"LEFT JOIN vehiculos v ON v.id = u.vehiculo_id "
+        f"LEFT JOIN activa a ON a.terminal = u.vehiculo_id "
+        f"LEFT JOIN dstat d ON d.vehiculo_id = u.vehiculo_id "
+        f"LEFT JOIN conductores c ON c.did = d.did "
+        f"ORDER BY u.time DESC"
+    ).fetchall()
     out = []
     for r in rows:
         tiene_viaje = bool(r["viaje_id"])
@@ -120,19 +113,15 @@ def api_telemetria_activa(user: dict = Depends(require_role(["admin", "dispatche
 
 
 @router.get("/api/telemetria/trayectoria")
-def api_telemetria_trayectoria(user: dict = Depends(require_role(["admin", "dispatcher"]))):
+def api_telemetria_trayectoria(user: dict = Depends(require_role(["admin", "dispatcher"])), conn = Depends(get_conn)):
     """Últimos 20 puntos por vehículo (rastro) para pintar polilíneas en el mapa."""
-    conn = _db()
-    try:
-        rows = conn.execute(
-            "SELECT vehiculo_id, lat, lng FROM ("
-            "  SELECT vehiculo_id, lat, lng, "
-            "         ROW_NUMBER() OVER (PARTITION BY vehiculo_id ORDER BY time DESC) AS rn "
-            "  FROM telemetria.posiciones_gps"
-            ") x WHERE rn <= 20 ORDER BY vehiculo_id, rn DESC"
-        ).fetchall()
-    finally:
-        conn.close()
+    rows = conn.execute(
+        "SELECT vehiculo_id, lat, lng FROM ("
+        "  SELECT vehiculo_id, lat, lng, "
+        "         ROW_NUMBER() OVER (PARTITION BY vehiculo_id ORDER BY time DESC) AS rn "
+        "  FROM telemetria.posiciones_gps"
+        ") x WHERE rn <= 20 ORDER BY vehiculo_id, rn DESC"
+    ).fetchall()
     out: dict = {}
     for r in rows:
         out.setdefault(r["vehiculo_id"], []).append([r["lat"], r["lng"]])
@@ -150,10 +139,8 @@ def api_viajes(user: dict = Depends(require_role(["admin", "dispatcher"]))):
 
 
 @router.post("/api/trips/{trip_id}/asignar")
-def asignar_trip(trip_id: str, req: AsignarRequest):
-    conn = _db()
+def asignar_trip(trip_id: str, req: AsignarRequest, conn = Depends(get_conn)):
     row = conn.execute("SELECT * FROM trips WHERE id=?", (trip_id,)).fetchone()
-    conn.close()
     if not row:
         raise HTTPException(status_code=404, detail={"error": f"Viaje {trip_id} no encontrado"})
     if (row["estado"] or "") not in ("sin_asignar", ""):
@@ -192,15 +179,13 @@ def asignar_trip(trip_id: str, req: AsignarRequest):
 
 
 @router.post("/api/tarifas")
-def create_tarifa(t: TarifaRequest):
-    conn = _db()
+def create_tarifa(t: TarifaRequest, conn = Depends(get_conn)):
     conn.execute(
         "INSERT INTO tarifas (nombre, tipo, precio, cliente_id, activo, creado_en) VALUES (?,?,?,?,?,?)",
         (t.nombre.strip(), t.tipo.strip().lower(), float(t.precio or 0), t.cliente_id, t.activo,
          datetime.datetime.utcnow().isoformat() + "Z"),
     )
     conn.commit()
-    conn.close()
     return {"ok": True}
 
 
@@ -223,38 +208,31 @@ def create_trip(viaje: ViajeRequest):
 
 
 @router.delete("/api/trips/{trip_id}/documentos/{file_id}")
-def del_trip_documento(trip_id: str, file_id: int):
-    conn = _db()
+def del_trip_documento(trip_id: str, file_id: int, conn = Depends(get_conn)):
     conn.execute("DELETE FROM files WHERE id=? AND trip_id=? AND source='pedido'", (file_id, trip_id))
     conn.commit()
-    conn.close()
     return {"ok": True}
 
 
 
 
 @router.delete("/api/tarifas/{tarifa_id}")
-def delete_tarifa(tarifa_id: int):
-    conn = _db()
+def delete_tarifa(tarifa_id: int, conn = Depends(get_conn)):
     conn.execute("DELETE FROM tarifas WHERE id=?", (tarifa_id,))
     conn.commit()
-    conn.close()
     return {"ok": True}
 
 
 
 
 @router.delete("/api/trips/{trip_id}")
-def delete_trip(trip_id: str, user: dict = Depends(require_role(["admin", "dispatcher"]))):
+def delete_trip(trip_id: str, user: dict = Depends(require_role(["admin", "dispatcher"])), conn = Depends(get_conn)):
     """Elimina un viaje. Los viajes finalizados solo puede eliminarlos un administrador."""
-    conn = _db()
     row = conn.execute("SELECT estado FROM trips WHERE id=?", (trip_id,)).fetchone()
     if not row:
-        conn.close()
         raise HTTPException(status_code=404, detail={"error": f"Viaje {trip_id} no encontrado"})
     estado = (row["estado"] or "").lower()
     if estado in _ESTADOS_FINALES and user.get("rol") != "admin":
-        conn.close()
         raise HTTPException(status_code=403, detail={"error": "Solo un administrador puede eliminar un viaje finalizado."})
     # Limpiar tablas hijas sin ON DELETE CASCADE.
     conn.execute("DELETE FROM files WHERE trip_id=?", (trip_id,))
@@ -264,7 +242,6 @@ def delete_trip(trip_id: str, user: dict = Depends(require_role(["admin", "dispa
     # paradas y tramos se borran por ON DELETE CASCADE.
     conn.execute("DELETE FROM trips WHERE id=?", (trip_id,))
     conn.commit()
-    conn.close()
     return {"ok": True, "trip_id": trip_id}
 
 
@@ -323,14 +300,12 @@ def duplicar_trip(trip_id: str):
 
 
 @router.post("/api/trips/{trip_id}/enviar")
-def enviar_trip(trip_id: str, force: bool = False):
+def enviar_trip(trip_id: str, force: bool = False, conn = Depends(get_conn)):
     """Envía (o reenvía) el viaje al terminal Trimble asignado.
 
     `force=true` (query) salta el chequeo de Safe-Dispatching.
     """
-    conn = _db()
     row = conn.execute("SELECT * FROM trips WHERE id=?", (trip_id,)).fetchone()
-    conn.close()
     if not row:
         raise HTTPException(status_code=404, detail={"error": f"Viaje {trip_id} no encontrado"})
     terminal = (row["terminal"] or "").strip()
@@ -357,23 +332,18 @@ def enviar_trip(trip_id: str, force: bool = False):
 
 
 @router.get("/api/trips/status")
-def trips_status():
+def trips_status(conn = Depends(get_conn)):
     _sync_status()
-    conn = _db()
     rows = conn.execute("SELECT * FROM trips ORDER BY creado DESC LIMIT 100").fetchall()
-    conn.close()
     return {"viajes": [dict(r) for r in rows]}
 
 
 @router.get("/api/trips/{trip_id}")
-def get_trip(trip_id: str):
-    conn = _db()
+def get_trip(trip_id: str, conn = Depends(get_conn)):
     row = conn.execute("SELECT * FROM trips WHERE id=?", (trip_id,)).fetchone()
     if not row:
-        conn.close()
         raise HTTPException(status_code=404, detail={"error": f"Viaje {trip_id} no encontrado"})
     paradas = conn.execute("SELECT * FROM paradas WHERE trip_id=? ORDER BY orden", (trip_id,)).fetchall()
-    conn.close()
     payload = {}
     try:
         payload = json.loads(row["payload"] or "{}")
@@ -385,26 +355,22 @@ def get_trip(trip_id: str):
 
 
 @router.get("/api/tarifas")
-def list_tarifas():
-    conn = _db()
+def list_tarifas(conn = Depends(get_conn)):
     rows = conn.execute(
         "SELECT t.id, t.nombre, t.tipo, t.precio, t.cliente_id, t.activo, t.creado_en, "
         "COALESCE(c.nombre, '') AS cliente_nombre "
         "FROM tarifas t LEFT JOIN clientes c ON c.id = t.cliente_id ORDER BY t.id"
     ).fetchall()
-    conn.close()
     return {"tarifas": [dict(r) for r in rows]}
 
 
 
 
 @router.get("/api/trips/{trip_id}/documentos")
-def list_trip_documentos(trip_id: str):
-    conn = _db()
+def list_trip_documentos(trip_id: str, conn = Depends(get_conn)):
     rows = conn.execute(
         "SELECT id, name, content_b64, source, formato FROM files WHERE trip_id=? ORDER BY id", (trip_id,)
     ).fetchall()
-    conn.close()
     docs = []
     for r in rows:
         c = r["content_b64"] or ""
@@ -418,35 +384,29 @@ def list_trip_documentos(trip_id: str):
 
 @router.get("/api/reverse-geocode")
 @router.get("/api/trips")
-def list_trips():
-    conn = _db()
+def list_trips(conn = Depends(get_conn)):
     rows = conn.execute(
         "SELECT * FROM trips ORDER BY creado DESC LIMIT 100"
     ).fetchall()
-    conn.close()
     return {"viajes": [dict(r) for r in rows]}
 
 
 
 
 @router.get("/api/trips/{trip_id}/files")
-def trip_files(trip_id: str):
-    conn = _db()
+def trip_files(trip_id: str, conn = Depends(get_conn)):
     rows = conn.execute(
         "SELECT id, name, ftype, ftime, source, driver, lid, content_b64 "
         "FROM files WHERE trip_id=? ORDER BY ftime DESC", (trip_id,)
     ).fetchall()
-    conn.close()
     return {"archivos": [dict(r) for r in rows]}
 
 
 
 
 @router.get("/api/trips/{trip_id}/paradas")
-def trip_paradas(trip_id: str):
-    conn = _db()
+def trip_paradas(trip_id: str, conn = Depends(get_conn)):
     rows = conn.execute("SELECT * FROM paradas WHERE trip_id=? ORDER BY orden", (trip_id,)).fetchall()
-    conn.close()
     return {"paradas": [dict(r) for r in rows]}
 
 
@@ -459,15 +419,13 @@ def trip_paradas(trip_id: str):
 
 
 @router.get("/api/trips/{trip_id}/tramos")
-def trip_tramos(trip_id: str):
-    conn = _db()
+def trip_tramos(trip_id: str, conn = Depends(get_conn)):
     rows = conn.execute(
         "SELECT id, orden, origen_nombre, origen_ciudad, origen_lat, origen_lng, "
         "destino_nombre, destino_ciudad, destino_lat, destino_lng, terminal, conductor, "
         "km_total, km_real, km_fuente, estado, fecha_carga, fecha_descarga "
         "FROM tramos WHERE trip_id=? ORDER BY orden", (trip_id,)
     ).fetchall()
-    conn.close()
     return {"tramos": [dict(r) for r in rows]}
 
 
@@ -478,11 +436,9 @@ def trip_tramos(trip_id: str):
 
 
 @router.put("/api/trips/{trip_id}")
-def update_pedido(trip_id: str, viaje: ViajeRequest):
+def update_pedido(trip_id: str, viaje: ViajeRequest, conn = Depends(get_conn)):
     """Actualiza un pedido sin asignar (direcciones, paradas y datos). Recalcula km/peaje."""
-    conn = _db()
     row = conn.execute("SELECT estado FROM trips WHERE id=?", (trip_id,)).fetchone()
-    conn.close()
     if not row:
         raise HTTPException(status_code=404, detail={"error": f"Viaje {trip_id} no encontrado"})
     if (row["estado"] or "") not in ("sin_asignar", ""):
@@ -493,26 +449,22 @@ def update_pedido(trip_id: str, viaje: ViajeRequest):
 
 
 @router.put("/api/tarifas/{tarifa_id}")
-def update_tarifa(tarifa_id: int, t: TarifaRequest):
-    conn = _db()
+def update_tarifa(tarifa_id: int, t: TarifaRequest, conn = Depends(get_conn)):
     conn.execute(
         "UPDATE tarifas SET nombre=?, tipo=?, precio=?, cliente_id=?, activo=? WHERE id=?",
         (t.nombre.strip(), t.tipo.strip().lower(), float(t.precio or 0), t.cliente_id, t.activo, tarifa_id),
     )
     conn.commit()
-    conn.close()
     return {"ok": True}
 
 
 
 
 @router.patch("/api/trips/{trip_id}")
-def update_trip(trip_id: str, upd: TripUpdate):
+def update_trip(trip_id: str, upd: TripUpdate, conn = Depends(get_conn)):
     """Actualiza campos de un viaje (contables + planificación)."""
-    conn = _db()
     row = conn.execute("SELECT estado FROM trips WHERE id=?", (trip_id,)).fetchone()
     if not row:
-        conn.close()
         raise HTTPException(status_code=404, detail={"error": f"Viaje {trip_id} no encontrado"})
     if (row["estado"] or "").lower() in _ESTADOS_FINALES:
         # en viajes finalizados solo se permite el cambio de estado de pago (cobro)
@@ -520,7 +472,6 @@ def update_trip(trip_id: str, upd: TripUpdate):
                              "semirremolque_id", "remolque_id", "precio", "gastos", "iva", "origen", "destino")
                  if getattr(upd, f) is not None]
         if otros:
-            conn.close()
             raise HTTPException(status_code=409, detail={"error": "El viaje está finalizado y no se puede modificar."})
     sets, params = [], []
     for field in ("factura", "estado_pago", "cliente", "tipo_carga", "conductor", "terminal", "semirremolque_id", "remolque_id", "fecha_esperada_carga", "fecha_esperada_descarga", "origen", "destino"):
@@ -537,7 +488,6 @@ def update_trip(trip_id: str, upd: TripUpdate):
         params.append(trip_id)
         conn.execute(f"UPDATE trips SET {', '.join(sets)} WHERE id=?", params)
         conn.commit()
-    conn.close()
     return {"ok": True, "trip_id": trip_id}
 
 

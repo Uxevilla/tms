@@ -35,37 +35,32 @@ router = APIRouter()
 
 
 @router.post("/api/clientes")
-def add_cliente(c: Cliente):
-    conn = _db()
+def add_cliente(c: Cliente, conn = Depends(get_conn)):
     conn.execute(
         "INSERT INTO clientes (nombre, cif, direccion, poblacion, cp, telefono, email, cuenta_contable_defecto) "
         "VALUES (?,?,?,?,?,?,?,?)",
         (c.nombre, c.cif, c.direccion, c.poblacion, c.cp, c.telefono, c.email, c.cuenta_contable_defecto),
     )
     conn.commit()
-    conn.close()
     return {"ok": True}
 
 
 
 
 @router.post("/api/conductores")
-def add_conductor(c: Conductor):
-    conn = _db()
+def add_conductor(c: Conductor, conn = Depends(get_conn)):
     conn.execute(
         "INSERT INTO conductores (nombre, dni, telefono, email) VALUES (?,?,?,?)",
         (c.nombre, c.dni, c.telefono, c.email),
     )
     conn.commit()
-    conn.close()
     return {"ok": True}
 
 
 
 
 @router.post("/api/direcciones")
-def add_direccion(d: DireccionMaestro):
-    conn = _db()
+def add_direccion(d: DireccionMaestro, conn = Depends(get_conn)):
     cur = conn.execute(
         "INSERT INTO direcciones (nombre, empresa, calle, numero, ciudad, cp, pais, lat, lng, comentario, creado) "
         "VALUES (?,?,?,?,?,?,?,?,?,?,?) RETURNING id",
@@ -74,53 +69,46 @@ def add_direccion(d: DireccionMaestro):
     )
     nuevo_id = cur.fetchone()["id"]
     conn.commit()
-    conn.close()
     return {"ok": True, "id": nuevo_id}
 
 
 
 
 @router.post("/api/proveedores")
-def add_proveedor(p: Proveedor):
-    conn = _db()
+def add_proveedor(p: Proveedor, conn = Depends(get_conn)):
     conn.execute(
         "INSERT INTO proveedores (nombre, cif, direccion, poblacion, cp, telefono, email, cuenta_contable_defecto) "
         "VALUES (?,?,?,?,?,?,?,?)",
         (p.nombre, p.cif, p.direccion, p.poblacion, p.cp, p.telefono, p.email, p.cuenta_contable_defecto),
     )
     conn.commit()
-    conn.close()
     return {"ok": True}
 
 
 
 
 @router.post("/api/transportistas")
-def add_transportista(t: Transportista):
-    conn = _db()
+def add_transportista(t: Transportista, conn = Depends(get_conn)):
     conn.execute(
         "INSERT INTO transportistas (nombre, cif, telefono, email, tarifa) VALUES (?,?,?,?,?)",
         (t.nombre, t.cif, t.telefono, t.email, t.tarifa),
     )
     conn.commit()
-    conn.close()
     return {"ok": True}
 
 
 
 
 @router.get("/api/direcciones/buscar")
-def buscar_direcciones(q: str = ""):
+def buscar_direcciones(q: str = "", conn = Depends(get_conn)):
     """Buscador de origen/destino: primero maestros (direcciones + clientes), luego Photon (externo)."""
     q = (q or "").strip()
     if not q:
         conn = _db()
         rows = conn.execute("SELECT * FROM direcciones ORDER BY ciudad, nombre LIMIT 20").fetchall()
-        conn.close()
         return {"sugerencias": [_direccion_dict(r) for r in rows]}
 
     like = f"%{q}%"
-    conn = _db()
     out = []
     rows = conn.execute(
         "SELECT * FROM direcciones WHERE nombre ILIKE ? OR empresa ILIKE ? OR calle ILIKE ? OR ciudad ILIKE ? OR cp ILIKE ? "
@@ -137,7 +125,6 @@ def buscar_direcciones(q: str = ""):
         out.append({"id": None, "tipo": "cliente", "nombre": c["nombre"], "empresa": c["nombre"],
                     "calle": c["direccion"] or "", "numero": "", "ciudad": c["poblacion"] or "",
                     "cp": c["cp"] or "", "pais": "ES", "lat": None, "lng": None})
-    conn.close()
     out.extend(_buscar_photon(q))
     return {"sugerencias": out}
 
@@ -145,29 +132,24 @@ def buscar_direcciones(q: str = ""):
 
 
 @router.delete("/api/clientes/{cli_id}")
-def del_cliente(cli_id: int, user: dict = Depends(require_role(["admin", "dispatcher"]))):
-    conn = _db()
+def del_cliente(cli_id: int, user: dict = Depends(require_role(["admin", "dispatcher"])), conn = Depends(get_conn)):
     row = conn.execute("SELECT * FROM clientes WHERE id=?", (cli_id,)).fetchone()
     if not row:
-        conn.close()
         raise HTTPException(status_code=404, detail={"error": "Cliente no encontrado"})
     quien = user.get("usuario") or user.get("rol") or "sistema"
     conn.execute("UPDATE clientes SET borrado=true, borrado_por=?, borrado_en=? WHERE id=?",
                  (quien, datetime.datetime.utcnow().isoformat() + "Z", cli_id))
     _auditar(conn, "clientes", cli_id, "eliminar", quien, antes=dict(row))
     conn.commit()
-    conn.close()
     return {"ok": True}
 
 
 
 
 @router.delete("/api/conductores/{con_id}")
-def del_conductor(con_id: int):
-    conn = _db()
+def del_conductor(con_id: int, conn = Depends(get_conn)):
     conn.execute("DELETE FROM conductores WHERE id=?", (con_id,))
     conn.commit()
-    conn.close()
     return {"ok": True}
 
 
@@ -176,60 +158,50 @@ def del_conductor(con_id: int):
 
 
 @router.delete("/api/direcciones/{did}")
-def del_direccion(did: int):
-    conn = _db()
+def del_direccion(did: int, conn = Depends(get_conn)):
     conn.execute("DELETE FROM direcciones WHERE id=?", (did,))
     conn.commit()
-    conn.close()
     return {"ok": True}
 
 
 
 
 @router.delete("/api/proveedores/{prov_id}")
-def del_proveedor(prov_id: int, user: dict = Depends(require_role(["admin", "dispatcher"]))):
-    conn = _db()
+def del_proveedor(prov_id: int, user: dict = Depends(require_role(["admin", "dispatcher"])), conn = Depends(get_conn)):
     row = conn.execute("SELECT * FROM proveedores WHERE id=?", (prov_id,)).fetchone()
     if not row:
-        conn.close()
         raise HTTPException(status_code=404, detail={"error": "Proveedor no encontrado"})
     quien = user.get("usuario") or user.get("rol") or "sistema"
     conn.execute("UPDATE proveedores SET borrado=true, borrado_por=?, borrado_en=? WHERE id=?",
                  (quien, datetime.datetime.utcnow().isoformat() + "Z", prov_id))
     _auditar(conn, "proveedores", prov_id, "eliminar", quien, antes=dict(row))
     conn.commit()
-    conn.close()
     return {"ok": True}
 
 
 
 
 @router.delete("/api/transportistas/{tid}")
-def del_transportista(tid: int):
-    conn = _db()
+def del_transportista(tid: int, conn = Depends(get_conn)):
     conn.execute("DELETE FROM liquidaciones WHERE transportista_id=?", (tid,))
     conn.execute("DELETE FROM transportistas WHERE id=?", (tid,))
     conn.commit()
-    conn.close()
     return {"ok": True}
 
 
 
 
 @router.get("/api/clientes")
-def list_clientes():
-    conn = _db()
+def list_clientes(conn = Depends(get_conn)):
     rows = conn.execute("SELECT * FROM clientes WHERE COALESCE(borrado, false) = false ORDER BY nombre").fetchall()
-    conn.close()
     return {"clientes": [dict(r) for r in rows]}
 
 
 
 
 @router.get("/api/conductores")
-def list_conductores(fecha_esperada_carga: str = ""):
+def list_conductores(fecha_esperada_carga: str = "", conn = Depends(get_conn)):
     """Conductores con disponibilidad según ausencias_empleados para la fecha de carga indicada."""
-    conn = _db()
     fecha = (fecha_esperada_carga or "")[:10]
     if fecha:
         rows = conn.execute(
@@ -251,46 +223,38 @@ def list_conductores(fecha_esperada_carga: str = ""):
         rows = conn.execute(
             "SELECT c.*, true AS disponible, NULL AS motivo_ausencia FROM conductores c ORDER BY c.nombre"
         ).fetchall()
-    conn.close()
     return {"conductores": [dict(r) for r in rows]}
 
 
 
 
 @router.get("/api/direcciones")
-def list_direcciones():
-    conn = _db()
+def list_direcciones(conn = Depends(get_conn)):
     rows = conn.execute("SELECT * FROM direcciones ORDER BY ciudad, nombre, calle").fetchall()
-    conn.close()
     return {"direcciones": [dict(r) for r in rows]}
 
 
 
 
 @router.get("/api/proveedores")
-def list_proveedores():
-    conn = _db()
+def list_proveedores(conn = Depends(get_conn)):
     rows = conn.execute("SELECT * FROM proveedores WHERE COALESCE(borrado, false) = false ORDER BY nombre").fetchall()
-    conn.close()
     return {"proveedores": [dict(r) for r in rows]}
 
 
 
 
 @router.get("/api/transportistas")
-def list_transportistas():
-    conn = _db()
+def list_transportistas(conn = Depends(get_conn)):
     rows = conn.execute("SELECT * FROM transportistas ORDER BY nombre").fetchall()
-    conn.close()
     return {"transportistas": [dict(r) for r in rows]}
 
 
 
 
 @router.post("/api/conductores/sincronizar-rrhh")
-def sincronizar_conductores_rrhh():
+def sincronizar_conductores_rrhh(conn = Depends(get_conn)):
     """Nutre el maestro de conductores desde los empleados (categoría Conductor)."""
-    conn = _db()
     emps = conn.execute(
         "SELECT * FROM empleados WHERE categoria='Conductor' ORDER BY nombre, apellidos"
     ).fetchall()
@@ -303,77 +267,66 @@ def sincronizar_conductores_rrhh():
             creados += 1
         _sync_conductor(conn, e)
     conn.commit()
-    conn.close()
     return {"ok": True, "creados": creados, "actualizados": actualizados, "empleados_conductor": len(emps)}
 
 
 
 
 @router.patch("/api/clientes/{cli_id}")
-def upd_cliente(cli_id: int, body: dict):
+def upd_cliente(cli_id: int, body: dict, conn = Depends(get_conn)):
     allow = ("nombre", "cif", "direccion", "poblacion", "cp", "telefono", "email", "cuenta_contable_defecto")
     fields = {k: body[k] for k in allow if k in body}
     if not fields:
         return {"ok": False, "error": "Sin campos editables"}
-    conn = _db()
     sets = ", ".join(f"{k}=?" for k in fields)
     conn.execute(f"UPDATE clientes SET {sets} WHERE id=?", (*fields.values(), cli_id))
     conn.commit()
-    conn.close()
     return {"ok": True}
 
 
 
 
 @router.patch("/api/conductores/{con_id}")
-def upd_conductor(con_id: int, c: Conductor):
-    conn = _db()
+def upd_conductor(con_id: int, c: Conductor, conn = Depends(get_conn)):
     conn.execute("UPDATE conductores SET nombre=?, dni=?, telefono=?, email=? WHERE id=?",
                  (c.nombre, c.dni, c.telefono, c.email, con_id))
     conn.commit()
-    conn.close()
     return {"ok": True}
 
 
 
 
 @router.patch("/api/direcciones/{did}")
-def upd_direccion(did: int, d: DireccionMaestro):
-    conn = _db()
+def upd_direccion(did: int, d: DireccionMaestro, conn = Depends(get_conn)):
     conn.execute(
         "UPDATE direcciones SET nombre=?, empresa=?, calle=?, numero=?, ciudad=?, cp=?, pais=?, lat=?, lng=?, comentario=? WHERE id=?",
         (d.nombre, d.empresa, d.calle, d.numero, d.ciudad, d.cp, d.pais, d.lat, d.lng, d.comentario, did),
     )
     conn.commit()
-    conn.close()
     return {"ok": True}
 
 
 
 
 @router.patch("/api/proveedores/{prov_id}")
-def upd_proveedor(prov_id: int, body: dict):
+def upd_proveedor(prov_id: int, body: dict, conn = Depends(get_conn)):
     allow = ("nombre", "cif", "direccion", "poblacion", "cp", "telefono", "email", "cuenta_contable_defecto")
     fields = {k: body[k] for k in allow if k in body}
     if not fields:
         return {"ok": False, "error": "Sin campos editables"}
-    conn = _db()
     sets = ", ".join(f"{k}=?" for k in fields)
     conn.execute(f"UPDATE proveedores SET {sets} WHERE id=?", (*fields.values(), prov_id))
     conn.commit()
-    conn.close()
     return {"ok": True}
 
 
 
 
 @router.patch("/api/transportistas/{tid}")
-def upd_transportista(tid: int, t: Transportista):
-    conn = _db()
+def upd_transportista(tid: int, t: Transportista, conn = Depends(get_conn)):
     conn.execute("UPDATE transportistas SET nombre=?, cif=?, telefono=?, email=?, tarifa=? WHERE id=?",
                  (t.nombre, t.cif, t.telefono, t.email, t.tarifa, tid))
     conn.commit()
-    conn.close()
     return {"ok": True}
 
 

@@ -94,22 +94,18 @@ def auth_superadmin(req: dict, request: Request):
 
 
 @router.post("/api/auth/change-password")
-def change_password(req: dict, user: dict = Depends(require_jwt)):
+def change_password(req: dict, user: dict = Depends(require_jwt), conn = Depends(get_conn)):
     """Cambia la contraseña del usuario autenticado y limpia el flag de cambio forzado."""
     antigua = (req.get("old_password") or "").strip()
     nueva = (req.get("new_password") or "").strip()
     if len(nueva) < 12:
         raise HTTPException(status_code=400, detail={"error": "La nueva contraseña debe tener al menos 12 caracteres."})
-    conn = _db()
-    try:
-        row = conn.execute("SELECT password_hash FROM config.usuarios WHERE usuario=?", (user["usuario"],)).fetchone()
-        if not row or not _verify_password(antigua, row["password_hash"]):
-            raise HTTPException(status_code=401, detail={"error": "Contraseña actual incorrecta."})
-        conn.execute("UPDATE config.usuarios SET password_hash=?, debe_cambiar_clave=false WHERE usuario=?",
-                     (_hash_password(nueva), user["usuario"]))
-        conn.commit()
-    finally:
-        conn.close()
+    row = conn.execute("SELECT password_hash FROM config.usuarios WHERE usuario=?", (user["usuario"],)).fetchone()
+    if not row or not _verify_password(antigua, row["password_hash"]):
+        raise HTTPException(status_code=401, detail={"error": "Contraseña actual incorrecta."})
+    conn.execute("UPDATE config.usuarios SET password_hash=?, debe_cambiar_clave=false WHERE usuario=?",
+                 (_hash_password(nueva), user["usuario"]))
+    conn.commit()
     return {"ok": True}
 
 

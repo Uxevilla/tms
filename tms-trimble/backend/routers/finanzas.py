@@ -35,8 +35,7 @@ router = APIRouter()
 
 
 @router.get("/api/liquidaciones")
-def list_liquidaciones():
-    conn = _db()
+def list_liquidaciones(conn = Depends(get_conn)):
     liq = conn.execute(
         "SELECT l.*, t.nombre AS transportista FROM liquidaciones l "
         "LEFT JOIN transportistas t ON l.transportista_id = t.id ORDER BY l.fecha"
@@ -48,15 +47,13 @@ def list_liquidaciones():
         "FROM transportistas t LEFT JOIN liquidaciones l ON l.transportista_id = t.id "
         "GROUP BY t.id, t.nombre, t.cif, t.tarifa ORDER BY t.nombre"
     ).fetchall()
-    conn.close()
     return {"liquidaciones": [dict(r) for r in liq], "por_transportista": [dict(r) for r in acum]}
 
 
 
 
 @router.post("/api/liquidaciones")
-def add_liquidacion(l: Liquidacion):
-    conn = _db()
+def add_liquidacion(l: Liquidacion, conn = Depends(get_conn)):
     conn.execute(
         "INSERT INTO liquidaciones (transportista_id, fecha, importe, concepto, pagado, creado) "
         "VALUES (?,?,?,?,?,?)",
@@ -64,15 +61,13 @@ def add_liquidacion(l: Liquidacion):
          datetime.datetime.utcnow().isoformat() + "Z"),
     )
     conn.commit()
-    conn.close()
     return {"ok": True}
 
 
 
 
 @router.patch("/api/liquidaciones/{lid}")
-def upd_liquidacion(lid: int, l: Optional[Liquidacion] = None):
-    conn = _db()
+def upd_liquidacion(lid: int, l: Optional[Liquidacion] = None, conn = Depends(get_conn)):
     if l is None:
         conn.execute("UPDATE liquidaciones SET pagado = NOT pagado WHERE id=?", (lid,))
     else:
@@ -81,30 +76,26 @@ def upd_liquidacion(lid: int, l: Optional[Liquidacion] = None):
             (l.transportista_id, l.fecha, l.importe, l.concepto, l.pagado, lid),
         )
     conn.commit()
-    conn.close()
     return {"ok": True}
 
 
 
 
 @router.delete("/api/liquidaciones/{lid}")
-def del_liquidacion(lid: int):
-    conn = _db()
+def del_liquidacion(lid: int, conn = Depends(get_conn)):
     conn.execute("DELETE FROM liquidaciones WHERE id=?", (lid,))
     conn.commit()
-    conn.close()
     return {"ok": True}
 
 
 
 
 @router.get("/api/ingresos")
-def ingresos(desde: str = "", hasta: str = "", estado: str = ""):
+def ingresos(desde: str = "", hasta: str = "", estado: str = "", conn = Depends(get_conn)):
     """Agrega los ingresos por vehículo y por cliente (precio de los viajes).
 
     Filtros opcionales: desde/hasta (fecha YYYY-MM-DD) y estado.
     """
-    conn = _db()
     query = ("SELECT id, nombre, terminal, cliente, conductor, tipo_carga, origen, destino, "
              "precio, gastos, km_total, estado_pago, factura, iva, creado FROM trips")
     conds, params = [], []
@@ -135,7 +126,6 @@ def ingresos(desde: str = "", hasta: str = "", estado: str = ""):
     gv_where = (" WHERE " + " AND ".join(gv_conds)) if gv_conds else ""
     for r in conn.execute(f"SELECT terminal, SUM(importe) AS t FROM gastos{gv_where} GROUP BY terminal", gv_params).fetchall():
         gv_map[(r["terminal"] or "").strip()] = round(r["t"] or 0, 2)
-    conn.close()
 
     # Costes de estructura: % sobre ingresos (configurable en /api/config)
     try:

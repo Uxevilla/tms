@@ -35,14 +35,12 @@ router = APIRouter()
 
 
 @router.get("/api/clientes/{cliente_id}/pales")
-def cliente_pales(cliente_id: int):
+def cliente_pales(cliente_id: int, conn = Depends(get_conn)):
     """Cuenta corriente de palés de un cliente: saldo actual + histórico de movimientos."""
-    conn = _db()
     movs = conn.execute(
         "SELECT * FROM saldos_pales WHERE cliente_id=? ORDER BY id DESC LIMIT 200",
         (cliente_id,),
     ).fetchall()
-    conn.close()
     saldo = int(movs[0]["balance"]) if movs else 0
     return {
         "ok": True,
@@ -55,13 +53,11 @@ def cliente_pales(cliente_id: int):
 
 
 @router.get("/api/messagetypes")
-def list_messagetypes():
+def list_messagetypes(conn = Depends(get_conn)):
     """messagetype válidos configurados en FleetWorks (descubiertos de los mensajes recibidos)."""
-    conn = _db()
     rows = conn.execute(
         "SELECT DISTINCT messagetype FROM mensajes WHERE COALESCE(messagetype,'') <> '' ORDER BY messagetype"
     ).fetchall()
-    conn.close()
     return {"messagetypes": [r["messagetype"] for r in rows]}
 
 
@@ -121,29 +117,25 @@ def mensajeria_enviar(terminal: str, req: SendMensajeRequest):
 
 
 @router.get("/api/mensajeria/{terminal}/mensajes")
-def mensajeria_mensajes(terminal: str):
+def mensajeria_mensajes(terminal: str, conn = Depends(get_conn)):
     """Mensajes de un terminal (recibidos: source=terminal; enviados: terminal=terminal)."""
-    conn = _db()
     rows = conn.execute(
         "SELECT id, trip_id, tipo, messagetype, originid, source, subject, body, time, needreply, terminal "
         "FROM mensajes WHERE source=? OR terminal=? ORDER BY time LIMIT 300",
         (terminal, terminal),
     ).fetchall()
-    conn.close()
     return {"ok": True, "terminal": terminal, "mensajes": [dict(r) for r in rows]}
 
 
 
 
 @router.get("/api/mensajeria/terminales")
-def mensajeria_terminales():
+def mensajeria_terminales(conn = Depends(get_conn)):
     """Lista los terminales APP (Fleet XPS) disponibles para mensajería."""
-    conn = _db()
     rows = conn.execute(
         "SELECT DISTINCT app_terminal AS id FROM vehiculos "
         "WHERE app_terminal IS NOT NULL AND app_terminal<>'' ORDER BY app_terminal"
     ).fetchall()
-    conn.close()
     terminales = [dict(r) for r in rows]
     default = config.DEFAULT_TRIMBLE_TERMINAL
     if default and not any(t["id"] == default for t in terminales):
@@ -154,10 +146,8 @@ def mensajeria_terminales():
 
 
 @router.post("/api/trips/{trip_id}/mensajes")
-def send_trip_mensaje(trip_id: str, req: SendMensajeRequest):
-    conn = _db()
+def send_trip_mensaje(trip_id: str, req: SendMensajeRequest, conn = Depends(get_conn)):
     row = conn.execute("SELECT terminal FROM trips WHERE id=?", (trip_id,)).fetchone()
-    conn.close()
     terminal = (row["terminal"] if row else "") or ""
     if not terminal:
         return {"ok": False, "error": "El viaje no tiene terminal asignado."}
@@ -172,7 +162,6 @@ def send_trip_mensaje(trip_id: str, req: SendMensajeRequest):
         "SELECT id FROM mensajes WHERE trip_id=? AND tipo IN ('enviado','estructurado','libre') "
         "ORDER BY creado DESC LIMIT 1", (trip_id,)
     ).fetchone()
-    conn.close()
     parent_id = row["id"] if row else None
 
     msg_id = f"TMS{int(time.time() * 1000)}"
@@ -188,11 +177,9 @@ def send_trip_mensaje(trip_id: str, req: SendMensajeRequest):
 
 
 @router.post("/api/trips/{trip_id}/questionpath")
-def send_trip_questionpath(trip_id: str, req: dict):
+def send_trip_questionpath(trip_id: str, req: dict, conn = Depends(get_conn)):
     """Envía un question path (mensaje estructurado) al terminal del viaje."""
-    conn = _db()
     row = conn.execute("SELECT terminal FROM trips WHERE id=?", (trip_id,)).fetchone()
-    conn.close()
     terminal = (row["terminal"] if row else "") or ""
     if not terminal:
         return {"ok": False, "error": "El viaje no tiene terminal asignado."}
@@ -216,13 +203,11 @@ def send_trip_questionpath(trip_id: str, req: dict):
 
 
 @router.get("/api/trips/{trip_id}/mensajes")
-def trip_mensajes(trip_id: str):
-    conn = _db()
+def trip_mensajes(trip_id: str, conn = Depends(get_conn)):
     rows = conn.execute(
         "SELECT id, tipo, messagetype, originid, source, subject, body, time, needreply "
         "FROM mensajes WHERE trip_id=? ORDER BY time DESC", (trip_id,)
     ).fetchall()
-    conn.close()
     return {"mensajes": [dict(r) for r in rows]}
 
 

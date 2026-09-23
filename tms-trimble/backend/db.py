@@ -568,4 +568,17 @@ def _get_config(key, default=""):
     return row["value"] if row else default
 
 
-__all__ = ["_tenant_ctx", "_usuario_ctx", "_schema_done", "_Conn", "_SCHEMA", "_db", "_get_config"]
+def get_conn():
+    """Dependencia FastAPI: una conexión por request, cerrada SIEMPRE (try/finally).
+
+    Uso: `def list_clientes(conn = Depends(get_conn)): ...` — elimina las fugas de
+    conexión del pool (el `finally` devuelve la conexión aunque el endpoint lance).
+    """
+    conn = _db()
+    try:
+        yield conn
+    finally:
+        conn.close()
+
+
+__all__ = ["_tenant_ctx", "_usuario_ctx", "_schema_done", "_Conn", "_SCHEMA", "_db", "_get_config", "get_conn"]

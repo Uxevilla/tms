@@ -4,10 +4,10 @@ import uuid
 import datetime
 import io
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 
 import config
-from db import _db
+from db import _db, get_conn
 from models import Empleado, Nomina, Ausencia, AusenciaPlanificada
 import main as _m
 
@@ -20,20 +20,17 @@ router = APIRouter()
 
 
 @router.get("/api/empleados")
-def list_empleados():
-    conn = _db()
+def list_empleados(conn = Depends(get_conn)):
     rows = conn.execute("SELECT * FROM empleados ORDER BY fecha_baja IS NOT NULL, nombre, apellidos").fetchall()
-    conn.close()
     for r in rows:
         r["activo"] = not r["fecha_baja"]
     return {"empleados": [dict(r) for r in rows]}
 
 
 @router.post("/api/empleados")
-def add_empleado(e: Empleado):
+def add_empleado(e: Empleado, conn = Depends(get_conn)):
     if not (e.nombre or "").strip():
         raise HTTPException(status_code=400, detail={"error": "Indica el nombre del empleado."})
-    conn = _db()
     eid = "EMP-" + uuid.uuid4().hex[:10].upper()
     conn.execute(
         "INSERT INTO empleados (id, nombre, apellidos, dni, nss, email, telefono, direccion, ciudad, cp, "
@@ -49,12 +46,11 @@ def add_empleado(e: Empleado):
         _m._sync_conductor(conn, {"id": eid, "nombre": e.nombre, "apellidos": e.apellidos, "dni": e.dni,
                                "telefono": e.telefono, "email": e.email, "fecha_baja": e.fecha_baja})
     conn.commit()
-    conn.close()
     return {"ok": True, "id": eid}
 
 
 @router.patch("/api/empleados/{emp_id}")
-def upd_empleado(emp_id: str, body: dict):
+def upd_empleado(emp_id: str, body: dict, conn = Depends(get_conn)):
     allow = ("nombre", "apellidos", "dni", "nss", "email", "telefono", "direccion", "ciudad", "cp",
              "fecha_alta", "fecha_baja", "categoria", "puesto", "tipo_contrato", "jornada",
              "banco", "iban", "titular", "salario_bruto", "irpf", "disponibilidad",
@@ -66,7 +62,6 @@ def upd_empleado(emp_id: str, body: dict):
     for k in ("salario_bruto", "irpf"):
         if k in fields and fields[k] is not None:
             fields[k] = float(fields[k])
-    conn = _db()
     sets = ", ".join(f"{k}=?" for k in fields)
     conn.execute(f"UPDATE empleados SET {sets} WHERE id=?", (*fields.values(), emp_id))
     # Re-sincroniza el conductor local si se tocaron datos relevantes y es Conductor.
@@ -79,16 +74,13 @@ def upd_empleado(emp_id: str, body: dict):
                                    "dni": row["dni"], "telefono": row["telefono"], "email": row["email"],
                                    "fecha_baja": row["fecha_baja"]})
     conn.commit()
-    conn.close()
     return {"ok": True}
 
 
 @router.delete("/api/empleados/{emp_id}")
-def del_empleado(emp_id: str):
-    conn = _db()
+def del_empleado(emp_id: str, conn = Depends(get_conn)):
     conn.execute("DELETE FROM empleados WHERE id=?", (emp_id,))
     conn.commit()
-    conn.close()
     return {"ok": True}
 
 
@@ -104,8 +96,7 @@ def _calc_nomina(bruto, irpf_pct, ss_t_pct, ss_e_pct):
 
 
 @router.get("/api/nominas")
-def list_nominas(periodo: str = "", empleado_id: str = ""):
-    conn = _db()
+def list_nominas(periodo: str = "", empleado_id: str = "", conn = Depends(get_conn)):
     conds, params = [], []
     if periodo: conds.append("n.periodo=?"); params.append(periodo)
     if empleado_id: conds.append("n.empleado_id=?"); params.append(empleado_id)
@@ -114,11 +105,10 @@ def list_nominas(periodo: str = "", empleado_id: str = ""):
         f"SELECT n.*, e.nombre, e.apellidos, e.categoria FROM nominas n JOIN empleados e ON e.id=n.empleado_id "
         f"{where} ORDER BY n.periodo DESC, n.id DESC", params,
     ).fetchall()
-    conn.close()
     return {"nominas": [dict(r) for r in rows]}
 
 
-def _generar_nomina_pdf(nomina_id):
+def _generar_nomina_pdf(nomina_id, conn = Depends(get_conn)):
     import io
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.units import mm
@@ -126,14 +116,12 @@ def _generar_nomina_pdf(nomina_id):
     from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 
-    conn = _db()
     n = conn.execute(
         "SELECT n.*, e.nombre, e.apellidos, e.dni, e.nss, e.categoria, e.puesto, e.iban "
         "FROM nominas n JOIN empleados e ON e.id=n.empleado_id WHERE n.id=?",
         (nomina_id,),
     ).fetchone()
     if not n:
-        conn.close()
         raise HTTPException(status_code=404, detail={"error": "Nómina no encontrada."})
     emp = _m._empresa()
     # Líneas de devengo extra (dietas/pernocta) desde lineas_nomina.
@@ -141,7 +129,6 @@ def _generar_nomina_pdf(nomina_id):
         "SELECT concepto, importe FROM lineas_nomina WHERE nomina_id=? AND tipo='devengo' ORDER BY id",
         (nomina_id,),
     ).fetchall()
-    conn.close()
 
     def eur(v):
         n = f"{float(v or 0):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
@@ -240,19 +227,16 @@ def nomina_pdf(nomina_id: int):
 
 
 @router.get("/api/nominas/{nomina_id}/lineas")
-def nomina_lineas(nomina_id: int):
+def nomina_lineas(nomina_id: int, conn = Depends(get_conn)):
     """Líneas de devengo/deducción (dietas, pluses…) de una nómina."""
-    conn = _db()
     lineas = conn.execute(
         "SELECT * FROM lineas_nomina WHERE nomina_id=? ORDER BY id", (nomina_id,)
     ).fetchall()
-    conn.close()
     return {"ok": True, "nomina_id": nomina_id, "lineas": [dict(l) for l in lineas]}
 
 
 @router.post("/api/nominas")
-def add_nomina(n: Nomina):
-    conn = _db()
+def add_nomina(n: Nomina, conn = Depends(get_conn)):
     emp = conn.execute("SELECT salario_bruto, irpf FROM empleados WHERE id=?", (n.empleado_id,)).fetchone()
     bruto = n.salario_bruto if n.salario_bruto else (float(emp["salario_bruto"] or 0) if emp else 0.0)
     irpf = n.irpf_pct if n.irpf_pct else (float(emp["irpf"] or 15) if emp else 15.0)
@@ -267,13 +251,11 @@ def add_nomina(n: Nomina):
     )
     nid = cur.fetchone()["id"]
     conn.commit()
-    conn.close()
     return {"ok": True, "id": nid, "neto": neto, "coste_empresa": coste}
 
 
 @router.patch("/api/nominas/{nomina_id}")
-def upd_nomina(nomina_id: int, n: Nomina):
-    conn = _db()
+def upd_nomina(nomina_id: int, n: Nomina, conn = Depends(get_conn)):
     ss_t, ss_e, irpf_imp, neto, coste = _calc_nomina(n.salario_bruto, n.irpf_pct, n.ss_trabajador_pct, n.ss_empresa_pct)
     conn.execute(
         "UPDATE nominas SET salario_bruto=?, irpf_pct=?, ss_trabajador_pct=?, ss_empresa_pct=?, "
@@ -281,27 +263,23 @@ def upd_nomina(nomina_id: int, n: Nomina):
         (n.salario_bruto, n.irpf_pct, n.ss_trabajador_pct, n.ss_empresa_pct, ss_t, ss_e, irpf_imp, neto, coste, n.notas, nomina_id),
     )
     conn.commit()
-    conn.close()
     return {"ok": True, "neto": neto, "coste_empresa": coste}
 
 
 @router.delete("/api/nominas/{nomina_id}")
-def del_nomina(nomina_id: int):
-    conn = _db()
+def del_nomina(nomina_id: int, conn = Depends(get_conn)):
     conn.execute("DELETE FROM asientos WHERE id IN (SELECT asiento_id FROM nominas WHERE id=?)", (nomina_id,))
     conn.execute("DELETE FROM nominas WHERE id=?", (nomina_id,))
     conn.commit()
-    conn.close()
     return {"ok": True}
 
 
 @router.post("/api/nominas/generar")
-def generar_nominas(req: dict):
+def generar_nominas(req: dict, conn = Depends(get_conn)):
     periodo = (req.get("periodo") or "").strip()
     if not periodo:
         hoy = datetime.date.today()
         periodo = f"{hoy.year:04d}-{hoy.month:02d}"
-    conn = _db()
     emps = conn.execute("SELECT * FROM empleados WHERE fecha_baja IS NULL OR fecha_baja=''").fetchall()
     creadas, saltadas = 0, 0
     for e in emps:
@@ -321,19 +299,15 @@ def generar_nominas(req: dict):
         )
         creadas += 1
     conn.commit()
-    conn.close()
     return {"ok": True, "periodo": periodo, "creadas": creadas, "saltadas": saltadas}
 
 
 @router.post("/api/nominas/{nomina_id}/contabilizar")
-def contabilizar_nomina(nomina_id: int):
-    conn = _db()
+def contabilizar_nomina(nomina_id: int, conn = Depends(get_conn)):
     n = conn.execute("SELECT * FROM nominas WHERE id=?", (nomina_id,)).fetchone()
     if not n:
-        conn.close()
         raise HTTPException(status_code=404, detail={"error": "Nómina no encontrada."})
     if n["contabilizado"]:
-        conn.close()
         raise HTTPException(status_code=409, detail={"error": "La nómina ya está contabilizada."})
     bruto = float(n["salario_bruto"] or 0)
     ss_e = float(n["ss_empresa"] or 0)
@@ -352,19 +326,15 @@ def contabilizar_nomina(nomina_id: int):
     )
     conn.execute("UPDATE nominas SET contabilizado=TRUE, asiento_id=?, estado='emitida' WHERE id=?", (aid, nomina_id))
     conn.commit()
-    conn.close()
     return {"ok": True, "asiento_id": aid}
 
 
 @router.post("/api/nominas/{nomina_id}/pagar")
-def pagar_nomina(nomina_id: int):
-    conn = _db()
+def pagar_nomina(nomina_id: int, conn = Depends(get_conn)):
     n = conn.execute("SELECT * FROM nominas WHERE id=?", (nomina_id,)).fetchone()
     if not n:
-        conn.close()
         raise HTTPException(status_code=404, detail={"error": "Nómina no encontrada."})
     if n["pagado"]:
-        conn.close()
         return {"ok": True, "ya_pagada": True}
     neto = float(n["neto"] or 0)
     ss = round(float(n["ss_trabajador"] or 0) + float(n["ss_empresa"] or 0), 2)
@@ -381,7 +351,6 @@ def pagar_nomina(nomina_id: int):
     )
     conn.execute("UPDATE nominas SET pagado=TRUE, fecha_pago=?, estado='pagada' WHERE id=?", (fecha, nomina_id))
     conn.commit()
-    conn.close()
     return {"ok": True, "asiento_id": aid}
 
 
@@ -584,22 +553,19 @@ def _seed_demo(conn):
 
 
 @router.post("/api/dev/seed")
-def dev_seed():
+def dev_seed(conn = Depends(get_conn)):
     """Endpoint de desarrollo: inyecta datos demo. Solo con TMS_ENV=dev."""
     if os.environ.get("TMS_ENV") != "dev":
         raise HTTPException(status_code=404, detail={"error": "No encontrado"})
-    conn = _db()
     res = _seed_demo(conn)
     conn.commit()
-    conn.close()
     return {"ok": True, **res}
 
 
 
 
 @router.get("/api/ausencias")
-def list_ausencias(empleado_id: str = ""):
-    conn = _db()
+def list_ausencias(empleado_id: str = "", conn = Depends(get_conn)):
     conds, params = [], []
     if empleado_id: conds.append("a.empleado_id=?"); params.append(empleado_id)
     where = (" WHERE " + " AND ".join(conds)) if conds else ""
@@ -607,15 +573,13 @@ def list_ausencias(empleado_id: str = ""):
         f"SELECT a.*, e.nombre, e.apellidos, e.categoria FROM ausencias a JOIN empleados e ON e.id=a.empleado_id "
         f"{where} ORDER BY a.fecha_inicio DESC", params,
     ).fetchall()
-    conn.close()
     return {"ausencias": [dict(r) for r in rows]}
 
 
 @router.post("/api/ausencias")
-def add_ausencia(a: Ausencia):
+def add_ausencia(a: Ausencia, conn = Depends(get_conn)):
     if not (a.empleado_id or "").strip():
         raise HTTPException(status_code=400, detail={"error": "Selecciona el empleado."})
-    conn = _db()
     cur = conn.execute(
         "INSERT INTO ausencias (empleado_id, tipo, fecha_inicio, fecha_fin, dias, estado, nota, creado) "
         "VALUES (?,?,?,?,?,?,?,?) RETURNING id",
@@ -624,27 +588,23 @@ def add_ausencia(a: Ausencia):
     )
     aid = cur.fetchone()["id"]
     conn.commit()
-    conn.close()
     return {"ok": True, "id": aid}
 
 
 @router.patch("/api/ausencias/{aus_id}")
-def upd_ausencia(aus_id: int, a: Ausencia):
-    conn = _db()
+def upd_ausencia(aus_id: int, a: Ausencia, conn = Depends(get_conn)):
     conn.execute(
         "UPDATE ausencias SET tipo=?, fecha_inicio=?, fecha_fin=?, dias=?, estado=?, nota=? WHERE id=?",
         (a.tipo, a.fecha_inicio, a.fecha_fin, a.dias, a.estado, a.nota, aus_id),
     )
     conn.commit()
-    conn.close()
     return {"ok": True}
 
 
 
 
 @router.get("/api/empleados/ausencias")
-def list_ausencias_planificadas(empleado_id: str = ""):
-    conn = _db()
+def list_ausencias_planificadas(empleado_id: str = "", conn = Depends(get_conn)):
     conds, params = [], []
     if empleado_id:
         conds.append("a.empleado_id=?")
@@ -655,19 +615,17 @@ def list_ausencias_planificadas(empleado_id: str = ""):
         f"JOIN empleados e ON e.id = a.empleado_id {where} ORDER BY a.fecha_inicio DESC",
         params,
     ).fetchall()
-    conn.close()
     return {"ausencias": [dict(r) for r in rows]}
 
 
 @router.post("/api/empleados/ausencias")
-def add_ausencia_planificada(a: AusenciaPlanificada):
+def add_ausencia_planificada(a: AusenciaPlanificada, conn = Depends(get_conn)):
     if not (a.empleado_id or "").strip():
         raise HTTPException(status_code=400, detail={"error": "Selecciona el empleado."})
     if not a.fecha_inicio or not a.fecha_fin:
         raise HTTPException(status_code=400, detail={"error": "Indica fecha de inicio y fin."})
     if a.tipo not in ("vacaciones", "baja_medica", "permiso_retribuido"):
         raise HTTPException(status_code=400, detail={"error": "Tipo de ausencia inválido."})
-    conn = _db()
     cur = conn.execute(
         "INSERT INTO ausencias_empleados (empleado_id, fecha_inicio, fecha_fin, tipo, observaciones, creado) "
         "VALUES (?,?,?,?,?,?) RETURNING id",
@@ -676,31 +634,25 @@ def add_ausencia_planificada(a: AusenciaPlanificada):
     )
     aid = cur.fetchone()["id"]
     conn.commit()
-    conn.close()
     return {"ok": True, "id": aid}
 
 
 @router.delete("/api/empleados/ausencias/{ausencia_id}")
-def del_ausencia_planificada(ausencia_id: int):
-    conn = _db()
+def del_ausencia_planificada(ausencia_id: int, conn = Depends(get_conn)):
     conn.execute("DELETE FROM ausencias_empleados WHERE id=?", (ausencia_id,))
     conn.commit()
-    conn.close()
     return {"ok": True}
 
 
 @router.delete("/api/ausencias/{aus_id}")
-def del_ausencia(aus_id: int):
-    conn = _db()
+def del_ausencia(aus_id: int, conn = Depends(get_conn)):
     conn.execute("DELETE FROM ausencias WHERE id=?", (aus_id,))
     conn.commit()
-    conn.close()
     return {"ok": True}
 
 
 @router.get("/api/rrhh/resumen")
-def rrhh_resumen():
-    conn = _db()
+def rrhh_resumen(conn = Depends(get_conn)):
     activos = conn.execute("SELECT COUNT(*) AS c FROM empleados WHERE fecha_baja IS NULL OR fecha_baja=''").fetchone()["c"]
     bajas = conn.execute("SELECT COUNT(*) AS c FROM empleados WHERE fecha_baja IS NOT NULL AND fecha_baja != ''").fetchone()["c"]
     hoy = datetime.date.today()
@@ -713,7 +665,6 @@ def rrhh_resumen():
         "SELECT a.fecha_inicio, a.fecha_fin, a.tipo, e.nombre, e.apellidos FROM ausencias a JOIN empleados e ON e.id=a.empleado_id "
         "WHERE a.fecha_fin >= ? ORDER BY a.fecha_inicio LIMIT 10", (hoy.isoformat(),),
     ).fetchall()
-    conn.close()
     return {
         "activos": activos, "bajas": bajas,
         "coste_nomina_mes": round(float(coste), 2), "nomina_mes": nomina_mes,
