@@ -357,6 +357,12 @@ def enviar_trip(trip_id: str, force: bool = False):
 
 
 @router.get("/api/trips/status")
+def trips_status():
+    _sync_status()
+    conn = _db()
+    rows = conn.execute("SELECT * FROM trips ORDER BY creado DESC LIMIT 100").fetchall()
+    conn.close()
+    return {"viajes": [dict(r) for r in rows]}
 
 
 @router.get("/api/trips/{trip_id}")
@@ -467,12 +473,6 @@ def trip_tramos(trip_id: str):
 
 
 
-def trips_status():
-    _sync_status()
-    conn = _db()
-    rows = conn.execute("SELECT * FROM trips ORDER BY creado DESC LIMIT 100").fetchall()
-    conn.close()
-    return {"viajes": [dict(r) for r in rows]}
 
 
 
