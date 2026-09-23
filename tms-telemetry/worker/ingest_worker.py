@@ -209,7 +209,7 @@ async def flush_batch(pool: asyncpg.Pool, rows: list[tuple]) -> None:
             if max_odo:
                 await conn.executemany(
                     "UPDATE vehiculos SET km_actuales = $1 WHERE id = $2",
-                    [(odo, vid) for vid, odo in max_odo.items()],
+                    [(odo / 1000.0, vid) for vid, odo in max_odo.items()],
                 )
 
 

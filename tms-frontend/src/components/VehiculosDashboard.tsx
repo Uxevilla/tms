@@ -395,7 +395,7 @@ export function VehiculosDashboard() {
         headerName: "Kilómetros",
         width: 120,
         type: "rightAligned",
-        valueFormatter: (p) => `${Math.round((Number(p.value) || 0) / 1000).toLocaleString("es-ES")} km`,
+        valueFormatter: (p) => `${Math.round(Number(p.value) || 0).toLocaleString("es-ES")} km`,
       },
       { field: "anno", headerName: "Año", width: 70 },
       { field: "itv", headerName: "ITV", width: 105, editable: true, cellClass: editableCell },

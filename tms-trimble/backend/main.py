@@ -2765,9 +2765,9 @@ def _revisar_mantenimiento():
             "WHERE odometer_km IS NOT NULL "
             "ORDER BY vehiculo_id, time DESC"
         ).fetchall()}
-        # Actualiza km_actuales del vehículo con su último odómetro conocido.
+        # Actualiza km_actuales del vehículo con su último odómetro conocido (en km).
         for vid, odo in odos.items():
-            conn.execute("UPDATE vehiculos SET km_actuales=? WHERE id=?", (odo, vid))
+            conn.execute("UPDATE vehiculos SET km_actuales=? WHERE id=?", (odo / 1000.0, vid))
         # Siembra reglas por defecto (aceite cada 80.000 km) si no hay ninguna.
         if not conn.execute("SELECT id FROM flota.reglas_mantenimiento LIMIT 1").fetchone():
             for v in conn.execute("SELECT id FROM vehiculos").fetchall():
