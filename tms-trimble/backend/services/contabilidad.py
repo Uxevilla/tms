@@ -76,40 +76,41 @@ def _post_asiento(fecha, concepto, lineas, origen="manual", trip_id=None, gasto_
     own = conn is None
     if own:
         conn = _db()
-    _c = conn.execute("SELECT value FROM config WHERE key='cierre_fecha'").fetchone()
-    cierre = (_c["value"] if _c and _c["value"] else "")
-    if cierre and fecha and (fecha or "")[:10] <= cierre:
+    try:
+        _c = conn.execute("SELECT value FROM config WHERE key='cierre_fecha'").fetchone()
+        cierre = (_c["value"] if _c and _c["value"] else "")
+        if cierre and fecha and (fecha or "")[:10] <= cierre:
+            raise ValueError(f"Periodo cerrado (cierre {cierre}).")
+        debe_total = round(sum(l[1] or 0 for l in lineas), 2)
+        haber_total = round(sum(l[2] or 0 for l in lineas), 2)
+        if abs(debe_total - haber_total) > 0.005:
+            raise ValueError(f"Asiento descuadrado: debe {debe_total:.2f} ≠ haber {haber_total:.2f}")
+        year = (fecha or "")[:4]
+        row = conn.execute(
+            "SELECT COALESCE(MAX(numero), 0) AS m FROM asientos WHERE substr(fecha, 1, 4)=?",
+            (year,),
+        ).fetchone()
+        numero = (row["m"] or 0) + 1
+        cur = conn.execute(
+            "INSERT INTO asientos (numero, fecha, concepto, documento, origen, origen_id, trip_id, gasto_id, creado) "
+            "VALUES (?,?,?,?,?,?,?,?,?) RETURNING id",
+            (numero, fecha, concepto, documento, origen, origen_id, trip_id, gasto_id,
+             datetime.datetime.utcnow().isoformat() + "Z"),
+        )
+        asiento_id = cur.fetchone()["id"]
+        for cuenta, debe, haber, cline in lineas:
+            conn.execute(
+                "INSERT INTO apuntes (asiento_id, cuenta, debe, haber, concepto) VALUES (?,?,?,?,?)",
+                (asiento_id, cuenta, round(debe or 0, 2), round(haber or 0, 2), cline or ""),
+            )
+        _auditar(conn, "asientos", asiento_id, "crear", usuario,
+                 despues={"numero": numero, "fecha": fecha, "concepto": concepto, "origen": origen, "lineas": lineas})
+        if own:
+            conn.commit()
+        return asiento_id
+    finally:
         if own:
             conn.close()
-        raise ValueError(f"Periodo cerrado (cierre {cierre}).")
-    debe_total = round(sum(l[1] or 0 for l in lineas), 2)
-    haber_total = round(sum(l[2] or 0 for l in lineas), 2)
-    if abs(debe_total - haber_total) > 0.005:
-        raise ValueError(f"Asiento descuadrado: debe {debe_total:.2f} ≠ haber {haber_total:.2f}")
-    year = (fecha or "")[:4]
-    row = conn.execute(
-        "SELECT COALESCE(MAX(numero), 0) AS m FROM asientos WHERE substr(fecha, 1, 4)=?",
-        (year,),
-    ).fetchone()
-    numero = (row["m"] or 0) + 1
-    cur = conn.execute(
-        "INSERT INTO asientos (numero, fecha, concepto, documento, origen, origen_id, trip_id, gasto_id, creado) "
-        "VALUES (?,?,?,?,?,?,?,?,?) RETURNING id",
-        (numero, fecha, concepto, documento, origen, origen_id, trip_id, gasto_id,
-         datetime.datetime.utcnow().isoformat() + "Z"),
-    )
-    asiento_id = cur.fetchone()["id"]
-    for cuenta, debe, haber, cline in lineas:
-        conn.execute(
-            "INSERT INTO apuntes (asiento_id, cuenta, debe, haber, concepto) VALUES (?,?,?,?,?)",
-            (asiento_id, cuenta, round(debe or 0, 2), round(haber or 0, 2), cline or ""),
-        )
-    _auditar(conn, "asientos", asiento_id, "crear", usuario,
-             despues={"numero": numero, "fecha": fecha, "concepto": concepto, "origen": origen, "lineas": lineas})
-    if own:
-        conn.commit()
-        conn.close()
-    return asiento_id
 
 
 def _registrar_asiento(fecha, concepto, lineas_apuntes, origen, origen_id=None, conn=None, usuario=None):
@@ -226,132 +227,132 @@ def _costes_reales_viaje(trip, conn=None):
     if conn is None:
         with _db() as conn:
             return _costes_reales_viaje(trip, conn)
-        """Costes reales del viaje: peajes estimados + gastos vinculados exactamente al viaje."""
-        peaje = float(trip["peaje_estimado"] or 0)
-        row = conn.execute(
-            "SELECT COALESCE(SUM(importe), 0) AS total FROM gastos WHERE trip_id=?",
-            (trip["id"],),
-        ).fetchone()
-        gastos = float(row["total"] or 0) if row else 0.0
-        coste = round(peaje + gastos, 2)
-        margen = round(float(trip["precio"] or 0) - coste, 2)
-        return coste, margen
+    """Costes reales del viaje: peajes estimados + gastos vinculados exactamente al viaje."""
+    peaje = float(trip["peaje_estimado"] or 0)
+    row = conn.execute(
+        "SELECT COALESCE(SUM(importe), 0) AS total FROM gastos WHERE trip_id=?",
+        (trip["id"],),
+    ).fetchone()
+    gastos = float(row["total"] or 0) if row else 0.0
+    coste = round(peaje + gastos, 2)
+    margen = round(float(trip["precio"] or 0) - coste, 2)
+    return coste, margen
 
 
 def _crear_factura_borrador(trip, conn=None):
     if conn is None:
         with _db() as conn:
             return _crear_factura_borrador(trip, conn)
-        """Crea una factura en estado Borrador (sin asiento) para un viaje entregado."""
-        # Subcontratación: registrar el gasto (624/410) antes de calcular costes/margen.
-        if trip["subcontratado"]:
-            gconn = _db()
-            _gasto_subcontrata(gconn, trip, (trip["creado"] or "")[:10] or datetime.date.today().isoformat())
-            gconn.commit()
-            gconn.close()
-        coste, margen = _costes_reales_viaje(trip)
-        base = round(float(trip["precio"] or 0), 2)
-        iva = round(float(trip["iva"] or 21), 2)
-        cuota = round(base * iva / 100.0, 2)
-        total = round(base + cuota, 2)
-        cur = conn.execute(
-            "INSERT INTO facturas (numero, fecha, trip_id, cliente_id, cliente_nombre, base, iva, cuota_iva, total, estado, coste, margen, creado) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id",
-            ("", (trip["creado"] or "")[:10] or datetime.date.today().isoformat(),
-             trip["id"], trip["cliente_id"], trip["cliente"] or "",
-             base, iva, cuota, total, "Borrador", coste, margen,
-             datetime.datetime.utcnow().isoformat() + "Z"),
-        )
-        factura_id = cur.fetchone()["id"]
-        concepto = f"{trip['origen'] or ''} → {trip['destino'] or ''}".strip().strip("→").strip() or trip["id"]
-        conn.execute(
-            "INSERT INTO factura_lineas (factura_id, trip_id, concepto, base, iva, cuota_iva, total) VALUES (?,?,?,?,?,?,?)",
-            (factura_id, trip["id"], concepto, base, iva, cuota, total),
-        )
-        _liquidar_conductor(trip, conn)
-        conn.commit()
-        return factura_id
+    """Crea una factura en estado Borrador (sin asiento) para un viaje entregado."""
+    # Subcontratación: registrar el gasto (624/410) antes de calcular costes/margen.
+    if trip["subcontratado"]:
+        gconn = _db()
+        _gasto_subcontrata(gconn, trip, (trip["creado"] or "")[:10] or datetime.date.today().isoformat())
+        gconn.commit()
+        gconn.close()
+    coste, margen = _costes_reales_viaje(trip)
+    base = round(float(trip["precio"] or 0), 2)
+    iva = round(float(trip["iva"] or 21), 2)
+    cuota = round(base * iva / 100.0, 2)
+    total = round(base + cuota, 2)
+    cur = conn.execute(
+        "INSERT INTO facturas (numero, fecha, trip_id, cliente_id, cliente_nombre, base, iva, cuota_iva, total, estado, coste, margen, creado) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id",
+        ("", (trip["creado"] or "")[:10] or datetime.date.today().isoformat(),
+         trip["id"], trip["cliente_id"], trip["cliente"] or "",
+         base, iva, cuota, total, "Borrador", coste, margen,
+         datetime.datetime.utcnow().isoformat() + "Z"),
+    )
+    factura_id = cur.fetchone()["id"]
+    concepto = f"{trip['origen'] or ''} → {trip['destino'] or ''}".strip().strip("→").strip() or trip["id"]
+    conn.execute(
+        "INSERT INTO factura_lineas (factura_id, trip_id, concepto, base, iva, cuota_iva, total) VALUES (?,?,?,?,?,?,?)",
+        (factura_id, trip["id"], concepto, base, iva, cuota, total),
+    )
+    _liquidar_conductor(trip, conn)
+    conn.commit()
+    return factura_id
 
 
 def _generar_factura_pdf(factura_id, conn=None):
     if conn is None:
         with _db() as conn:
             return _generar_factura_pdf(factura_id, conn)
-        import io
-        from reportlab.lib.pagesizes import A4
-        from reportlab.lib.units import mm
-        from reportlab.lib import colors
-        from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
-        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    import io
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.units import mm
+    from reportlab.lib import colors
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 
-        f = conn.execute("SELECT * FROM facturas WHERE id=?", (factura_id,)).fetchone()
-        if not f:
-            raise HTTPException(status_code=404, detail={"error": "Factura no encontrada."})
-        lineas = conn.execute("SELECT * FROM factura_lineas WHERE factura_id=? ORDER BY id", (factura_id,)).fetchall()
-        cliente = conn.execute("SELECT * FROM clientes WHERE id=?", (f["cliente_id"],)).fetchone() if f["cliente_id"] else None
-        emp = _empresa()
+    f = conn.execute("SELECT * FROM facturas WHERE id=?", (factura_id,)).fetchone()
+    if not f:
+        raise HTTPException(status_code=404, detail={"error": "Factura no encontrada."})
+    lineas = conn.execute("SELECT * FROM factura_lineas WHERE factura_id=? ORDER BY id", (factura_id,)).fetchall()
+    cliente = conn.execute("SELECT * FROM clientes WHERE id=?", (f["cliente_id"],)).fetchone() if f["cliente_id"] else None
+    emp = _empresa()
 
-        def eur(n):
-            v = f"{float(n or 0):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-            return f"{v} €".replace("€", "€")
+    def eur(n):
+        v = f"{float(n or 0):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+        return f"{v} €".replace("€", "€")
 
-        buf = io.BytesIO()
-        doc = SimpleDocTemplate(buf, pagesize=A4, rightMargin=18*mm, leftMargin=18*mm, topMargin=18*mm, bottomMargin=18*mm)
-        styles = getSampleStyleSheet()
-        normal = ParagraphStyle("normal", parent=styles["Normal"], fontSize=10, leading=14)
-        bold = ParagraphStyle("bold", parent=styles["Normal"], fontSize=10, leading=14, fontName="Helvetica-Bold")
-        title = ParagraphStyle("title", parent=styles["Title"], fontSize=22, spaceAfter=0)
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=A4, rightMargin=18*mm, leftMargin=18*mm, topMargin=18*mm, bottomMargin=18*mm)
+    styles = getSampleStyleSheet()
+    normal = ParagraphStyle("normal", parent=styles["Normal"], fontSize=10, leading=14)
+    bold = ParagraphStyle("bold", parent=styles["Normal"], fontSize=10, leading=14, fontName="Helvetica-Bold")
+    title = ParagraphStyle("title", parent=styles["Title"], fontSize=22, spaceAfter=0)
 
-        story = []
-        emp_nombre = emp.get("nombre") or "Mi empresa"
-        emp_txt = [emp_nombre]
-        if emp.get("cif"): emp_txt.append(f"CIF: {emp['cif']}")
-        if emp.get("direccion"): emp_txt.append(emp["direccion"])
-        if emp.get("cp") or emp.get("poblacion"): emp_txt.append(f"{emp.get('cp','')} {emp.get('poblacion','')}".strip())
-        if emp.get("telefono"): emp_txt.append(f"Tel: {emp['telefono']}")
-        if emp.get("email"): emp_txt.append(emp["email"])
-        emp_block = [Paragraph(x, normal) for x in emp_txt]
-        fact_block = [Paragraph(f"<b>FACTURA</b> {f['numero']}", title),
-                      Paragraph(f"Fecha: {f['fecha']}", normal)]
+    story = []
+    emp_nombre = emp.get("nombre") or "Mi empresa"
+    emp_txt = [emp_nombre]
+    if emp.get("cif"): emp_txt.append(f"CIF: {emp['cif']}")
+    if emp.get("direccion"): emp_txt.append(emp["direccion"])
+    if emp.get("cp") or emp.get("poblacion"): emp_txt.append(f"{emp.get('cp','')} {emp.get('poblacion','')}".strip())
+    if emp.get("telefono"): emp_txt.append(f"Tel: {emp['telefono']}")
+    if emp.get("email"): emp_txt.append(emp["email"])
+    emp_block = [Paragraph(x, normal) for x in emp_txt]
+    fact_block = [Paragraph(f"<b>FACTURA</b> {f['numero']}", title),
+                  Paragraph(f"Fecha: {f['fecha']}", normal)]
 
-        header = Table([[emp_block, fact_block]], colWidths=[doc.width*0.55, doc.width*0.45])
-        header.setStyle(TableStyle([("VALIGN", (0,0), (-1,-1), "TOP"),
-                                    ("LEFTPADDING", (0,0), (-1,-1), 0), ("RIGHTPADDING", (0,0), (-1,-1), 0)]))
-        story.append(header)
-        story.append(Spacer(1, 10*mm))
+    header = Table([[emp_block, fact_block]], colWidths=[doc.width*0.55, doc.width*0.45])
+    header.setStyle(TableStyle([("VALIGN", (0,0), (-1,-1), "TOP"),
+                                ("LEFTPADDING", (0,0), (-1,-1), 0), ("RIGHTPADDING", (0,0), (-1,-1), 0)]))
+    story.append(header)
+    story.append(Spacer(1, 10*mm))
 
-        cli_nombre = (cliente["nombre"] if cliente else "") or f["cliente_nombre"] or "Cliente"
-        story.append(Paragraph(f"<b>Facturar a:</b> {cli_nombre}", normal))
-        if cliente:
-            if cliente.get("cif"): story.append(Paragraph(f"CIF: {cliente['cif']}", normal))
-            if cliente.get("direccion"): story.append(Paragraph(cliente["direccion"], normal))
-            if cliente.get("cp") or cliente.get("poblacion"):
-                story.append(Paragraph(f"{cliente.get('cp','')} {cliente.get('poblacion','')}".strip(), normal))
-        story.append(Spacer(1, 10*mm))
+    cli_nombre = (cliente["nombre"] if cliente else "") or f["cliente_nombre"] or "Cliente"
+    story.append(Paragraph(f"<b>Facturar a:</b> {cli_nombre}", normal))
+    if cliente:
+        if cliente.get("cif"): story.append(Paragraph(f"CIF: {cliente['cif']}", normal))
+        if cliente.get("direccion"): story.append(Paragraph(cliente["direccion"], normal))
+        if cliente.get("cp") or cliente.get("poblacion"):
+            story.append(Paragraph(f"{cliente.get('cp','')} {cliente.get('poblacion','')}".strip(), normal))
+    story.append(Spacer(1, 10*mm))
 
-        data = [["Concepto", "Base", "IVA %", "Total"]]
-        for l in lineas:
-            data.append([l["concepto"] or "—", eur(l["base"]), f"{float(l['iva'] or 0):.0f}%", eur(l["total"])])
-        data.append(["", "Base imponible", "", eur(f["base"])])
-        data.append(["", f"IVA ({float(f['iva'] or 0):.0f}%)", "", eur(f["cuota_iva"])])
-        data.append(["", "TOTAL", "", eur(f["total"])])
-        t = Table(data, colWidths=[doc.width*0.46, doc.width*0.18, doc.width*0.12, doc.width*0.24])
-        t.setStyle(TableStyle([
-            ("FONTNAME", (0,0), (-1,0), "Helvetica-Bold"),
-            ("GRID", (0,0), (-1,-4), 0.5, colors.grey),
-            ("LINEABOVE", (1,-1), (-1,-1), 1, colors.black),
-            ("ALIGN", (1,1), (-1,-1), "RIGHT"),
-            ("FONTNAME", (1,-1), (-1,-1), "Helvetica-Bold"),
-        ]))
-        story.append(t)
-        story.append(Spacer(1, 12*mm))
-        if emp.get("iban"):
-            story.append(Paragraph(f"<b>IBAN:</b> {emp['iban']}", normal))
-        if emp.get("web"):
-            story.append(Paragraph(emp["web"], normal))
+    data = [["Concepto", "Base", "IVA %", "Total"]]
+    for l in lineas:
+        data.append([l["concepto"] or "—", eur(l["base"]), f"{float(l['iva'] or 0):.0f}%", eur(l["total"])])
+    data.append(["", "Base imponible", "", eur(f["base"])])
+    data.append(["", f"IVA ({float(f['iva'] or 0):.0f}%)", "", eur(f["cuota_iva"])])
+    data.append(["", "TOTAL", "", eur(f["total"])])
+    t = Table(data, colWidths=[doc.width*0.46, doc.width*0.18, doc.width*0.12, doc.width*0.24])
+    t.setStyle(TableStyle([
+        ("FONTNAME", (0,0), (-1,0), "Helvetica-Bold"),
+        ("GRID", (0,0), (-1,-4), 0.5, colors.grey),
+        ("LINEABOVE", (1,-1), (-1,-1), 1, colors.black),
+        ("ALIGN", (1,1), (-1,-1), "RIGHT"),
+        ("FONTNAME", (1,-1), (-1,-1), "Helvetica-Bold"),
+    ]))
+    story.append(t)
+    story.append(Spacer(1, 12*mm))
+    if emp.get("iban"):
+        story.append(Paragraph(f"<b>IBAN:</b> {emp['iban']}", normal))
+    if emp.get("web"):
+        story.append(Paragraph(emp["web"], normal))
 
-        doc.build(story)
-        return buf.getvalue()
+    doc.build(story)
+    return buf.getvalue()
 
 
 def _liquidar_conductor(trip, conn):
