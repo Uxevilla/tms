@@ -1,4 +1,5 @@
 """Router de RRHH: empleados, nóminas, ausencias."""
+import os
 import uuid
 import datetime
 import io
@@ -584,7 +585,9 @@ def _seed_demo(conn):
 
 @router.post("/api/dev/seed")
 def dev_seed():
-    """Endpoint temporal de desarrollo: inyecta datos demo. Idempotente."""
+    """Endpoint de desarrollo: inyecta datos demo. Solo con TMS_ENV=dev."""
+    if os.environ.get("TMS_ENV") != "dev":
+        raise HTTPException(status_code=404, detail={"error": "No encontrado"})
     conn = _db()
     res = _seed_demo(conn)
     conn.commit()
