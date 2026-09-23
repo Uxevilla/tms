@@ -82,6 +82,20 @@ class ViajeRequest(BaseModel):
     fecha_esperada_descarga: str = ""
     peso: float = 0.0
     palets: int = 0
+    modo_tarifa: str = "viaje"
+    tarifa_id: Optional[int] = None
+    kilos: float = 0.0
+    subcontratado: bool = False
+    proveedor_id: Optional[int] = None
+    coste: float = 0.0
+
+
+class TarifaRequest(BaseModel):
+    nombre: str = ""
+    tipo: str = "viaje"  # km | viaje | kilos
+    precio: float = 0.0
+    cliente_id: Optional[int] = None
+    activo: bool = True
 
 
 class Documento(BaseModel):
@@ -390,4 +404,4 @@ class AusenciaPlanificada(BaseModel):
     observaciones: str = ""
 
 
-__all__ = ["AlertaUpdate", "AmortizacionRequest", "AsientoManual", "AsignarRequest", "Ausencia", "AusenciaPlanificada", "CategoriaGasto", "Cliente", "Conductor", "CosteFijo", "CuentaContable", "Direccion", "DireccionMaestro", "Documento", "Empleado", "Empresa", "Gasto", "GastoVehiculo", "LineaAsiento", "Liquidacion", "Mantenimiento", "Nomina", "OcrRequest", "Parada", "Proveedor", "PuntoRuta", "RutaRequest", "SendMensajeRequest", "TarifaPeaje", "TramoRequest", "Transportista", "TripUpdate", "Vehiculo", "ViajeRequest"]
+__all__ = ["AlertaUpdate", "AmortizacionRequest", "AsientoManual", "AsignarRequest", "Ausencia", "AusenciaPlanificada", "CategoriaGasto", "Cliente", "Conductor", "CosteFijo", "CuentaContable", "Direccion", "DireccionMaestro", "Documento", "Empleado", "Empresa", "Gasto", "GastoVehiculo", "LineaAsiento", "Liquidacion", "Mantenimiento", "Nomina", "OcrRequest", "Parada", "Proveedor", "PuntoRuta", "RutaRequest", "SendMensajeRequest", "TarifaPeaje", "TarifaRequest", "TramoRequest", "Transportista", "TripUpdate", "Vehiculo", "ViajeRequest"]

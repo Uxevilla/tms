@@ -38,6 +38,13 @@ export interface Viaje {
   itinerario?: string;         // actividades en orden: "CARGA → REPOSTAJE → DESCARGA"
   n_documentos?: number;       // nº de archivos adjuntos al viaje
   n_tramos?: number;           // nº de tramos (segmentos) del viaje
+  modo_tarifa?: string;        // km | viaje | kilos
+  tarifa_id?: number | null;   // tarifa aplicada (null = precio manual)
+  precio_unitario?: number | null;
+  kilos?: number;              // kg para valoración por kilos
+  subcontratado?: boolean;     // vendido a un tercero
+  proveedor_id?: number | null;
+  coste?: number;              // € que pagamos al tercero
 }
 
 // Última posición conocida de un vehículo (/api/telemetria/activa).

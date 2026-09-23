@@ -2,8 +2,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { AgGridReact } from "ag-grid-react";
 import { AllCommunityModule, ModuleRegistry } from "ag-grid-community";
 import type { ColDef, ValueFormatterParams, CellValueChangedEvent } from "ag-grid-community";
-import { FileText, HandCoins, X, Check, Users, Truck, BookOpen, Plus, Trash2, TrendingUp, RotateCcw, Download, ShieldCheck, Package } from "lucide-react";
-import { EMITIR_BORRADOR, REST_BORRADORES, REST_LIQUIDACIONES, REST_CLIENTES, REST_PROVEEDORES, REST_ASIENTOS, REST_PYG, REST_BALANCE, REST_RECONCILIACION, REST_AUDITORIA } from "../config";
+import { FileText, HandCoins, X, Check, Users, Truck, BookOpen, Plus, Trash2, TrendingUp, RotateCcw, Download, ShieldCheck, Package, Tags } from "lucide-react";
+import { EMITIR_BORRADOR, REST_BORRADORES, REST_LIQUIDACIONES, REST_CLIENTES, REST_PROVEEDORES, REST_TARIFAS, REST_ASIENTOS, REST_PYG, REST_BALANCE, REST_RECONCILIACION, REST_AUDITORIA } from "../config";
 import { getToken, getRol } from "../auth";
 import { useAgGridState } from "../hooks/useAgGridState";
 
@@ -70,6 +70,16 @@ interface Proveedor {
   telefono: string;
   email: string;
   cuenta_contable_defecto: string;
+}
+
+interface Tarifa {
+  id: number;
+  nombre: string;
+  tipo: string;
+  precio: number;
+  cliente_id: number | null;
+  cliente_nombre: string;
+  activo: boolean;
 }
 
 interface Asiento {
@@ -218,11 +228,12 @@ interface AuditoriaRow {
 }
 
 export function ContabilidadDashboard() {
-  const [tab, setTab] = useState<"borradores" | "liquidaciones" | "clientes" | "proveedores" | "diario" | "informes" | "auditoria">("borradores");
+  const [tab, setTab] = useState<"borradores" | "liquidaciones" | "clientes" | "proveedores" | "tarifas" | "diario" | "informes" | "auditoria">("borradores");
   const [borradores, setBorradores] = useState<BorradorFactura[]>([]);
   const [liquidaciones, setLiquidaciones] = useState<Liquidacion[]>([]);
   const [clientes, setClientes] = useState<Cliente[]>([]);
   const [proveedores, setProveedores] = useState<Proveedor[]>([]);
+  const [tarifas, setTarifas] = useState<Tarifa[]>([]);
   const [asientos, setAsientos] = useState<Asiento[]>([]);
   // informes financieros
   const [informesSub, setInformesSub] = useState<"pyg" | "balance" | "reconciliacion">("pyg");
@@ -239,6 +250,8 @@ export function ContabilidadDashboard() {
   // alta de cliente/proveedor
   const [altaTipo, setAltaTipo] = useState<"cliente" | "proveedor" | null>(null);
   const [nForm, setNForm] = useState({ nombre: "", cif: "", direccion: "", poblacion: "", cp: "", telefono: "", email: "" });
+  const [altaTarifa, setAltaTarifa] = useState(false);
+  const [tForm, setTForm] = useState({ nombre: "", tipo: "viaje", precio: "", cliente_id: "" });
   const [guardandoN, setGuardandoN] = useState(false);
   const [banner, setBanner] = useState<{ tipo: "ok" | "error"; texto: string } | null>(null);
   const [palesCliente, setPalesCliente] = useState<Cliente | null>(null);
@@ -303,10 +316,11 @@ export function ContabilidadDashboard() {
     };
     (async () => {
       try {
-        const [cli, prov, asientosRes] = await Promise.all([get(REST_CLIENTES), get(REST_PROVEEDORES), get(REST_ASIENTOS)]);
+        const [cli, prov, tar, asientosRes] = await Promise.all([get(REST_CLIENTES), get(REST_PROVEEDORES), get(REST_TARIFAS), get(REST_ASIENTOS)]);
         if (cancel) return;
         setClientes(cli.clientes ?? []);
         setProveedores(prov.proveedores ?? []);
+        setTarifas(tar.tarifas ?? []);
         setAsientos(mapAsientos(asientosRes.asientos ?? [], asientosRes.apuntes ?? {}));
       } catch (err) {
         console.error("Error cargando contabilidad:", err);
@@ -460,6 +474,37 @@ export function ContabilidadDashboard() {
         filter: false,
         cellRenderer: (p: { data: Proveedor }) => (
           <button onClick={() => eliminar("proveedor", p.data.id)} className="rounded p-1 text-red-500 hover:bg-red-50" title="Eliminar">
+            <Trash2 size={15} />
+          </button>
+        ),
+      },
+    ],
+    [],
+  );
+
+  const tarifasCols = useMemo<ColDef<Tarifa>[]>(
+    () => [
+      { field: "nombre", headerName: "Tarifa", flex: 1, minWidth: 180, editable: true, cellClass: editableCell },
+      {
+        field: "tipo",
+        headerName: "Tipo",
+        width: 120,
+        editable: true,
+        cellClass: editableCell,
+        cellEditor: "agSelectCellEditor",
+        cellEditorParams: { values: ["km", "viaje", "kilos"] },
+        valueFormatter: (p) => ({ km: "Por km", viaje: "Por viaje", kilos: "Por kilos" }[p.value as string] ?? p.value ?? ""),
+      },
+      { field: "precio", headerName: "Precio", width: 120, editable: true, cellClass: editableCell, type: "rightAligned", valueFormatter: (p) => eur(Number(p.value) || 0) },
+      { field: "cliente_nombre", headerName: "Cliente", width: 170, valueFormatter: (p) => (p.value ? p.value : "— General") },
+      { field: "activo", headerName: "Activa", width: 90, editable: true, cellClass: editableCell, cellRenderer: "agCheckboxCellRenderer", cellEditor: "agCheckboxCellEditor" },
+      {
+        headerName: "",
+        width: 60,
+        sortable: false,
+        filter: false,
+        cellRenderer: (p: { data: Tarifa }) => (
+          <button onClick={() => eliminarTarifa(p.data.id)} className="rounded p-1 text-red-500 hover:bg-red-50" title="Eliminar">
             <Trash2 size={15} />
           </button>
         ),
@@ -672,6 +717,7 @@ export function ContabilidadDashboard() {
   const revertGuard = useRef(false);
   const { resetColumnState: resetClientes, exportToCsv: exportClientes, ...clientesGrid } = useAgGridState("tms_clientes_grid");
   const { resetColumnState: resetProveedores, exportToCsv: exportProveedores, ...proveedoresGrid } = useAgGridState("tms_proveedores_grid");
+  const { resetColumnState: resetTarifas, exportToCsv: exportTarifas, ...tarifasGrid } = useAgGridState("tms_tarifas_grid");
 
   // Handler genérico de edición inline para clientes/proveedores (PATCH + revert en error).
   const guardarCelda =
@@ -743,6 +789,89 @@ export function ContabilidadDashboard() {
       }
     } catch (err) {
       console.error("Error eliminando:", err);
+    }
+  }
+
+  async function eliminarTarifa(id: number) {
+    try {
+      const res = await fetch(`${REST_TARIFAS}/${id}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${getToken() ?? ""}` },
+      });
+      if (res.ok) {
+        setBanner({ tipo: "ok", texto: "Tarifa eliminada." });
+        setTarifas((prev) => prev.filter((t) => t.id !== id));
+      } else {
+        setBanner({ tipo: "error", texto: "No se pudo eliminar la tarifa." });
+      }
+    } catch (err) {
+      console.error("Error eliminando tarifa:", err);
+    }
+  }
+
+  async function guardarTarifaCelda(event: CellValueChangedEvent) {
+    const { data } = event;
+    if (!data || revertGuard.current) return;
+    try {
+      const res = await fetch(`${REST_TARIFAS}/${data.id}`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${getToken() ?? ""}`,
+        },
+        body: JSON.stringify({
+          nombre: data.nombre,
+          tipo: data.tipo,
+          precio: Number(data.precio) || 0,
+          cliente_id: data.cliente_id ?? null,
+          activo: data.activo !== false,
+        }),
+      });
+      if (!res.ok) throw new Error(String(res.status));
+    } catch {
+      revertGuard.current = true;
+      event.node.setDataValue(event.colDef.field!, event.oldValue);
+      revertGuard.current = false;
+      setBanner({ tipo: "error", texto: "No se pudo guardar la tarifa. Cambio revertido." });
+    }
+  }
+
+  async function darAltaTarifa() {
+    if (!tForm.nombre.trim()) return;
+    setGuardandoN(true);
+    try {
+      const res = await fetch(REST_TARIFAS, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${getToken() ?? ""}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          nombre: tForm.nombre.trim(),
+          tipo: tForm.tipo,
+          precio: Number(tForm.precio) || 0,
+          cliente_id: tForm.cliente_id ? Number(tForm.cliente_id) : null,
+          activo: true,
+        }),
+      });
+      if (res.ok) {
+        setBanner({ tipo: "ok", texto: "Tarifa creada." });
+        setAltaTarifa(false);
+        setTForm({ nombre: "", tipo: "viaje", precio: "", cliente_id: "" });
+        const refresh = await fetch(REST_TARIFAS, { headers: { Authorization: `Bearer ${getToken() ?? ""}` } });
+        if (refresh.ok) {
+          const d = await refresh.json();
+          setTarifas(d.tarifas ?? []);
+        }
+      } else {
+        const d = await res.json().catch(() => ({}));
+        setBanner({ tipo: "error", texto: d?.detail?.error || `Error ${res.status}` });
+      }
+    } catch (err) {
+      console.error("Error creando tarifa:", err);
+      setBanner({ tipo: "error", texto: "Error de red." });
+    } finally {
+      setGuardandoN(false);
     }
   }
 
@@ -821,6 +950,12 @@ export function ContabilidadDashboard() {
             <Truck size={16} /> Proveedores
           </button>
           <button
+            onClick={() => setTab("tarifas")}
+            className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition ${tab === "tarifas" ? "bg-blue-600 text-white shadow" : "text-slate-600 hover:bg-slate-100"}`}
+          >
+            <Tags size={16} /> Tarifas
+          </button>
+          <button
             onClick={() => setTab("diario")}
             className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition ${tab === "diario" ? "bg-blue-600 text-white shadow" : "text-slate-600 hover:bg-slate-100"}`}
           >
@@ -841,29 +976,38 @@ export function ContabilidadDashboard() {
             </button>
           )}
         </div>
-        {(tab === "clientes" || tab === "proveedores") && (
+        {(tab === "clientes" || tab === "proveedores" || tab === "tarifas") && (
           <div className="ml-auto flex items-center gap-2">
             <button
-              onClick={() => (tab === "clientes" ? resetClientes() : resetProveedores())}
+              onClick={() => (tab === "clientes" ? resetClientes() : tab === "proveedores" ? resetProveedores() : resetTarifas())}
               className="inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium text-slate-500 transition hover:bg-slate-100 hover:text-slate-700"
             >
               <RotateCcw size={16} /> Restaurar vista
             </button>
             <button
-              onClick={() => (tab === "clientes" ? exportClientes("clientes.csv") : exportProveedores("proveedores.csv"))}
+              onClick={() => (tab === "clientes" ? exportClientes("clientes.csv") : tab === "proveedores" ? exportProveedores("proveedores.csv") : exportTarifas("tarifas.csv"))}
               className="inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium text-slate-500 transition hover:bg-slate-100 hover:text-slate-700"
             >
               <Download size={16} /> Exportar CSV
             </button>
-            <button
-              onClick={() => {
-                setAltaTipo(tab === "clientes" ? "cliente" : "proveedor");
-                setNForm({ nombre: "", cif: "", direccion: "", poblacion: "", cp: "", telefono: "", email: "" });
-              }}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white shadow hover:bg-blue-700"
-            >
-              <Plus size={16} /> {tab === "clientes" ? "Añadir Cliente" : "Añadir Proveedor"}
-            </button>
+            {tab === "tarifas" ? (
+              <button
+                onClick={() => setAltaTarifa(true)}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white shadow hover:bg-blue-700"
+              >
+                <Plus size={16} /> Añadir Tarifa
+              </button>
+            ) : (
+              <button
+                onClick={() => {
+                  setAltaTipo(tab === "clientes" ? "cliente" : "proveedor");
+                  setNForm({ nombre: "", cif: "", direccion: "", poblacion: "", cp: "", telefono: "", email: "" });
+                }}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white shadow hover:bg-blue-700"
+              >
+                <Plus size={16} /> {tab === "clientes" ? "Añadir Cliente" : "Añadir Proveedor"}
+              </button>
+            )}
           </div>
         )}
       </div>
@@ -925,6 +1069,22 @@ export function ContabilidadDashboard() {
             onCellValueChanged={guardarCelda(REST_PROVEEDORES)}
             sideBar={{ toolPanels: ["columns"] }}
             {...proveedoresGrid}
+          />
+        )}
+        {tab === "tarifas" && (
+          <AgGridReact
+            theme={gridTheme}
+            columnDefs={tarifasCols}
+            defaultColDef={defaultColDef}
+            rowData={tarifas}
+            rowHeight={GRID_ROW_HEIGHT}
+            headerHeight={GRID_HEADER_HEIGHT}
+            rowSelection="single"
+            singleClickEdit
+            stopEditingWhenCellsLoseFocus
+            onCellValueChanged={guardarTarifaCelda}
+            sideBar={{ toolPanels: ["columns"] }}
+            {...tarifasGrid}
           />
         )}
         {tab === "diario" && (
@@ -1187,6 +1347,74 @@ export function ContabilidadDashboard() {
                 className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-blue-600 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-60"
               >
                 {guardandoN ? "Guardando…" : altaTipo === "cliente" ? "Añadir cliente" : "Añadir proveedor"}
+              </button>
+            </footer>
+          </div>
+        </>
+      )}
+
+      {altaTarifa && (
+        <>
+          <div className="fixed inset-0 z-30 bg-slate-900/40 backdrop-blur-sm" onClick={() => !guardandoN && setAltaTarifa(false)} />
+          <div className="fixed inset-y-0 right-0 z-40 flex w-1/4 flex-col border-l border-slate-200 bg-white shadow-2xl">
+            <header className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
+              <h3 className="text-sm font-semibold text-slate-800">Nueva tarifa</h3>
+              <button onClick={() => setAltaTarifa(false)} className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600">
+                <X size={18} />
+              </button>
+            </header>
+            <div className="flex-1 space-y-3 overflow-y-auto p-4 text-sm">
+              <label className="block">
+                <span className="text-xs text-slate-500">Nombre *</span>
+                <input
+                  value={tForm.nombre}
+                  onChange={(e) => setTForm((p) => ({ ...p, nombre: e.target.value }))}
+                  className="mt-0.5 w-full rounded-md border border-slate-200 px-2 py-1.5 text-sm"
+                />
+              </label>
+              <label className="block">
+                <span className="text-xs text-slate-500">Tipo de valoración</span>
+                <select
+                  value={tForm.tipo}
+                  onChange={(e) => setTForm((p) => ({ ...p, tipo: e.target.value }))}
+                  className="mt-0.5 w-full rounded-md border border-slate-200 px-2 py-1.5 text-sm"
+                >
+                  <option value="km">Por km</option>
+                  <option value="viaje">Por viaje</option>
+                  <option value="kilos">Por kilos</option>
+                </select>
+              </label>
+              <label className="block">
+                <span className="text-xs text-slate-500">Precio (€)</span>
+                <input
+                  type="number"
+                  step="0.001"
+                  value={tForm.precio}
+                  onChange={(e) => setTForm((p) => ({ ...p, precio: e.target.value }))}
+                  className="mt-0.5 w-full rounded-md border border-slate-200 px-2 py-1.5 text-sm"
+                />
+              </label>
+              <label className="block">
+                <span className="text-xs text-slate-500">Cliente (opcional)</span>
+                <select
+                  value={tForm.cliente_id}
+                  onChange={(e) => setTForm((p) => ({ ...p, cliente_id: e.target.value }))}
+                  className="mt-0.5 w-full rounded-md border border-slate-200 px-2 py-1.5 text-sm"
+                >
+                  <option value="">— General (todos los clientes)</option>
+                  {clientes.map((c) => (
+                    <option key={c.id} value={c.id}>{c.nombre}</option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            <footer className="border-t border-slate-200 p-4">
+              <button
+                onClick={darAltaTarifa}
+                disabled={guardandoN || !tForm.nombre.trim()}
+                className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-blue-600 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-60"
+              >
+                {guardandoN ? "Guardando…" : "Añadir tarifa"}
               </button>
             </footer>
           </div>

@@ -469,6 +469,7 @@ def _viajes_snapshot() -> dict:
             "COALESCE(t.cliente, '') AS cliente, t.precio, "
             "COALESCE(t.estado_pago, 'pendiente') AS estado_pago, "
             "t.km_total, t.km_real, t.km_fuente, t.peaje_km, t.peaje_estimado, t.tiempo_min, "
+            "t.modo_tarifa, t.tarifa_id, t.precio_unitario, t.kilos, t.subcontratado, t.proveedor_id, t.coste, "
             "(SELECT string_agg(actividad, ' → ' ORDER BY orden) FROM paradas WHERE trip_id = t.id) AS itinerario, "
             "(SELECT COUNT(*) FROM files WHERE trip_id = t.id) AS n_documentos, "
             "(SELECT COUNT(*) FROM tramos WHERE trip_id = t.id) AS n_tramos, "
@@ -517,6 +518,13 @@ def _viajes_snapshot() -> dict:
             "n_documentos": r["n_documentos"] or 0,
             "n_tramos": r["n_tramos"] or 0,
             "disponibilidad": "En_Viaje" if r["id"] else "Libre",
+            "modo_tarifa": r["modo_tarifa"] or "viaje",
+            "tarifa_id": r["tarifa_id"],
+            "precio_unitario": r["precio_unitario"],
+            "kilos": r["kilos"] or 0,
+            "subcontratado": bool(r["subcontratado"]),
+            "proveedor_id": r["proveedor_id"],
+            "coste": r["coste"] or 0,
         }
     return _json_safe(out)
 
@@ -954,7 +962,9 @@ def _save_trip(trip_id, nombre, matricula, conductor, tipo_carga,
                cliente_id=None, conductor_id=None,
                peaje_km=0.0, peaje_estimado=0.0, peaje_fuente="estimado",
                tiempo_min=0.0, trafico_min=0.0, pausas_min=0.0,
-               fecha_esperada_carga="", fecha_esperada_descarga=""):
+               fecha_esperada_carga="", fecha_esperada_descarga="",
+               modo_tarifa="viaje", tarifa_id=None, precio_unitario=None,
+               kilos=0.0, subcontratado=False, proveedor_id=None, coste=0.0):
     conn = _db()
     # referencia interna: conservar la existente o generar una nueva
     row = conn.execute("SELECT referencia FROM trips WHERE id=?", (trip_id,)).fetchone()
@@ -967,8 +977,9 @@ def _save_trip(trip_id, nombre, matricula, conductor, tipo_carga,
         "tareas, estado, error, creado, terminal, semirremolque_id, remolque_id, "
         "cliente, cliente_id, conductor_id, "
         "precio, km_total, tiempo_min, pausas_min, trafico_min, peaje_km, peaje_estimado, peaje_fuente, "
-        "gastos, factura, estado_pago, iva, referencia, fecha_esperada_carga, fecha_esperada_descarga) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
+        "gastos, factura, estado_pago, iva, referencia, fecha_esperada_carga, fecha_esperada_descarga, "
+        "modo_tarifa, tarifa_id, precio_unitario, kilos, subcontratado, proveedor_id, coste) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
         "ON CONFLICT (id) DO UPDATE SET "
         "nombre=EXCLUDED.nombre, matricula=EXCLUDED.matricula, conductor=EXCLUDED.conductor, "
         "tipo_carga=EXCLUDED.tipo_carga, origen=EXCLUDED.origen, destino=EXCLUDED.destino, "
@@ -981,13 +992,16 @@ def _save_trip(trip_id, nombre, matricula, conductor, tipo_carga,
         "peaje_estimado=EXCLUDED.peaje_estimado, peaje_fuente=EXCLUDED.peaje_fuente, "
         "gastos=EXCLUDED.gastos, factura=EXCLUDED.factura, "
         "estado_pago=EXCLUDED.estado_pago, iva=EXCLUDED.iva, referencia=EXCLUDED.referencia, "
-        "fecha_esperada_carga=EXCLUDED.fecha_esperada_carga, fecha_esperada_descarga=EXCLUDED.fecha_esperada_descarga",
+        "fecha_esperada_carga=EXCLUDED.fecha_esperada_carga, fecha_esperada_descarga=EXCLUDED.fecha_esperada_descarga, "
+        "modo_tarifa=EXCLUDED.modo_tarifa, tarifa_id=EXCLUDED.tarifa_id, precio_unitario=EXCLUDED.precio_unitario, "
+        "kilos=EXCLUDED.kilos, subcontratado=EXCLUDED.subcontratado, proveedor_id=EXCLUDED.proveedor_id, coste=EXCLUDED.coste",
         (trip_id, nombre, matricula, conductor, tipo_carga, origen,
          destino, n_tareas, estado, error,
          datetime.datetime.utcnow().isoformat() + "Z", terminal, semirremolque_id, remolque_id,
          cliente, cliente_id, conductor_id,
          precio, km_total, tiempo_min, pausas_min, trafico_min, peaje_km, peaje_estimado, peaje_fuente,
-         gastos, factura, estado_pago, iva, referencia, fecha_esperada_carga, fecha_esperada_descarga),
+         gastos, factura, estado_pago, iva, referencia, fecha_esperada_carga, fecha_esperada_descarga,
+         modo_tarifa, tarifa_id, precio_unitario, kilos, subcontratado, proveedor_id, coste),
     )
     conn.commit()
     conn.close()
@@ -1915,6 +1929,52 @@ def create_trip(viaje: ViajeRequest):
     return _enviar_viaje(trip_id, viaje, terminal, semirremolque, remolque)
 
 
+@app.get("/api/tarifas")
+def list_tarifas():
+    conn = _db()
+    rows = conn.execute(
+        "SELECT t.id, t.nombre, t.tipo, t.precio, t.cliente_id, t.activo, t.creado_en, "
+        "COALESCE(c.nombre, '') AS cliente_nombre "
+        "FROM tarifas t LEFT JOIN clientes c ON c.id = t.cliente_id ORDER BY t.id"
+    ).fetchall()
+    conn.close()
+    return {"tarifas": [dict(r) for r in rows]}
+
+
+@app.post("/api/tarifas")
+def create_tarifa(t: TarifaRequest):
+    conn = _db()
+    conn.execute(
+        "INSERT INTO tarifas (nombre, tipo, precio, cliente_id, activo, creado_en) VALUES (?,?,?,?,?,?)",
+        (t.nombre.strip(), t.tipo.strip().lower(), float(t.precio or 0), t.cliente_id, t.activo,
+         datetime.datetime.utcnow().isoformat() + "Z"),
+    )
+    conn.commit()
+    conn.close()
+    return {"ok": True}
+
+
+@app.put("/api/tarifas/{tarifa_id}")
+def update_tarifa(tarifa_id: int, t: TarifaRequest):
+    conn = _db()
+    conn.execute(
+        "UPDATE tarifas SET nombre=?, tipo=?, precio=?, cliente_id=?, activo=? WHERE id=?",
+        (t.nombre.strip(), t.tipo.strip().lower(), float(t.precio or 0), t.cliente_id, t.activo, tarifa_id),
+    )
+    conn.commit()
+    conn.close()
+    return {"ok": True}
+
+
+@app.delete("/api/tarifas/{tarifa_id}")
+def delete_tarifa(tarifa_id: int):
+    conn = _db()
+    conn.execute("DELETE FROM tarifas WHERE id=?", (tarifa_id,))
+    conn.commit()
+    conn.close()
+    return {"ok": True}
+
+
 @app.post("/api/trips/{trip_id}/duplicar")
 def duplicate_trip(trip_id: str):
     """Duplica un viaje existente SIN asignación (terminal/semirremolque/conductor vacíos)."""
@@ -2017,9 +2077,33 @@ def _guardar_documentos_pedido(conn, trip_id, documentos):
         )
 
 
+def _valorar_viaje(viaje, km_total):
+    """Aplica la tarifa (km/viaje/kilos) al viaje. Devuelve (precio, precio_unitario).
+
+    Si el viaje tiene tarifa_id, calcula el precio desde la tarifa; si no, usa el
+    precio manual. `precio_unitario` es None si no hay tarifa.
+    """
+    modo = (viaje.modo_tarifa or "viaje").strip().lower()
+    if viaje.tarifa_id:
+        conn = _db()
+        try:
+            row = conn.execute("SELECT tipo, precio FROM tarifas WHERE id=?", (viaje.tarifa_id,)).fetchone()
+        finally:
+            conn.close()
+        if row:
+            unit = float(row["precio"] or 0)
+            if modo == "km":
+                return round(km_total * unit, 2), unit
+            if modo == "kilos":
+                return round(float(viaje.kilos or 0) * unit, 2), unit
+            return round(unit, 2), unit
+    return round(float(viaje.precio or 0), 2), None
+
+
 def _crear_pedido(trip_id, viaje):
     km_total, peaje_km, peaje_estimado, peaje_fuente, tiempo_min, trafico_min, pausas_min = \
         _calcular_ruta(viaje, "", 0.0)
+    viaje.precio, precio_unitario = _valorar_viaje(viaje, km_total)
     precio, gastos, margen, iva_pct, base, cuota_iva = _calcular_importes(viaje)
     nombre = f"Viaje {viaje.origen.ciudad or viaje.origen.nombre or '?'} -> {viaje.destino.ciudad or viaje.destino.nombre or '?'}"
     n_tareas = 2 + len([p for p in viaje.paradas if (p.ciudad or p.nombre or p.calle or p.lat is not None)])
@@ -2037,6 +2121,9 @@ def _crear_pedido(trip_id, viaje):
         cliente_id=viaje.cliente_id, conductor_id=viaje.conductor_id,
         fecha_esperada_carga=viaje.fecha_esperada_carga,
         fecha_esperada_descarga=viaje.fecha_esperada_descarga,
+        modo_tarifa=viaje.modo_tarifa, tarifa_id=viaje.tarifa_id,
+        precio_unitario=precio_unitario, kilos=viaje.kilos,
+        subcontratado=viaje.subcontratado, proveedor_id=viaje.proveedor_id, coste=viaje.coste,
     )
     _save_paradas(trip_id, viaje)
     conn = _db()
@@ -2311,6 +2398,7 @@ def _enviar_viaje(trip_id, viaje, terminal, semirremolque, remolque):
 
     km_total, peaje_km, peaje_estimado, peaje_fuente, tiempo_min, trafico_min, pausas_min = \
         _calcular_ruta(viaje, terminal, viaje.conduccion_acumulada_min)
+    viaje.precio, precio_unitario = _valorar_viaje(viaje, km_total)
     precio, gastos, margen, iva_pct, base, cuota_iva = _calcular_importes(viaje)
 
     # km en vacío: distancia desde la última posición conocida del vehículo hasta el origen
@@ -2343,6 +2431,9 @@ def _enviar_viaje(trip_id, viaje, terminal, semirremolque, remolque):
         conductor_id=viaje.conductor_id,
         fecha_esperada_carga=viaje.fecha_esperada_carga,
         fecha_esperada_descarga=viaje.fecha_esperada_descarga,
+        modo_tarifa=viaje.modo_tarifa, tarifa_id=viaje.tarifa_id,
+        precio_unitario=precio_unitario, kilos=viaje.kilos,
+        subcontratado=viaje.subcontratado, proveedor_id=viaje.proveedor_id, coste=viaje.coste,
     )
     _save_paradas(trip_id, viaje)
     conn = _db()
@@ -4498,6 +4589,40 @@ def add_gasto(g: Gasto):
     return {"ok": True, "gasto_id": gasto_id}
 
 
+def _gasto_subcontrata(conn, trip, fecha):
+    """Genera el gasto de subcontratación (624/410) para un viaje vendido a un tercero.
+
+    Se llama dentro de una transacción ya abierta (`conn`). Devuelve el gasto_id o
+    None si no procede (sin coste o ya creado).
+    """
+    coste = float(trip["coste"] or 0)
+    if coste <= 0:
+        return None
+    # Evitar duplicados si ya se generó la subcontrata de este viaje.
+    if conn.execute(
+        "SELECT 1 FROM gastos WHERE trip_id=? AND categoria='Transportes' AND concepto LIKE 'Subcontrata%'",
+        (trip["id"],),
+    ).fetchone():
+        return None
+    iva_pct = float(trip["iva"] or 21)
+    base = round(coste / (1 + iva_pct / 100.0), 2) if iva_pct > 0 else coste
+    cuota = round(coste - base, 2)
+    concepto = f"Subcontrata viaje {trip['id']}"
+    cur = conn.execute(
+        "INSERT INTO gastos (terminal, trip_id, categoria, fecha, importe, concepto, foto, creado, proveedor_id, iva, retencion, cuenta) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id",
+        (trip["terminal"] or "", trip["id"], "Transportes", fecha, coste, concepto, "",
+         datetime.datetime.utcnow().isoformat() + "Z", trip["proveedor_id"], iva_pct, 0, "624"),
+    )
+    gasto_id = cur.fetchone()["id"]
+    lineas = [("624", base, 0, concepto)]
+    if cuota > 0:
+        lineas.append(("472", cuota, 0, "IVA soportado"))
+    lineas.append(("410", 0, coste, concepto))
+    _post_asiento(fecha[:10], concepto, lineas, origen="gasto", gasto_id=gasto_id, conn=conn)
+    return gasto_id
+
+
 # ======================================================================
 # Gastos operativos de vehículo (combustible/peajes) + OCR de facturas
 # ======================================================================
@@ -6477,6 +6602,12 @@ def _liquidar_conductor(trip, conn):
 
 def _crear_factura_borrador(trip):
     """Crea una factura en estado Borrador (sin asiento) para un viaje entregado."""
+    # Subcontratación: registrar el gasto (624/410) antes de calcular costes/margen.
+    if trip["subcontratado"]:
+        gconn = _db()
+        _gasto_subcontrata(gconn, trip, (trip["creado"] or "")[:10] or datetime.date.today().isoformat())
+        gconn.commit()
+        gconn.close()
     coste, margen = _costes_reales_viaje(trip)
     base = round(float(trip["precio"] or 0), 2)
     iva = round(float(trip["iva"] or 21), 2)
@@ -6623,6 +6754,9 @@ def contabilidad_generar_factura(trip_id: str):
         raise HTTPException(status_code=400, detail={"error": "El viaje no tiene precio."})
     fecha = (trip["creado"] or "")[:10] or datetime.date.today().isoformat()
     try:
+        # Subcontratación: generar el gasto (624/410) antes de calcular costes/margen.
+        if trip["subcontratado"]:
+            _gasto_subcontrata(conn, trip, fecha)
         factura_id, numero, base, cuota, total = _crear_factura(
             conn, [trip], trip["cliente_id"], trip["cliente"] or "", fecha)
     except ValueError as e:

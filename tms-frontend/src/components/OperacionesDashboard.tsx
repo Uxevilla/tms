@@ -12,7 +12,7 @@ import { useSocketSubscribe } from "../context/SocketContext";
 import { StatusBadge } from "./StatusBadge";
 import { LiveMap, type FocusMapa } from "./LiveMap";
 import type { Viaje, ViajeEvent, ViajeEstado } from "../types";
-import { REST_VIAJES, REST_CLIENTES, REST_CONDUCTORES, REST_DIRECCIONES, REST_VEHICULOS_DISPONIBLES, CREAR_VIAJE, RUTA } from "../config";
+import { REST_VIAJES, REST_CLIENTES, REST_CONDUCTORES, REST_DIRECCIONES, REST_VEHICULOS_DISPONIBLES, CREAR_VIAJE, RUTA, REST_TARIFAS, REST_PROVEEDORES } from "../config";
 import { BuscadorDireccion } from "./BuscadorDireccion";
 import { ChatViaje } from "./ChatViaje";
 import { DetalleViaje } from "./DetalleViaje";
@@ -209,6 +209,13 @@ export function OperacionesDashboard() {
   const [conductorId, setConductorId] = useState("");
   const [semirremolqueId, setSemirremolqueId] = useState("");
   const [precio, setPrecio] = useState("");
+  const [tarifas, setTarifas] = useState<Record<string, any>[]>([]);
+  const [proveedores, setProveedores] = useState<Record<string, any>[]>([]);
+  const [tarifaId, setTarifaId] = useState("");
+  const [kilos, setKilos] = useState("");
+  const [subcontratado, setSubcontratado] = useState(false);
+  const [proveedorId, setProveedorId] = useState("");
+  const [coste, setCoste] = useState("");
   const [fechaCarga, setFechaCarga] = useState("");
   const [fechaDescarga, setFechaDescarga] = useState("");
   const [paradas, setParadas] = useState<ParadaState[]>([]);
@@ -327,14 +334,18 @@ export function OperacionesDashboard() {
     setCargandoOpciones(true);
     try {
       const h = { Authorization: `Bearer ${getToken() ?? ""}` };
-      const [cli, dir, act] = await Promise.all([
+      const [cli, dir, act, tar, prov] = await Promise.all([
         fetch(REST_CLIENTES, { headers: h }).then((r) => r.json()),
         fetch(REST_DIRECCIONES, { headers: h }).then((r) => r.json()),
         fetch("/api/activity-types", { headers: h }).then((r) => r.json()),
+        fetch(REST_TARIFAS, { headers: h }).then((r) => r.json()),
+        fetch(REST_PROVEEDORES, { headers: h }).then((r) => r.json()),
       ]);
       setClientes(cli.clientes ?? []);
       setDirecciones(dir.direcciones ?? []);
       setActividades(Object.keys(act.actividades ?? {}));
+      setTarifas(tar.tarifas ?? []);
+      setProveedores(prov.proveedores ?? []);
     } catch (err) {
       console.error("Error cargando opciones del formulario:", err);
     } finally {
@@ -405,6 +416,11 @@ export function OperacionesDashboard() {
     setConductorId("");
     setSemirremolqueId("");
     setPrecio("");
+    setTarifaId("");
+    setKilos("");
+    setSubcontratado(false);
+    setProveedorId("");
+    setCoste("");
     setFechaCarga("");
     setFechaDescarga("");
     setParadas([]);
@@ -431,6 +447,11 @@ export function OperacionesDashboard() {
     if (clientes.length === 0) cargarOpciones();
     // Precarga los campos simples desde la fila del grid.
     setPrecio(v.precio != null ? String(v.precio) : "");
+    setTarifaId(v.tarifa_id != null ? String(v.tarifa_id) : "");
+    setKilos(v.kilos != null ? String(v.kilos) : "");
+    setSubcontratado(!!v.subcontratado);
+    setProveedorId(v.proveedor_id != null ? String(v.proveedor_id) : "");
+    setCoste(v.coste != null ? String(v.coste) : "");
     setFechaCarga(v.fecha_esperada_carga ? v.fecha_esperada_carga.slice(0, 16) : "");
     setFechaDescarga(v.fecha_esperada_descarga ? v.fecha_esperada_descarga.slice(0, 16) : "");
     const cli = clientes.find((c) => c.nombre === v.cliente);
@@ -667,9 +688,14 @@ export function OperacionesDashboard() {
       setMsg({ tipo: "error", texto: "Selecciona cliente, origen y destino." });
       return;
     }
+    const tarifa = tarifas.find((t) => String(t.id) === tarifaId);
     const precioNum = Number(precio);
-    if (!precio || isNaN(precioNum) || precioNum <= 0) {
-      setMsg({ tipo: "error", texto: "Indica el precio del viaje (€)." });
+    if (!tarifaId && (!precio || isNaN(precioNum) || precioNum <= 0)) {
+      setMsg({ tipo: "error", texto: "Indica el precio del viaje (€) o selecciona una tarifa." });
+      return;
+    }
+    if (tarifa && tarifa.tipo === "kilos" && (!kilos || Number(kilos) <= 0)) {
+      setMsg({ tipo: "error", texto: "Indica los kilos para la tarifa por kilos." });
       return;
     }
     if (!fechaCarga || !fechaDescarga) {
@@ -717,7 +743,13 @@ export function OperacionesDashboard() {
         terminal: terminal || "",
         semirremolque_id: semirremolqueId || "",
         tipo_carga: "",
-        precio: precioNum,
+        precio: tarifaId ? 0 : precioNum,
+        modo_tarifa: tarifa ? tarifa.tipo : "viaje",
+        tarifa_id: tarifa ? Number(tarifa.id) : null,
+        kilos: Number(kilos) || 0,
+        subcontratado,
+        proveedor_id: subcontratado && proveedorId ? Number(proveedorId) : null,
+        coste: subcontratado ? Number(coste) || 0 : 0,
         fecha_esperada_carga: fechaCarga,
         fecha_esperada_descarga: fechaDescarga,
         gastos: 0,
@@ -1098,9 +1130,50 @@ export function OperacionesDashboard() {
                 </select>
               </label>
               <label className="block">
-                <span className="text-xs text-slate-500">Precio del viaje (€) *</span>
+                <span className="text-xs text-slate-500">Precio del viaje (€)</span>
                 <input type="number" min="0" step="0.01" value={precio} onChange={(e) => setPrecio(e.target.value)} className="mt-0.5 w-full rounded-md border border-slate-200 px-2 py-1.5 text-sm" placeholder="1500.00" />
               </label>
+              <label className="block">
+                <span className="text-xs text-slate-500">Tarifa (valoración automática)</span>
+                <select value={tarifaId} onChange={(e) => setTarifaId(e.target.value)} className="mt-0.5 w-full rounded-md border border-slate-200 px-2 py-1.5 text-sm">
+                  <option value="">— Precio manual —</option>
+                  {tarifas.filter((t) => t.activo !== false).map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.nombre} · {t.tipo === "km" ? `${t.precio} €/km` : t.tipo === "kilos" ? `${t.precio} €/kg` : `${t.precio} €/viaje`}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {tarifaId && tarifas.find((t) => String(t.id) === tarifaId)?.tipo === "kilos" && (
+                <label className="block">
+                  <span className="text-xs text-slate-500">Kilos *</span>
+                  <input type="number" min="0" step="1" value={kilos} onChange={(e) => setKilos(e.target.value)} className="mt-0.5 w-full rounded-md border border-slate-200 px-2 py-1.5 text-sm" placeholder="24000" />
+                </label>
+              )}
+              <div className="border-t border-slate-100 pt-3">
+                <div className="mb-1.5 flex items-center justify-between">
+                  <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">Subcontratar (vender a tercero)</span>
+                  <label className="flex items-center gap-1.5 text-xs text-slate-500">
+                    <input type="checkbox" checked={subcontratado} onChange={(e) => setSubcontratado(e.target.checked)} className="h-3.5 w-3.5" />
+                    Activar
+                  </label>
+                </div>
+                {subcontratado && (
+                  <div className="space-y-2 rounded-md border border-slate-200 bg-slate-50 p-2">
+                    <label className="block">
+                      <span className="text-xs text-slate-500">Proveedor / Transportista</span>
+                      <select value={proveedorId} onChange={(e) => setProveedorId(e.target.value)} className="mt-0.5 w-full rounded-md border border-slate-200 px-2 py-1.5 text-sm">
+                        <option value="">— Seleccionar —</option>
+                        {proveedores.map((p) => <option key={p.id} value={p.id}>{p.nombre}</option>)}
+                      </select>
+                    </label>
+                    <label className="block">
+                      <span className="text-xs text-slate-500">Coste del tercero (€)</span>
+                      <input type="number" min="0" step="0.01" value={coste} onChange={(e) => setCoste(e.target.value)} className="mt-0.5 w-full rounded-md border border-slate-200 px-2 py-1.5 text-sm" placeholder="1200.00" />
+                    </label>
+                  </div>
+                )}
+              </div>
               <label className="block">
                 <span className="text-xs text-slate-500">Fecha/hora esperada de carga *</span>
                 <input type="datetime-local" value={fechaCarga} onChange={(e) => setFechaCarga(e.target.value)} className="mt-0.5 w-full rounded-md border border-slate-200 px-2 py-1.5 text-sm" />

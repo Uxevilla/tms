@@ -28,6 +28,7 @@ export const REST_DIRECCIONES = "/api/direcciones";
 export const REST_DIRECCIONES_BUSCAR = "/api/direcciones/buscar";
 export const CREAR_VIAJE = "/api/trips";
 export const REST_PROVEEDORES = "/api/proveedores";
+export const REST_TARIFAS = "/api/tarifas";
 export const REST_ASIENTOS = "/api/contabilidad/asientos";
 export const REST_PYG = "/api/contabilidad/pyg";
 export const REST_BALANCE = "/api/contabilidad/balance";

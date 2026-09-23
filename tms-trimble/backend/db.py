@@ -461,6 +461,23 @@ def _db():
             cur.execute("ALTER TABLE trips ADD COLUMN IF NOT EXISTS km_fin NUMERIC(12,1)")
             cur.execute("ALTER TABLE trips ADD COLUMN IF NOT EXISTS km_real NUMERIC(10,1)")
             cur.execute("ALTER TABLE trips ADD COLUMN IF NOT EXISTS km_fuente TEXT DEFAULT 'planificado'")
+            # Tarifas + valoración del viaje (km/viaje/kilos) y subcontratación.
+            cur.execute("ALTER TABLE trips ADD COLUMN IF NOT EXISTS modo_tarifa TEXT DEFAULT 'viaje'")
+            cur.execute("ALTER TABLE trips ADD COLUMN IF NOT EXISTS tarifa_id INTEGER")
+            cur.execute("ALTER TABLE trips ADD COLUMN IF NOT EXISTS precio_unitario NUMERIC(12,3)")
+            cur.execute("ALTER TABLE trips ADD COLUMN IF NOT EXISTS kilos NUMERIC(12,1) DEFAULT 0")
+            cur.execute("ALTER TABLE trips ADD COLUMN IF NOT EXISTS subcontratado BOOLEAN DEFAULT false")
+            cur.execute("ALTER TABLE trips ADD COLUMN IF NOT EXISTS proveedor_id INTEGER")
+            cur.execute("ALTER TABLE trips ADD COLUMN IF NOT EXISTS coste NUMERIC(12,2) DEFAULT 0")
+            cur.execute("""CREATE TABLE IF NOT EXISTS tarifas (
+                id SERIAL PRIMARY KEY,
+                nombre TEXT NOT NULL,
+                tipo TEXT NOT NULL DEFAULT 'viaje' CHECK (tipo IN ('km','viaje','kilos')),
+                precio NUMERIC(12,3) NOT NULL DEFAULT 0,
+                cliente_id INTEGER,
+                activo BOOLEAN DEFAULT true,
+                creado_en TEXT
+            )""")
             # Auditoría contable + soft delete (nada se borra físicamente en contabilidad).
             cur.execute("""CREATE TABLE IF NOT EXISTS audit_log (
                 id SERIAL PRIMARY KEY,
