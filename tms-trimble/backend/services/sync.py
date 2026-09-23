@@ -502,3 +502,8 @@ def _sync_mensajes():
         if not (more and more.group(1) == "true"):
             break
     _set_sync_state("mensajes_free_mark", fmark or "")
+
+
+from services.tacografo import _ingestar_dstat, _decode_dstat
+from services.telemetria import _del_viaje_activo, _get_redis
+from services.mensajeria import _save_mensaje, _store_mensaje

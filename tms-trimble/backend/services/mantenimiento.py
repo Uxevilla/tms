@@ -149,3 +149,6 @@ def _revisar_mantenimiento():
         except Exception:
             pass
     return len(nuevas)
+
+
+from services.telemetria import _get_redis

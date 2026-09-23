@@ -120,3 +120,6 @@ def _regex_fecha(t):
         return f"{m.group(3)}-{m.group(2)}-{m.group(1)}"
     m = re.search(r"\b(\d{4})-(\d{2})-(\d{2})\b", t)
     return f"{m.group(1)}-{m.group(2)}-{m.group(3)}" if m else ""
+
+
+from services.contabilidad import _norm_total, _norm_fecha

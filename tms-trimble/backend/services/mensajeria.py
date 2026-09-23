@@ -150,3 +150,7 @@ def _direccion_dict(r, tipo="direccion"):
     return {"id": r["id"], "tipo": tipo, "nombre": r["nombre"] or r["empresa"] or r["calle"],
             "empresa": r["empresa"], "calle": r["calle"], "numero": r["numero"], "ciudad": r["ciudad"],
             "cp": r["cp"], "pais": r["pais"], "lat": r["lat"], "lng": r["lng"]}
+
+
+from services.rrhh import _procesar_dieta
+from services.sync import _aplicar_estado_viaje, _extraer_documento_ecmr, _guardar_documento_entrega

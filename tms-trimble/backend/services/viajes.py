@@ -565,3 +565,6 @@ def _vehiculo_ptv(terminal):
         "clase_euro": (row["clase_euro"] if row and row["clase_euro"] else ""),
     }
 
+
+from services.telemetria import _set_viaje_activo
+from services.contabilidad import _next_referencia
