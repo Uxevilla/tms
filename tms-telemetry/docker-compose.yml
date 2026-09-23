@@ -1,0 +1,30 @@
+# Worker de ingesta telemática (tms-telemetry).
+#
+# El worker NO trae su propia BD/Redis: reutiliza el `timescaledb` y el `tms-redis`
+# del stack TMS (red traccar-stack_default), compartiendo credenciales vía el .env
+# del TMS (env_file). Así el puente SOAP -> Redis -> worker -> TimescaleDB es una
+# única infraestructura coherente.
+services:
+  worker:
+    build: ./worker
+    container_name: tms_ingest_worker
+    restart: unless-stopped
+    env_file:
+      - ../tms-trimble/.env
+    environment:
+      BROKER: redis
+      REDIS_URL: redis://tms-redis:6379/0
+      STREAM_KEY: telemetria:ingesta
+      CONSUMER_GROUP: workers
+      DEAD_STREAM: telemetria:ingesta:dead
+      BATCH_SIZE: "500"
+      FLUSH_INTERVAL: "2.0"
+      BLOCK_MS: "5000"
+      LOG_LEVEL: INFO
+    networks:
+      - traccar
+
+networks:
+  traccar:
+    external: true
+    name: traccar-stack_default

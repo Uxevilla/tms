@@ -1,0 +1,67 @@
+{
+  "uid": "control-flota",
+  "title": "Control de Flota",
+  "tags": ["flota", "telemetria"],
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "timezone": "browser",
+  "editable": true,
+  "graphTooltip": 1,
+  "panels": [
+    {
+      "type": "stat",
+      "id": 1,
+      "title": "Odómetro máximo (km)",
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "timescaledb" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "grafana-postgresql-datasource", "uid": "timescaledb" },
+          "rawSql": "SELECT MAX(odometer_km) AS km FROM telemetria.posiciones_gps WHERE $__timeFilter(time)",
+          "format": "table"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "lengthkm", "decimals": 1 },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": { "values": false, "calcs": ["lastNotNull"], "fields": "" },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "auto",
+        "justifyMode": "auto",
+        "orientation": "auto"
+      },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 0 }
+    },
+    {
+      "type": "timeseries",
+      "id": 2,
+      "title": "Velocidad media por vehículo",
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "timescaledb" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "grafana-postgresql-datasource", "uid": "timescaledb" },
+          "rawSql": "SELECT time_bucket('5 minutes', time) AS time, vehiculo_id AS metric, AVG(speed_kmh) AS value FROM telemetria.posiciones_gps WHERE $__timeFilter(time) GROUP BY 1, 2 ORDER BY 1",
+          "format": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "velocitykmh",
+          "custom": { "fillOpacity": 15, "lineWidth": 1.5, "showPoints": "never" }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "gridPos": { "h": 10, "w": 16, "x": 8, "y": 0 }
+    }
+  ]
+}

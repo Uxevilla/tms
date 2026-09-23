@@ -1,0 +1,25 @@
+# ============================================================
+# Repo TMS — raíz /root. Solo se versiona el proyecto TMS.
+# ============================================================
+
+# Ignora todo en /root por defecto
+/*
+
+# ...salvo el .gitignore y los directorios del proyecto
+!.gitignore
+!/tms-trimble/
+!/tms-frontend/
+!/tms-stack/
+!/tms-telemetry/
+
+# Secretos y artefactos (en cualquier nivel)
+**/.env
+**/*.env
+**/node_modules/
+**/dist/
+**/.venv/
+**/__pycache__/
+**/*.pyc
+**/.pytest_cache/
+**/.mypy_cache/
+**/.DS_Store

@@ -1,0 +1,178 @@
+# =============================================================================
+#  TMS — stack unificado (ejecución local en este host, [REDACTADO])
+# -----------------------------------------------------------------------------
+#  Servicios: timescaledb · redis · tms-backend · tms-worker · frontend · cloudflared
+#
+#  Red interna `tms_net`: la BD, Redis y el backend NO publican puertos al host.
+#  El frontend escucha en :8080 (LAN) como punto de entrada; el acceso externo
+#  se hará por el túnel de Cloudflare (servicio `cloudflared`, perfil "tunnel").
+#
+#  Build contexts absolutos (código real de esta máquina):
+#    backend  -> /root/tms-trimble
+#    worker   -> /root/tms-telemetry/worker
+#    frontend -> /root/tms-frontend
+#
+#  Variables en ./.env: DB_PASSWORD, TMS_SECRET_KEY, TRIMBLE_*, PTV_API_KEY, ...
+#  (TUNNEL_TOKEN solo si activas el perfil `tunnel`).
+# =============================================================================
+
+services:
+  timescaledb:
+    image: timescale/timescaledb:latest-pg15
+    container_name: tms-timescaledb
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USER:-tms}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD no definido en .env}
+      POSTGRES_DB: ${DB_NAME:-tms}
+    volumes:
+      - timescale_data:/var/lib/postgresql/data
+      - /root/tms-stack/db/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-tms} -d ${DB_NAME:-tms}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks: [tms_net]
+
+  redis:
+    image: redis:7-alpine
+    container_name: tms-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks: [tms_net]
+
+  tms-backend:
+    build: /root/tms-trimble
+    container_name: tms-backend
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - DB_HOST=timescaledb
+      - DB_PORT=5432
+      - REDIS_URL=redis://redis:6379/0
+    volumes:
+      - tms_backend_data:/app/backend/data
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks: [tms_net]
+
+  tms-worker:
+    build: /root/tms-telemetry/worker
+    container_name: tms-worker
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - DB_HOST=timescaledb
+      - DB_PORT=5432
+      - DB_USER=${DB_USER:-tms}
+      - DB_NAME=${DB_NAME:-tms}
+      - REDIS_URL=redis://redis:6379/0
+      - BROKER=redis
+      - STREAM_KEY=telemetria:ingesta
+      - CONSUMER_GROUP=workers
+      - DEAD_STREAM=telemetria:ingesta:dead
+      - BATCH_SIZE=500
+      - FLUSH_INTERVAL=2.0
+      - BLOCK_MS=5000
+      - LOG_LEVEL=INFO
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks: [tms_net]
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: tms-grafana
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ALLOW_EMBEDDING: "true"
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: "Viewer"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_SERVER_SERVE_FROM_SUB_PATH: "true"
+      GF_SERVER_ROOT_URL: "%(protocol)s://%(domain)s/grafana/"
+      GRAFANA_DB_PASSWORD: "${GRAFANA_DB_PASSWORD:-}"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - /root/tms-stack/grafana/provisioning:/etc/grafana/provisioning:ro
+    depends_on:
+      - timescaledb
+    networks: [tms_net]
+
+  # --- Monitorización de contenedores: cAdvisor + Prometheus (interno, sin puertos al host) ---
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:latest
+    container_name: tms-cadvisor
+    restart: unless-stopped
+    privileged: true
+    devices:
+      - /dev/kmsg
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    # Sin `ports`: Prometheus lo raspa por tms_net en cadvisor:8080 (el :8080 del host lo usa el frontend).
+    networks: [tms_net]
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: tms-prometheus
+    restart: unless-stopped
+    volumes:
+      - /root/tms-stack/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    depends_on:
+      - cadvisor
+    networks: [tms_net]
+
+  frontend:
+    build: /root/tms-frontend
+    container_name: tms-frontend
+    restart: unless-stopped
+    volumes:
+      - /root/tms-stack/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    ports:
+      - "8080:80"
+    depends_on:
+      - tms-backend
+    networks: [tms_net]
+
+  # Túnel Cloudflare Zero Trust. Requiere TUNNEL_TOKEN en .env.
+  # Activar con: docker compose --profile tunnel up -d
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: tms-cloudflared
+    restart: unless-stopped
+    profiles: ["tunnel"]
+    command: tunnel --no-autoupdate run
+    environment:
+      - TUNNEL_TOKEN=${TUNNEL_TOKEN:-}
+    depends_on:
+      - frontend
+    networks: [tms_net]
+
+networks:
+  tms_net:
+    driver: bridge
+
+volumes:
+  timescale_data:
+  redis_data:
+  tms_backend_data:
+  grafana_data:
+  prometheus_data:

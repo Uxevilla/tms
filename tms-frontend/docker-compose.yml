@@ -1,0 +1,17 @@
+# Frontend de producción (React + Nginx reverse proxy).
+# Se une a la red externa traccar-stack_default, donde está el backend
+# `tms-trimble` (FastAPI) y `timescaledb`, para proxear /api y /ws.
+services:
+  frontend:
+    build: .
+    container_name: tms-frontend
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+    networks:
+      - traccar
+
+networks:
+  traccar:
+    external:
+      name: traccar-stack_default

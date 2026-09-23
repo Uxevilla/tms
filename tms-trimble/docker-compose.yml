@@ -1,0 +1,31 @@
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: tms-redis
+    restart: unless-stopped
+    networks:
+      - default
+      - traccar
+  tms:
+    build: .
+    container_name: tms-trimble
+    restart: unless-stopped
+    ports:
+      - "8750:8750"
+    env_file:
+      - .env
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+    volumes:
+      - tms-data:/app/backend/data
+    networks:
+      - default
+      - traccar
+
+networks:
+  traccar:
+    external:
+      name: traccar-stack_default
+
+volumes:
+  tms-data:

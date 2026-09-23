@@ -1,0 +1,990 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TMS · Planificador de Transportes</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <meta name="theme-color" content="#2563eb">
+  <meta name="description" content="Planificador de pedidos y envío de viajes al terminal Trimble">
+  <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
+  <link rel="apple-touch-icon" href="apple-touch-icon.png">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="TMS">
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <style>
+    /* Asegura que el atributo `hidden` oculte SIEMPRE, aunque el elemento tenga display inline */
+    [hidden] { display: none !important; }
+  </style>
+</head>
+<body>
+  <!-- ============ LOGIN (multi-tenant) ============ -->
+  <div id="login-overlay" style="position:fixed;inset:0;background:linear-gradient(135deg,#0f172a,#1e3a8a);display:flex;align-items:center;justify-content:center;z-index:10000;padding:16px;">
+    <div style="background:#fff;border-radius:14px;padding:28px;width:100%;max-width:380px;box-shadow:0 20px 60px rgba(0,0,0,.4);">
+      <div style="text-align:center;margin-bottom:20px;">
+        <div style="font-size:40px;">🚛</div>
+        <h1 style="margin:8px 0 2px;font-size:22px;">TMS</h1>
+        <p style="margin:0;color:#64748b;font-size:13px;">Planificador de transportes</p>
+      </div>
+      <form id="login-form" style="display:flex;flex-direction:column;gap:12px;">
+        <label style="font-size:13px;color:#334155;">Identificador de empresa
+          <input id="login-empresa" type="text" autocomplete="username" placeholder="ej: eusebio" style="width:100%;margin-top:4px;padding:10px 12px;border:1px solid #cbd5e1;border-radius:8px;font-size:15px;box-sizing:border-box;">
+        </label>
+        <label style="font-size:13px;color:#334155;">Usuario
+          <input id="login-usuario" type="text" autocomplete="username" placeholder="ej: Eusebio" style="width:100%;margin-top:4px;padding:10px 12px;border:1px solid #cbd5e1;border-radius:8px;font-size:15px;box-sizing:border-box;">
+        </label>
+        <label style="font-size:13px;color:#334155;">Contraseña
+          <input id="login-password" type="password" autocomplete="current-password" placeholder="••••••••" style="width:100%;margin-top:4px;padding:10px 12px;border:1px solid #cbd5e1;border-radius:8px;font-size:15px;box-sizing:border-box;">
+        </label>
+        <button type="button" id="login-submit" class="btn btn-primary" style="margin-top:6px;width:100%;padding:11px;font-size:15px;">Entrar</button>
+        <div id="login-error" class="alert alert-error" hidden style="margin-top:4px;"></div>
+        <div id="js-diag" style="margin-top:6px;color:#dc2626;font-size:12px;text-align:left;" hidden></div>
+      </form>
+      <p style="margin:14px 0 0;color:#94a3b8;font-size:11px;text-align:center;">Gestión de empresas: usa el identificador <b>admin</b></p>
+    </div>
+  </div>
+
+  <script>
+  (function () {
+    function byId(id) { return document.getElementById(id); }
+    function stSet(k, v) {
+      try { localStorage.setItem(k, v); return true; }
+      catch (e) { try { sessionStorage.setItem(k, v); return true; } catch (e2) { return false; } }
+    }
+    // Mostrar cualquier error de JavaScript (p.ej. si app.js no carga) para diagnosticar
+    window.onerror = function (msg, src, line) {
+      var d = byId("js-diag");
+      if (d) { d.textContent = "⚠ Error JS: " + msg + (line ? " (línea " + line + ")" : ""); d.hidden = false; }
+    };
+    function doLogin() {
+      var err = byId("login-error");
+      var empresa = (byId("login-empresa").value || "").replace(/^\s+|\s+$/g, "");
+      var usuario = (byId("login-usuario").value || "").replace(/^\s+|\s+$/g, "");
+      var contrasena = byId("login-password").value;
+      if (!empresa || !usuario || !contrasena) {
+        err.textContent = "Completa empresa, usuario y contraseña.";
+        err.hidden = false;
+        return;
+      }
+      err.hidden = true;
+      fetch("/api/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ empresa: empresa, usuario: usuario, "contraseña": contrasena })
+      }).then(function (r) {
+        return r.json().then(function (d) { return { ok: r.ok, d: d }; });
+      }).then(function (res) {
+        if (res.ok && res.d && res.d.token) {
+          // Guardar en memoria global (por si el navegador bloquea localStorage/sessionStorage)
+          window.TMS_SESSION = {
+            token: res.d.token,
+            user: res.d.superadmin ? "Administración" : (res.d.usuario + " · " + res.d.empresa),
+            superadmin: !!res.d.superadmin
+          };
+          stSet("tms_token", res.d.token);
+          stSet("tms_user", window.TMS_SESSION.user);
+          stSet("tms_superadmin", window.TMS_SESSION.superadmin ? "1" : "0");
+          try {
+            if (typeof window.restoreSession === "function") {
+              window.restoreSession();
+            } else {
+              err.textContent = "Sesión iniciada, pero la app no cargó. Recarga la página (F5).";
+              err.hidden = false;
+            }
+          } catch (e) {
+            err.textContent = "Error al arrancar la app: " + (e && e.message ? e.message : e);
+            err.hidden = false;
+          }
+        } else {
+          var msg = null, dd = res.d;
+          if (dd) {
+            if (typeof dd.error === "string") msg = dd.error;
+            else if (typeof dd.detail === "string") msg = dd.detail;
+            else if (dd.detail && typeof dd.detail.error === "string") msg = dd.detail.error;
+            else if (dd.detail && typeof dd.detail.msg === "string") msg = dd.detail.msg;
+          }
+          err.textContent = msg || "No se pudo iniciar sesión.";
+          err.hidden = false;
+        }
+      }).catch(function () {
+        err.textContent = "No se pudo conectar con el servidor. Revisa tu conexión.";
+        err.hidden = false;
+      });
+    }
+    var btn = byId("login-submit");
+    var form = byId("login-form");
+    if (btn) btn.addEventListener("click", function (e) { e.preventDefault(); doLogin(); });
+    if (form) form.addEventListener("submit", function (e) { e.preventDefault(); doLogin(); });
+  })();
+  </script>
+
+  <div class="app" id="app" hidden>
+
+    <aside class="sidebar">
+      <div class="brand">
+        <span class="brand-mark">🚛</span>
+        <div>
+          <h1>TMS</h1>
+          <p>Planificador</p>
+        </div>
+      </div>
+
+      <nav class="side-nav">
+        <button type="button" class="side-item active" data-screen="planificador">
+          <span class="ico">📋</span><span>Planificador</span><span class="count" id="count-planificador" hidden></span>
+        </button>
+        <button type="button" class="side-item" data-screen="historial">
+          <span class="ico">🗂️</span><span>Historial</span>
+        </button>
+        <button type="button" class="side-item" data-screen="contabilidad">
+          <span class="ico">🧮</span><span>Contabilidad</span>
+        </button>
+        <button type="button" class="side-item" data-screen="maestros">
+          <span class="ico">⚙️</span><span>Maestros</span>
+        </button>
+        <button type="button" class="side-item" data-screen="rrhh">
+          <span class="ico">👥</span><span>Recursos</span>
+        </button>
+        <button type="button" class="side-item" data-screen="config">
+          <span class="ico">🔑</span><span>Configuración</span>
+        </button>
+        <button type="button" class="side-item" data-screen="empresas" id="nav-empresas" hidden>
+          <span class="ico">🏢</span><span>Empresas</span>
+        </button>
+      </nav>
+
+      <div class="terminal-status" id="terminal-status" hidden>
+        <span class="dot"></span>
+        <span id="terminal-name"></span>
+      </div>
+
+      <div style="margin-top:auto;padding:12px;border-top:1px solid rgba(255,255,255,.08);display:flex;flex-direction:column;gap:8px;">
+        <div style="display:flex;align-items:center;gap:8px;font-size:12px;color:#cbd5e1;min-width:0;">
+          <span>👤</span>
+          <span id="user-label" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">—</span>
+        </div>
+        <button type="button" class="btn btn-ghost btn-sm" id="btn-logout" style="width:100%;justify-content:center;">Cerrar sesión</button>
+      </div>
+    </aside>
+
+    <main class="content">
+
+      <!-- ============ PLANIFICADOR (principal) ============ -->
+      <section id="screen-planificador" class="screen">
+        <div class="screen-head">
+          <div>
+            <h2>Planificador</h2>
+            <p class="muted"><span class="legend-dot legend-yellow"></span> sin asignar &nbsp;·&nbsp; <span class="legend-dot legend-green"></span> enviado al terminal. Pincha una línea para editar la ficha completa.</p>
+          </div>
+          <button type="button" class="btn btn-primary" id="btn-nuevo-pedido">＋ Nuevo pedido</button>
+        </div>
+        <div id="tractoras-libres" class="tractoras-libres"></div>
+        <div class="fleet-map-wrap">
+          <div class="fleet-map-head">
+            <strong>🗺️ Mapa de flota</strong>
+            <span class="muted">Posición de los vehículos (Trimble) · se actualiza cada minuto</span>
+          </div>
+          <div id="fleet-map" class="map-container" style="height: 300px;"></div>
+          <div class="replay-panel">
+            <div class="replay-head">
+              <strong>▶ Replay de ruta</strong>
+              <span class="muted">Dibuja la traza histórica de un vehículo (telemetría Trimble) y la reproduce.</span>
+            </div>
+            <div class="replay-controls">
+              <select id="replay-vehiculo" class="replay-select" title="Vehículo"></select>
+              <input type="datetime-local" id="replay-desde" class="replay-dt" title="Desde">
+              <span class="muted">→</span>
+              <input type="datetime-local" id="replay-hasta" class="replay-dt" title="Hasta">
+              <button type="button" class="btn btn-primary btn-sm" id="btn-replay-cargar">Cargar traza</button>
+            </div>
+            <div class="replay-player" id="replay-player" hidden>
+              <button type="button" class="btn btn-ghost btn-sm" id="btn-replay-play" title="Reproducir / pausar">▶</button>
+              <input type="range" id="replay-slider" min="0" max="100" value="0" step="1">
+              <select id="replay-speed" class="replay-select replay-speed" title="Velocidad">
+                <option value="0.5">0.5×</option>
+                <option value="1" selected>1×</option>
+                <option value="2">2×</option>
+                <option value="5">5×</option>
+                <option value="10">10×</option>
+              </select>
+              <span id="replay-info" class="muted replay-info"></span>
+            </div>
+            <div id="replay-msg" class="muted" hidden></div>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <div id="planificador-grid" class="ag-grid-host" style="height: 520px;"></div>
+        </div>
+        <div id="planificador-detail" class="historial-detail" hidden>
+          <div class="historial-detail-head">
+            <strong id="planificador-detail-title">Chat</strong>
+            <button type="button" class="btn btn-ghost btn-sm" id="planificador-detail-close">✕ Cerrar</button>
+          </div>
+          <div id="planificador-detail-body" class="historial-detail-body"></div>
+        </div>
+      </section>
+
+      <!-- ============ NUEVO PEDIDO ============ -->
+      <section id="screen-nuevo" class="screen" hidden>
+        <div class="screen-head">
+          <div>
+            <h2 id="pedido-form-title">Nuevo pedido</h2>
+            <p class="muted">Se guardará en el planificador sin camión asignado. La ciudad es el único campo obligatorio de cada dirección.</p>
+          </div>
+          <button type="button" class="btn btn-ghost" id="btn-cancelar-pedido">← Volver</button>
+        </div>
+
+        <section class="card">
+          <form id="trip-form" novalidate>
+            <fieldset class="block">
+              <legend>Origen</legend>
+              <div data-address="origen"></div>
+            </fieldset>
+
+            <fieldset class="block">
+              <legend>Paradas</legend>
+              <div id="paradas-list"></div>
+              <button type="button" class="btn btn-ghost" id="btn-add-parada">＋ Añadir parada</button>
+            </fieldset>
+
+            <fieldset class="block">
+              <legend>Destino</legend>
+              <div data-address="destino"></div>
+            </fieldset>
+
+            <fieldset class="block">
+              <legend>Datos del pedido</legend>
+              <div class="grid">
+                <label class="span-2">Tipo de carga
+                  <select name="tipo_carga">
+                    <option value="">— Seleccionar —</option>
+                    <option>General</option>
+                    <option>ADR</option>
+                    <option>Refrigerada</option>
+                    <option>Líquidos</option>
+                    <option>Granel</option>
+                    <option>Otro</option>
+                  </select>
+                </label>
+                <label>Cliente
+                  <select name="cliente"><option value="">— Seleccionar —</option></select>
+                </label>
+                <label>Precio (€)
+                  <input type="number" name="precio" step="0.01" min="0" placeholder="Ej: 350.00">
+                </label>
+                <label>IVA (%)
+                  <input type="number" name="iva" step="0.01" min="0" value="21">
+                </label>
+                <label>Peso (kg)
+                  <input type="number" name="peso" step="0.1" min="0" placeholder="0">
+                </label>
+                <label>Palets
+                  <input type="number" name="palets" step="1" min="0" placeholder="0">
+                </label>
+                <label class="span-2">OCR factura/albarán (lee Nº, CIF, base, IVA y total)
+                  <input type="file" id="ocr-factura-input" accept="image/*">
+                </label>
+                <div id="ocr-factura-result" class="muted span-2"></div>
+              </div>
+            </fieldset>
+
+            <fieldset class="block">
+              <legend>Documentos (PDF)</legend>
+              <p class="muted">Adjunta el pedido, CMR o carta de porte. Se subirán al terminal cuando envíes el viaje.</p>
+              <label class="file-drop">
+                <input type="file" id="pedido-docs-input" accept="application/pdf,.pdf" multiple>
+                <span>📎 Adjuntar documentos PDF</span>
+              </label>
+              <div id="pedido-docs-list" class="docs-list"></div>
+            </fieldset>
+
+            <fieldset class="block">
+              <legend>Distancia estimada (km)</legend>
+              <p class="muted">Calcula los km por carretera entre origen, paradas y destino. Necesita las coordenadas de cada punto (usa «Buscar lugar»).</p>
+              <button type="button" class="btn btn-ghost" id="btn-calcular-km">📏 Calcular km</button>
+              <div id="km-result" class="km-result" hidden></div>
+            </fieldset>
+
+            <fieldset class="block">
+              <legend>Ruta y tráfico en vivo</legend>
+              <p class="muted">Ruta óptima calculada por PTV con el tráfico en tiempo real. Se dibuja al pulsar «Calcular km».</p>
+              <div class="map-toolbar">
+                <span class="muted">Fijar en mapa:</span>
+                <button type="button" class="btn btn-ghost btn-sm map-target" data-target="origen">📍 Origen</button>
+                <button type="button" class="btn btn-ghost btn-sm map-target" data-target="parada">🛑 Parada</button>
+                <button type="button" class="btn btn-ghost btn-sm map-target active" data-target="destino">🏁 Destino</button>
+                <span class="muted map-hint">Haz clic en el mapa para fijar el punto seleccionado.</span>
+              </div>
+              <div id="map" class="map-container" style="height: 420px;"></div>
+            </fieldset>
+
+            <div class="form-actions">
+              <button type="submit" class="btn btn-primary" id="btn-submit">Guardar pedido</button>
+            </div>
+          </form>
+        </section>
+
+        <section class="card" id="result-card" hidden>
+          <div class="card-head">
+            <h2 id="result-title">Resultado</h2>
+          </div>
+          <div id="result-body"></div>
+        </section>
+      </section>
+
+      <!-- ============ HISTORIAL ============ -->
+      <section id="screen-historial" class="screen" hidden>
+        <div class="screen-head">
+          <div>
+            <h2>Historial</h2>
+            <p class="muted">Haz clic en una fila para abrir la ficha. Ordena y filtra desde la cabecera de cada columna.</p>
+          </div>
+          <button type="button" class="btn btn-ghost" id="btn-export-trips">⬇ Excel</button>
+        </div>
+        <div class="table-wrap">
+          <div id="history-grid" class="ag-grid-host" style="height: 620px;"></div>
+        </div>
+        <div id="historial-detail" class="historial-detail" hidden>
+          <div class="historial-detail-head">
+            <strong id="historial-detail-title">Detalle</strong>
+            <button type="button" class="btn btn-ghost btn-sm" id="historial-detail-close">✕ Cerrar</button>
+          </div>
+          <div id="historial-detail-body" class="historial-detail-body"></div>
+        </div>
+      </section>
+
+      <!-- ============ MAESTROS ============ -->
+      <section id="screen-maestros" class="screen" hidden>
+        <div class="screen-head">
+          <div>
+            <h2>Maestros</h2>
+            <p class="muted">Datos maestros de la flota: clientes, conductores, vehículos, proveedores, transportistas y más. Cada pestaña es exportable a Excel.</p>
+          </div>
+        </div>
+        <nav class="sub-nav" id="maestros-tabs">
+          <button type="button" class="sub-item active" data-mtab="clientes">👥 Clientes</button>
+          <button type="button" class="sub-item" data-mtab="conductores">🧑‍✈️ Conductores</button>
+          <button type="button" class="sub-item" data-mtab="vehiculos">🚛 Vehículos</button>
+          <button type="button" class="sub-item" data-mtab="proveedores">🏭 Proveedores</button>
+          <button type="button" class="sub-item" data-mtab="transportistas">🚚 Transportistas</button>
+          <button type="button" class="sub-item" data-mtab="categorias">🏷️ Categorías gasto</button>
+          <button type="button" class="sub-item" data-mtab="tarifas">🛣️ Peajes</button>
+          <button type="button" class="sub-item" data-mtab="taller">🔧 Taller</button>
+          <button type="button" class="sub-item" data-mtab="direcciones">📍 Orígenes/Destinos</button>
+        </nav>
+        <div id="maestros-panel">
+
+          <section class="mtab-panel" data-mtab="clientes">
+            <div class="card-head">
+              <h3>Clientes</h3>
+              <button type="button" class="btn btn-ghost mtab-export" data-export="clientes">⬇ Excel</button>
+            </div>
+            <div class="cf-form">
+              <label>Nombre<input type="text" id="cli-nombre" placeholder="Mercadona"></label>
+              <label>CIF<input type="text" id="cli-cif" placeholder="A-12345678"></label>
+              <label>Dirección<input type="text" id="cli-direccion" placeholder="Calle..."></label>
+              <label>Población<input type="text" id="cli-poblacion" placeholder="Madrid"></label>
+              <label>Teléfono<input type="text" id="cli-telefono" placeholder="91..."></label>
+              <label>Email<input type="text" id="cli-email" placeholder="correo@..."></label>
+              <button type="button" class="btn btn-ghost" id="btn-add-cliente">Añadir</button>
+            </div>
+            <div id="clientes-list"></div>
+          </section>
+
+          <section class="mtab-panel" data-mtab="conductores" hidden>
+            <div class="card-head">
+              <h3>Conductores</h3>
+              <div>
+                <button type="button" class="btn btn-ghost" id="btn-sync-conductores">🔄 Nutrir desde RRHH</button>
+                <button type="button" class="btn btn-ghost mtab-export" data-export="conductores">⬇ Excel</button>
+              </div>
+            </div>
+            <div class="cf-form">
+              <label>Nombre<input type="text" id="con-nombre" placeholder="Eusebio Álvarez"></label>
+              <label>DNI<input type="text" id="con-dni" placeholder="12345678A"></label>
+              <label>Teléfono<input type="text" id="con-telefono" placeholder="600..."></label>
+              <label>Email<input type="text" id="con-email" placeholder="correo@..."></label>
+              <button type="button" class="btn btn-ghost" id="btn-add-conductor">Añadir</button>
+            </div>
+            <div id="conductores-list"></div>
+          </section>
+
+          <section class="mtab-panel" data-mtab="vehiculos" hidden>
+            <div class="card-head">
+              <h3>Vehículos</h3>
+              <button type="button" class="btn btn-ghost mtab-export" data-export="vehiculos">⬇ Excel</button>
+            </div>
+            <div class="cf-form">
+              <label>ID (terminal o matrícula)<input type="text" id="veh-id" list="terminales-list" placeholder="APP_EUSEBIO o 1234-KLM"></label>
+              <datalist id="terminales-list"></datalist>
+              <label>Categoría
+                <select id="veh-categoria">
+                  <option value="tractora" selected>Tractora</option>
+                  <option value="rigido">Rígido</option>
+                  <option value="ligero">Ligero</option>
+                  <option value="turismo">Turismo</option>
+                  <option value="semirremolque">Semirremolque</option>
+                  <option value="remolque">Remolque</option>
+                </select>
+              </label>
+              <label>Matrícula<input type="text" id="veh-matricula" placeholder="1234 KLM"></label>
+              <label>Marca<input type="text" id="veh-marca" placeholder="Volvo"></label>
+              <label>Modelo<input type="text" id="veh-modelo" placeholder="FH"></label>
+              <label>Año<input type="number" id="veh-anno" placeholder="2021"></label>
+              <label>ITV (fecha)<input type="date" id="veh-itv"></label>
+              <label>Seguro (fecha)<input type="date" id="veh-seguro"></label>
+              <label>Categoría peaje
+                <select id="veh-peaje">
+                  <option value="ligero">Ligero (turismo/furgoneta)</option>
+                  <option value="pesado2">Pesado 2 ejes</option>
+                  <option value="pesado3">Pesado 3 ejes</option>
+                  <option value="pesado4" selected>Pesado 4+ ejes (tractora + semirremolque)</option>
+                </select>
+              </label>
+              <label>Perfil PTV
+                <select id="veh-ptv-profile">
+                  <option value="EUR_TRAILER_TRUCK" selected>Trailer truck (tractora+semirremolque)</option>
+                  <option value="EUR_TRUCK_40T">Camión 40t</option>
+                  <option value="EUR_TRUCK_7_5T">Camión 7,5t</option>
+                  <option value="EUR_VAN">Furgoneta</option>
+                  <option value="EUR_CAR">Turismo</option>
+                </select>
+              </label>
+              <label>Ejes (total con remolque)<input type="number" id="veh-ejes" min="2" max="10" placeholder="5"></label>
+              <label>MMA (kg)<input type="number" id="veh-mma" min="0" placeholder="40000"></label>
+              <label>Clase EURO
+                <select id="veh-clase-euro">
+                  <option value="">— Sin especificar —</option>
+                  <option value="EURO_6">EURO 6</option>
+                  <option value="EURO_5">EURO 5</option>
+                  <option value="EURO_4">EURO 4</option>
+                  <option value="EURO_3">EURO 3</option>
+                </select>
+              </label>
+              <label>Capacidad peso (kg)<input type="number" id="veh-cap-peso" min="0" placeholder="24000"></label>
+              <label>Capacidad palets<input type="number" id="veh-cap-palets" min="0" placeholder="33"></label>
+              <button type="button" class="btn btn-ghost" id="btn-add-vehiculo">Guardar</button>
+            </div>
+            <div id="vehiculos-list"></div>
+          </section>
+
+          <section class="mtab-panel" data-mtab="proveedores" hidden>
+            <div class="card-head">
+              <h3>Proveedores (emisores)</h3>
+              <button type="button" class="btn btn-ghost mtab-export" data-export="proveedores">⬇ Excel</button>
+            </div>
+            <div class="cf-form">
+              <label>Nombre<input type="text" id="prov-nombre" placeholder="Repsol"></label>
+              <label>CIF<input type="text" id="prov-cif" placeholder="A-12345678"></label>
+              <label>Dirección<input type="text" id="prov-direccion" placeholder="Calle..."></label>
+              <label>Población<input type="text" id="prov-poblacion" placeholder="Madrid"></label>
+              <label>CP<input type="text" id="prov-cp" placeholder="28001"></label>
+              <label>Teléfono<input type="text" id="prov-telefono" placeholder="91..."></label>
+              <label>Email<input type="text" id="prov-email" placeholder="correo@..."></label>
+              <button type="button" class="btn btn-ghost" id="btn-add-proveedor">Añadir</button>
+            </div>
+            <div id="proveedores-list"></div>
+          </section>
+
+          <section class="mtab-panel" data-mtab="transportistas" hidden>
+            <div class="card-head">
+              <h3>Transportistas (subcontratados)</h3>
+              <button type="button" class="btn btn-ghost mtab-export" data-export="transportistas">⬇ Excel</button>
+            </div>
+            <div class="cf-form">
+              <label>Nombre<input type="text" id="tra-nombre" placeholder="Juan Transportes"></label>
+              <label>CIF<input type="text" id="tra-cif" placeholder="A-12345678"></label>
+              <label>Teléfono<input type="text" id="tra-telefono" placeholder="600..."></label>
+              <label>Email<input type="text" id="tra-email" placeholder="correo@..."></label>
+              <label>Tarifa €/km<input type="number" id="tra-tarifa" step="0.01" min="0" placeholder="0.85"></label>
+              <button type="button" class="btn btn-ghost" id="btn-add-transportista">Añadir</button>
+            </div>
+            <div id="transportistas-list"></div>
+
+            <h3 class="ing-subtitle">Liquidaciones a transportistas</h3>
+            <div class="cf-form">
+              <label>Transportista<select id="liq-transportista"><option value="">—</option></select></label>
+              <label>Fecha<input type="date" id="liq-fecha"></label>
+              <label>Importe (€)<input type="number" id="liq-importe" step="0.01" min="0" placeholder="0"></label>
+              <label>Concepto<input type="text" id="liq-concepto" placeholder="Viaje Madrid-Valencia"></label>
+              <button type="button" class="btn btn-ghost" id="btn-add-liq">Añadir</button>
+            </div>
+            <div id="liquidaciones-resumen"></div>
+            <div id="liquidaciones-list"></div>
+          </section>
+
+          <section class="mtab-panel" data-mtab="categorias" hidden>
+            <div class="card-head">
+              <h3>Categorías de gasto</h3>
+              <button type="button" class="btn btn-ghost mtab-export" data-export="categorias_gasto">⬇ Excel</button>
+            </div>
+            <div class="cf-form">
+              <label>Nueva categoría<input type="text" id="cat-nombre" placeholder="Ej: Ferrys"></label>
+              <label>Cuenta (grupo 6)<input type="text" id="cat-cuenta" placeholder="629"></label>
+              <button type="button" class="btn btn-ghost" id="btn-add-categoria">Añadir</button>
+            </div>
+            <div id="categorias-list"></div>
+          </section>
+
+          <section class="mtab-panel" data-mtab="tarifas" hidden>
+            <div class="card-head">
+              <h3>Tarifas de peaje (€/km)</h3>
+              <button type="button" class="btn btn-ghost mtab-export" data-export="tarifas_peaje">⬇ Excel</button>
+            </div>
+            <p class="muted">Estimación por kilómetro de autopista de peaje según categoría del vehículo. Ajusta los valores a tus costes reales.</p>
+            <div id="tarifas-peaje-list"></div>
+          </section>
+
+          <section class="mtab-panel" data-mtab="taller" hidden>
+            <div class="card-head">
+              <h3>Taller / mantenimiento</h3>
+              <button type="button" class="btn btn-ghost mtab-export" data-export="mantenimientos">⬇ Excel</button>
+            </div>
+            <div id="avisos-taller"></div>
+            <div class="cf-form">
+              <label>Vehículo
+                <select id="mant-vehiculo"><option value="">— Seleccionar —</option></select>
+              </label>
+              <label>Tipo
+                <select id="mant-tipo">
+                  <option>ITV</option>
+                  <option>Revisión</option>
+                  <option>Neumáticos</option>
+                  <option>Seguro</option>
+                  <option>Reparación</option>
+                  <option>Otro</option>
+                </select>
+              </label>
+              <label>Fecha<input type="date" id="mant-fecha"></label>
+              <label>Km<input type="number" id="mant-km" min="0" placeholder="0"></label>
+              <label>Coste (€)<input type="number" id="mant-coste" step="0.01" min="0" placeholder="0"></label>
+              <label>Notas<input type="text" id="mant-notas" placeholder="..."></label>
+              <button type="button" class="btn btn-ghost" id="btn-add-mant">Añadir</button>
+            </div>
+            <div id="mantenimientos-list"></div>
+            <div class="card-head" style="margin-top:20px;">
+              <h3>Alertas de inspección</h3>
+              <span class="muted">Generadas por los reportes de inspección (e-CMR / ReportDefinition)</span>
+            </div>
+            <div id="alertas-list"></div>
+          </section>
+
+          <section class="mtab-panel" data-mtab="direcciones" hidden>
+            <div class="card-head">
+              <h3>Orígenes y destinos</h3>
+              <button type="button" class="btn btn-ghost mtab-export" data-export="direcciones">⬇ Excel</button>
+            </div>
+            <p class="muted">Direcciones guardadas (de los viajes y manuales). Reutilízalas al crear un viaje.</p>
+            <div class="cf-form">
+              <label>Nombre<input type="text" id="dir-nombre" placeholder="Almacén Madrid"></label>
+              <label>Empresa<input type="text" id="dir-empresa" placeholder="Cliente"></label>
+              <label>Calle<input type="text" id="dir-calle" placeholder="Calle..."></label>
+              <label>Número<input type="text" id="dir-numero" placeholder="1"></label>
+              <label>Ciudad<input type="text" id="dir-ciudad" placeholder="Madrid"></label>
+              <label>C.P.<input type="text" id="dir-cp" placeholder="28001"></label>
+              <label>País<input type="text" id="dir-pais" placeholder="ES"></label>
+              <label>Lat<input type="number" id="dir-lat" step="any" placeholder="40.416"></label>
+              <label>Lng<input type="number" id="dir-lng" step="any" placeholder="-3.703"></label>
+              <label>Comentario<input type="text" id="dir-comentario" placeholder="..."></label>
+              <button type="button" class="btn btn-ghost" id="btn-add-direccion">Añadir</button>
+            </div>
+            <div id="direcciones-list"></div>
+          </section>
+
+        </div>
+      </section>
+
+      <!-- ============ CONTABILIDAD ============ -->
+      <section id="screen-rrhh" class="screen" hidden>
+        <div class="screen-head">
+          <div>
+            <h2>Recursos Humanos</h2>
+            <p class="muted">Empleados, nóminas, vacaciones, bajas y disponibilidad.</p>
+          </div>
+          <button type="button" class="btn btn-ghost" id="btn-export-rrhh">⬇ Excel</button>
+        </div>
+        <nav class="sub-nav" id="rrhh-tabs">
+          <button type="button" class="sub-item active" data-rtab="resumen">📊 Resumen</button>
+          <button type="button" class="sub-item" data-rtab="empleados">👤 Empleados</button>
+          <button type="button" class="sub-item" data-rtab="nominas">💶 Nóminas</button>
+          <button type="button" class="sub-item" data-rtab="ausencias">🏖️ Vacaciones</button>
+        </nav>
+        <div id="rrhh-panel"></div>
+
+        <section class="rtab-panel" data-rtab="empleados" hidden>
+          <div class="card-head">
+            <h3>Plantilla</h3>
+            <button type="button" class="btn btn-ghost rrhh-export" data-export="empleados">⬇ Excel</button>
+          </div>
+          <fieldset class="block">
+            <legend>Alta / edición de empleado</legend>
+            <div class="grid">
+              <label>Nombre <input type="text" id="emp-nombre"></label>
+              <label>Apellidos <input type="text" id="emp-apellidos"></label>
+              <label>DNI/NIF <input type="text" id="emp-dni"></label>
+              <label>Nº Seguridad Social <input type="text" id="emp-nss"></label>
+              <label>Categoría <select id="emp-categoria"></select></label>
+              <label>Puesto <input type="text" id="emp-puesto"></label>
+              <label>Tipo de contrato <select id="emp-contrato"></select></label>
+              <label>Jornada <select id="emp-jornada"></select></label>
+              <label>Email <input type="email" id="emp-email"></label>
+              <label>Teléfono <input type="text" id="emp-telefono"></label>
+              <label class="span-2">Dirección <input type="text" id="emp-direccion"></label>
+              <label>Ciudad <input type="text" id="emp-ciudad"></label>
+              <label>CP <input type="text" id="emp-cp"></label>
+              <label>Fecha de alta <input type="date" id="emp-alta"></label>
+              <label>Fecha de baja (vacía = activo) <input type="date" id="emp-baja"></label>
+              <label>Salario bruto mensual (€) <input type="number" id="emp-salario" step="0.01"></label>
+              <label>IRPF (%) <input type="number" id="emp-irpf" step="0.01" value="15"></label>
+              <label>Disponibilidad <select id="emp-dispo"><option value="disponible">Disponible</option><option value="no disponible">No disponible</option></select></label>
+              <label>Motivo no disponible <input type="text" id="emp-motivo"></label>
+              <label>Banco <input type="text" id="emp-banco"></label>
+              <label>IBAN <input type="text" id="emp-iban"></label>
+              <label>Titular de cuenta <input type="text" id="emp-titular"></label>
+              <label>Convenio <input type="text" id="emp-convenio"></label>
+              <label class="span-2">Observaciones <input type="text" id="emp-obs"></label>
+            </div>
+            <div class="form-actions">
+              <button type="button" class="btn btn-primary" id="btn-add-emp">Añadir empleado</button>
+            </div>
+          </fieldset>
+          <div id="empleados-list"></div>
+        </section>
+
+        <section class="rtab-panel" data-rtab="nominas" hidden>
+          <div class="card-head">
+            <h3>Nóminas</h3>
+            <button type="button" class="btn btn-ghost rrhh-export" data-export="nominas">⬇ Excel</button>
+          </div>
+          <div class="cf-form">
+            <label>Periodo <input type="month" id="nomina-periodo"></label>
+            <button type="button" class="btn btn-primary" id="btn-generar-nominas">Generar nóminas del periodo</button>
+          </div>
+          <fieldset class="block" id="nomina-edit-form" hidden>
+            <legend>Nómina individual (edición)</legend>
+            <div class="grid">
+              <label>Empleado <select id="nomina-emp"></select></label>
+              <label>Periodo <input type="month" id="nomina-per-edit"></label>
+              <label>Salario bruto (€) <input type="number" id="nomina-bruto" step="0.01"></label>
+              <label>IRPF (%) <input type="number" id="nomina-irpf" step="0.01" value="15"></label>
+              <label>SS trabajador (%) <input type="number" id="nomina-ss-t" step="0.01" value="6.35"></label>
+              <label>SS empresa (%) <input type="number" id="nomina-ss-e" step="0.01" value="30"></label>
+              <label class="span-2">Notas <input type="text" id="nomina-notas"></label>
+            </div>
+            <div class="form-actions"><button type="button" class="btn btn-primary" id="btn-save-nomina">Guardar nómina</button></div>
+          </fieldset>
+          <div id="nominas-list"></div>
+        </section>
+
+        <section class="rtab-panel" data-rtab="ausencias" hidden>
+          <div class="card-head">
+            <h3>Vacaciones, permisos y bajas</h3>
+            <button type="button" class="btn btn-ghost rrhh-export" data-export="ausencias">⬇ Excel</button>
+          </div>
+          <fieldset class="block">
+            <legend>Nueva ausencia</legend>
+            <div class="grid">
+              <label>Empleado <select id="aus-empleado"></select></label>
+              <label>Tipo <select id="aus-tipo"><option>Vacaciones</option><option>Permiso</option><option>Baja médica</option><option>Asuntos propios</option></select></label>
+              <label>Inicio <input type="date" id="aus-inicio"></label>
+              <label>Fin <input type="date" id="aus-fin"></label>
+              <label>Días <input type="number" id="aus-dias" step="0.5" min="0"></label>
+              <label>Estado <select id="aus-estado"><option>Pendiente</option><option>Aprobada</option><option>Rechazada</option></select></label>
+              <label class="span-2">Nota <input type="text" id="aus-nota"></label>
+            </div>
+            <div class="form-actions">
+              <button type="button" class="btn btn-primary" id="btn-add-ausencia">Añadir ausencia</button>
+            </div>
+          </fieldset>
+          <div id="ausencias-list"></div>
+        </section>
+      </section>
+
+      <section id="screen-contabilidad" class="screen" hidden>
+        <div class="screen-head">
+          <div>
+            <h2>Contabilidad</h2>
+            <p class="muted">Doble partida: facturación, libro diario, plan contable, balance y cuenta de resultados.</p>
+          </div>
+          <button type="button" class="btn btn-ghost" id="btn-export-contabilidad">⬇ Excel</button>
+        </div>
+        <nav class="sub-nav" id="contabilidad-tabs">
+          <button type="button" class="sub-item active" data-ctab="dashboard">📊 Dashboard</button>
+          <button type="button" class="sub-item" data-ctab="gastos">💶 Gastos</button>
+          <button type="button" class="sub-item" data-ctab="facturacion">🧾 Facturación</button>
+          <button type="button" class="sub-item" data-ctab="diario">📒 Libro diario</button>
+          <button type="button" class="sub-item" data-ctab="cuentas">🗂️ Plan contable</button>
+          <button type="button" class="sub-item" data-ctab="balance">⚖️ Balance</button>
+          <button type="button" class="sub-item" data-ctab="pyg">📈 Resultados</button>
+          <button type="button" class="sub-item" data-ctab="explotacion">📆 Explotación</button>
+          <button type="button" class="sub-item" data-ctab="tesoreria">💰 Tesorería</button>
+          <button type="button" class="sub-item" data-ctab="impuestos">🏛️ Impuestos</button>
+          <button type="button" class="sub-item" data-ctab="inmovilizado">🚛 Inmovilizado</button>
+          <button type="button" class="sub-item" data-ctab="ingresos">📈 Ingresos</button>
+          <button type="button" class="sub-item" data-ctab="configuracion">⚙️ Configuración</button>
+        </nav>
+        <div id="contabilidad-panel"></div>
+
+        <!-- Panel estático: Gastos -->
+        <section class="ctab-panel" data-ctab="gastos" hidden>
+          <div class="card-head">
+            <h3>Gastos del vehículo</h3>
+            <button type="button" class="btn btn-ghost" id="btn-export-gastos">⬇ Excel</button>
+          </div>
+          <fieldset class="block">
+            <legend>Nuevo gasto</legend>
+            <div class="grid">
+              <label>Vehículo (opcional)
+                <select name="gasto-terminal"><option value="">— General / empresa —</option></select>
+              </label>
+              <label>Categoría
+                <select name="gasto-categoria"><option value="">— Cargando… —</option></select>
+              </label>
+              <label>Cuenta contable
+                <select name="gasto-cuenta"><option value="">— Automática —</option></select>
+              </label>
+              <label>Fecha
+                <input type="date" name="gasto-fecha">
+              </label>
+              <label>Importe total (€, IVA incl.)
+                <input type="number" name="gasto-importe" step="0.01" min="0" placeholder="120.00">
+              </label>
+              <label>IVA (%)
+                <input type="number" name="gasto-iva" step="0.01" min="0" value="21">
+              </label>
+              <label class="span-2">Proveedor (emisor)
+                <select name="gasto-proveedor"><option value="">— Sin proveedor —</option></select>
+              </label>
+              <label>Retención IRPF (%)
+                <input type="number" name="gasto-retencion" step="0.01" min="0" value="0">
+              </label>
+              <label class="span-2">Concepto
+                <input type="text" name="gasto-concepto" placeholder="Ej: Repostaje Repsol">
+              </label>
+            </div>
+            <label class="file-drop">
+              <input type="file" id="gasto-foto-input" accept="image/*">
+              <span>📷 Subir foto del ticket (lectura OCR automática)</span>
+            </label>
+            <div id="gasto-ocr-result" class="muted"></div>
+            <div class="form-actions">
+              <button type="button" class="btn btn-primary" id="btn-add-gasto">Añadir gasto</button>
+            </div>
+          </fieldset>
+          <h3 class="ing-subtitle">Acumulado por proveedor</h3>
+          <div id="gastos-por-proveedor"></div>
+          <h3 class="ing-subtitle">Resumen por categoría</h3>
+          <div id="gastos-resumen"></div>
+          <h3 class="ing-subtitle">Lista de gastos</h3>
+          <div id="gastos-list"></div>
+        </section>
+
+        <!-- Panel estático: Ingresos -->
+        <section class="ctab-panel" data-ctab="ingresos" hidden>
+          <div class="card-head">
+            <h3>Ingresos</h3>
+            <div class="card-actions">
+              <button type="button" class="btn btn-ghost" id="btn-export-ingresos">⬇ Excel</button>
+              <button type="button" class="btn btn-ghost" id="btn-refresh-ingresos">Actualizar</button>
+            </div>
+          </div>
+          <div class="ing-filters">
+            <label>Desde<input type="date" id="ing-desde"></label>
+            <label>Hasta<input type="date" id="ing-hasta"></label>
+            <label>Estado
+              <select id="ing-estado">
+                <option value="">Todos</option>
+                <option value="enviado">Enviado</option>
+                <option value="recibido">Recibido</option>
+                <option value="aceptado">Aceptado</option>
+                <option value="en curso">En curso</option>
+                <option value="finalizado">Finalizado</option>
+                <option value="error">Error</option>
+              </select>
+            </label>
+            <button type="button" class="btn btn-ghost" id="btn-ing-filtrar">Filtrar</button>
+          </div>
+          <div id="ingresos"></div>
+          <div class="ing-filters">
+            <label>Costes de estructura (% sobre ingresos)
+              <input type="number" id="cfg-estructura-pct" step="0.1" min="0" max="100" placeholder="Ej: 10">
+            </label>
+            <button type="button" class="btn btn-ghost" id="btn-cfg-estructura">Guardar %</button>
+          </div>
+          <h3 class="ing-subtitle">Costes fijos por vehículo</h3>
+          <div class="cf-form">
+            <label>Vehículo<input type="text" id="cf-terminal" placeholder="APP_EUSEBIO"></label>
+            <label>Concepto<input type="text" id="cf-concepto" placeholder="Seguro, renting..."></label>
+            <label>€/mes<input type="number" id="cf-importe" step="0.01" min="0" placeholder="500"></label>
+            <button type="button" class="btn btn-ghost" id="btn-add-coste">Añadir</button>
+          </div>
+          <div id="costes-fijos"></div>
+        </section>
+
+        <!-- Panel estático: Configuración -->
+        <section class="ctab-panel" data-ctab="configuracion" hidden>
+          <div class="card-head"><h3>Ficha de empresa y correo</h3></div>
+          <fieldset class="block">
+            <legend>Datos de tu empresa (cabecera de las facturas)</legend>
+            <div class="grid">
+              <label>Nombre / Razón social<input type="text" id="emp-nombre" placeholder="Mi Transporte S.L."></label>
+              <label>CIF/NIF<input type="text" id="emp-cif" placeholder="B-12345678"></label>
+              <label>Dirección<input type="text" id="emp-direccion" placeholder="Calle..."></label>
+              <label>Población<input type="text" id="emp-poblacion" placeholder="Madrid"></label>
+              <label>C.P.<input type="text" id="emp-cp" placeholder="28001"></label>
+              <label>País<input type="text" id="emp-pais" placeholder="ES"></label>
+              <label>Teléfono<input type="text" id="emp-telefono" placeholder="91..."></label>
+              <label>Email<input type="email" id="emp-email" placeholder="facturas@..."></label>
+              <label>Web<input type="text" id="emp-web" placeholder="https://..."></label>
+              <label>IVA por defecto (%)<input type="number" id="emp-iva" step="0.01" value="21"></label>
+              <label>IBAN<input type="text" id="emp-iban" placeholder="ES00 0000 0000 0000 0000 0000"></label>
+            </div>
+            <button type="button" class="btn btn-primary" id="btn-save-empresa">Guardar empresa</button>
+          </fieldset>
+          <fieldset class="block">
+            <legend>Cuenta de correo saliente (SMTP) para enviar facturas</legend>
+            <div class="grid">
+              <label>Servidor SMTP<input type="text" id="smtp-host" placeholder="smtp.gmail.com"></label>
+              <label>Puerto<input type="number" id="smtp-port" value="587"></label>
+              <label>Usuario<input type="text" id="smtp-user" placeholder="tu@correo.com"></label>
+              <label>Contraseña / app password<input type="password" id="smtp-password" placeholder="..."></label>
+              <label>Remitente (From)<input type="text" id="smtp-from" placeholder="Tu Empresa <tu@correo.com>"></label>
+            </div>
+            <button type="button" class="btn btn-primary" id="btn-save-smtp">Guardar correo</button>
+          </fieldset>
+        </section>
+      </section>
+
+      <!-- ============ CONFIGURACIÓN (integraciones por cliente) ============ -->
+      <section id="screen-config" class="screen" hidden>
+        <div class="screen-head">
+          <h2>🔑 Configuración</h2>
+          <p class="muted">Claves de integración de esta empresa. Cada cliente configura las suyas.</p>
+        </div>
+        <section class="card">
+          <div class="card-head"><h3>Platform Science (Trimble FleetWorks)</h3></div>
+          <div class="grid">
+            <label>Usuario<input type="text" id="cfg-trimble-username" placeholder="user@cliente"></label>
+            <label>Contraseña<input type="password" id="cfg-trimble-password" placeholder="..."></label>
+            <label>Customer (número de cliente)<input type="text" id="cfg-trimble-customer" placeholder="123456-78"></label>
+            <label>Terminal por defecto<input type="text" id="cfg-trimble-terminal" placeholder="APP_EUSEBIO"></label>
+          </div>
+        </section>
+        <section class="card">
+          <div class="card-head"><h3>PTV Routing (peajes / rutas)</h3></div>
+          <div class="grid">
+            <label>API Key (valor base64 apiKey:apiSecret)<input type="text" id="cfg-ptv-key" placeholder="..."></label>
+          </div>
+        </section>
+        <section class="card">
+          <div class="card-head"><h3>Acceso de usuarios</h3></div>
+          <div class="grid">
+            <label>Usuarios (separados por coma)<input type="text" id="cfg-auth-users" placeholder="Eusebio, Oficina"></label>
+            <label>Contraseña compartida<input type="password" id="cfg-auth-password" placeholder="..."></label>
+          </div>
+          <p class="muted" style="margin-top:8px;">Estos usuarios inician sesión con el identificador de esta empresa.</p>
+        </section>
+        <div class="form-actions">
+          <button type="button" class="btn btn-primary" id="btn-save-integraciones">Guardar configuración</button>
+        </div>
+        <div id="cfg-msg" class="alert alert-success" hidden></div>
+      </section>
+
+      <!-- ============ EMPRESAS (super-admin) ============ -->
+      <section id="screen-empresas" class="screen" hidden>
+        <div class="screen-head">
+          <h2>🏢 Empresas</h2>
+          <p class="muted">Gestión de clientes. Cada empresa tiene su propia base de datos aislada.</p>
+        </div>
+        <section class="card">
+          <div class="card-head"><h3>Nueva empresa</h3></div>
+          <div class="grid">
+            <label>Identificador (slug)<input type="text" id="emp-slug" placeholder="ej: acme"></label>
+            <label>Nombre<input type="text" id="emp-nombre" placeholder="ACME Transportes"></label>
+            <label>Usuario inicial<input type="text" id="emp-usuario" placeholder="operador"></label>
+            <label>Contraseña inicial<input type="password" id="emp-password" placeholder="..."></label>
+          </div>
+          <div class="form-actions">
+            <button type="button" class="btn btn-primary" id="btn-crear-empresa">Crear empresa + BD</button>
+          </div>
+        </section>
+        <section class="card">
+          <div class="card-head"><h3>Empresas registradas</h3></div>
+          <div class="table-wrap" id="empresas-list"></div>
+        </section>
+      </section>
+
+    </main>
+  </div>
+
+  <!-- ============ MODAL ASIGNAR CAMIÓN ============ -->
+  <div class="modal-backdrop" id="asignar-modal" hidden>
+    <div class="modal">
+      <div class="modal-head">
+        <h3>Asignar camión</h3>
+        <button type="button" class="btn-remove" id="btn-cerrar-asignar" aria-label="Cerrar">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="muted" id="asignar-trip-info"></p>
+        <div id="asig-sugerencia" class="muted" style="color: var(--ok); margin-bottom: 8px;"></div>
+        <div class="grid">
+          <label>Tractora (terminal)
+            <select name="asig-terminal"><option value="">— Cargando… —</option></select>
+          </label>
+          <label>Semirremolque
+            <select name="asig-semirremolque"><option value="">— Ninguno —</option></select>
+          </label>
+          <label>Remolque
+            <select name="asig-remolque"><option value="">— Ninguno —</option></select>
+          </label>
+          <label>Conductor
+            <select name="asig-conductor"><option value="">— Cargando… —</option></select>
+          </label>
+          <label>Conducción acumulada hoy (h)
+            <input type="number" name="asig-conduccion" step="0.25" min="0" max="10" placeholder="0" title="Horas ya conducidas desde la última pausa (tacógrafo).">
+          </label>
+          <label>Proveedor eCMR
+            <select name="asig-ecmr">
+              <option value="">— Sin eCMR —</option>
+              <option value="transfollowPartner">Transfollow (pruebas)</option>
+              <option value="transfollow">Transfollow (producción)</option>
+              <option value="pionira">Pionira</option>
+            </select>
+          </label>
+          <label>Nº eCMR (cmr-id)
+            <input type="text" name="asig-ecmr-id" placeholder="Ej: 287262">
+          </label>
+        </div>
+        <div style="margin-top:12px;padding:10px;border:1px dashed var(--border);border-radius:8px;">
+          <div class="muted" style="font-size:12px;margin-bottom:8px;">Crear e-CMR en TransFollow (rellena los emails y pulsa; el nº se rellena solo):</div>
+          <div class="grid">
+            <label>Email transportista (carrier)<input type="email" name="ecmr-carrier-email" placeholder="tu@empresa.com"></label>
+            <label>Email cargador (consignor)<input type="email" name="ecmr-consignor-email" placeholder="cargador@x.com"></label>
+            <label>Email destinatario (consignee)<input type="email" name="ecmr-consignee-email" placeholder="destino@y.com"></label>
+          </div>
+          <div class="form-actions">
+            <button type="button" class="btn btn-ghost" id="btn-crear-ecmr">Crear e-CMR</button>
+            <span id="ecmr-crear-status" class="muted"></span>
+          </div>
+        </div>
+        <label class="file-drop" style="margin-top: 12px;">
+          <input type="file" id="asig-docs-input" accept="application/pdf,.pdf" multiple>
+          <span>📎 Adjuntar documentos PDF (se suben al DMS)</span>
+        </label>
+        <div id="asig-docs-list" class="docs-list"></div>
+        <div class="form-actions">
+          <button type="button" class="btn btn-primary" id="btn-confirmar-asignar">Asignar y enviar a Trimble</button>
+        </div>
+        <div id="asignar-error" class="alert alert-error" hidden></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="ag-grid-community.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

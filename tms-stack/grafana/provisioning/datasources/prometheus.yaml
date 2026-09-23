@@ -1,0 +1,11 @@
+apiVersion: 1
+
+# Datasource Grafana -> Prometheus (raspa a cAdvisor). Aprovisionado al arrancar.
+datasources:
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: false
+    editable: false

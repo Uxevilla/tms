@@ -1,0 +1,22 @@
+apiVersion: 1
+
+# Datasource de Grafana -> TimescaleDB (PostgreSQL) aprovisionado automáticamente.
+# Usuario read-only `tms_admin` (creado en la BD); la contraseña se inyecta vía
+# variable de entorno GRAFANA_DB_PASSWORD (sintaxis $__env{...} de Grafana).
+datasources:
+  - name: TimescaleDB
+    uid: timescaledb
+    type: postgres
+    access: proxy
+    url: timescaledb:5432
+    database: tms
+    user: tms_admin
+    secureJsonData:
+      password: $__env{GRAFANA_DB_PASSWORD}
+    jsonData:
+      sslmode: disable
+      postgresVersion: 1500
+      timescaledb: true
+      timeInterval: 60s
+    isDefault: true
+    editable: false

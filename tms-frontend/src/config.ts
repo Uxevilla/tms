@@ -1,0 +1,47 @@
+// Origen único vía Nginx: el frontend se sirve desde Nginx, que proxea /api/ y
+// /ws/ al backend FastAPI. URLs relativas ⇒ sin CORS y funciona en cualquier host.
+export const REST_VIAJES = "/api/viajes";
+export const REST_TELEMETRIA = "/api/telemetria/activa";
+export const REST_TRAYECTORIAS = "/api/telemetria/trayectoria";
+export const REST_TACOGRAFO = (terminal: string) => `/api/tacografo/${terminal}/dstat`;
+export const AUTH_LOGIN = "/api/auth/login";
+export const CHANGE_PASSWORD = "/api/auth/change-password";
+export const REST_BORRADORES = "/api/contabilidad/borradores";
+export const EMITIR_BORRADOR = (id: number) => `/api/contabilidad/borradores/${id}/emitir`;
+export const REST_LIQUIDACIONES = "/api/contabilidad/liquidaciones";
+export const GRAFANA_URL = "/grafana/";
+export const REST_VEHICULOS = "/api/vehiculos";
+export const REST_VEHICULOS_DISPONIBLES = "/api/vehiculos/disponibles";
+export const REST_MANTENIMIENTOS = "/api/mantenimientos";
+export const REST_ALERTAS = "/api/alertas";
+export const REST_MANTENIMIENTO_ALERTAS = "/api/mantenimiento/alertas";
+export const REST_MANTENIMIENTO_CONVERTIR = (id: number) => `/api/mantenimiento/convertir/${id}`;
+export const REST_EMPLEADOS = "/api/empleados";
+export const REST_NOMINAS = "/api/nominas";
+export const REST_AUSENCIAS = "/api/ausencias";
+export const REST_AUSENCIAS_PLANNING = "/api/empleados/ausencias";
+export const GENERAR_NOMINAS = "/api/nominas/generar";
+export const PATCH_VEHICULO = (id: string) => `/api/vehiculos/${id}`;
+export const REST_CLIENTES = "/api/clientes";
+export const REST_CONDUCTORES = "/api/conductores";
+export const REST_DIRECCIONES = "/api/direcciones";
+export const REST_DIRECCIONES_BUSCAR = "/api/direcciones/buscar";
+export const CREAR_VIAJE = "/api/trips";
+export const REST_PROVEEDORES = "/api/proveedores";
+export const REST_ASIENTOS = "/api/contabilidad/asientos";
+export const REST_PYG = "/api/contabilidad/pyg";
+export const REST_BALANCE = "/api/contabilidad/balance";
+export const REST_RECONCILIACION = "/api/contabilidad/reconciliacion-km";
+export const REST_AUDITORIA = "/api/contabilidad/auditoria";
+export const RUTA = "/api/ruta";
+export const REST_GASTOS_VEHICULOS = "/api/gastos/vehiculos";
+export const REST_GASTOS_OCR = "/api/gastos/ocr";
+export const REST_RENTABILIDAD = "/api/kpis/rentabilidad-flota";
+export const REST_DOCUMENTOS = "/api/documentos";
+
+export const WS_OPERACIONES = (() => {
+  const proto =
+    typeof window !== "undefined" && window.location.protocol === "https:" ? "wss" : "ws";
+  const host = typeof window !== "undefined" ? window.location.host : "localhost:8750";
+  return `${proto}://${host}/ws/operaciones`;
+})();

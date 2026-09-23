@@ -1,0 +1,32 @@
+# Override para usar RabbitMQ como broker en lugar de Redis Streams.
+#
+# Uso (mismo stack, pero el worker consume de RabbitMQ):
+#   docker compose -f docker-compose.yml -f docker-compose.rabbitmq.yml up -d --build
+#
+# El worker sigue usando Redis como caché del viaje activo; solo cambia el broker
+# de la cola de ingesta. El panel de administración de RabbitMQ queda en
+# http://localhost:15672 (guest/guest).
+
+services:
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: tms_rabbitmq
+    restart: unless-stopped
+    ports:
+      - "${RABBITMQ_PORT:-5672}:5672"
+      - "${RABBITMQ_MGMT_PORT:-15672}:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  worker:
+    environment:
+      BROKER: rabbitmq
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      RABBITMQ_QUEUE: telemetria.ingesta
+      RABBITMQ_DEAD_QUEUE: telemetria.ingesta.dead
+    depends_on:
+      rabbitmq:
+        condition: service_healthy

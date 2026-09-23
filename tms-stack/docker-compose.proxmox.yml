@@ -1,0 +1,135 @@
+# =============================================================================
+#  TMS — pila completa unificada (despliegue Proxmox)
+# -----------------------------------------------------------------------------
+#  Servicios: timescaledb · redis · tms-backend · tms-worker · frontend · cloudflared
+#
+#  Red interna `tms_net` (bridge privada): la BD, Redis y el backend NO publican
+#  puertos al host. El frontend escucha solo en loopback (pruebas locales) y el
+#  acceso real entra exclusivamente por el túnel de Cloudflare.
+#
+#  Variables requeridas en ./.env (junto a este archivo):
+#    DB_PASSWORD            -> contraseña de PostgreSQL
+#    TMS_SECRET_KEY         -> firma JWT/HMAC del backend
+#    TUNNEL_TOKEN           -> token del túnel Cloudflare (cloudflared)
+#    TRIMBLE_USERNAME / TRIMBLE_PASSWORD / TRIMBLE_CUSTOMER / TRIMBLE_TERMINAL
+#    PTV_API_KEY
+#    TRANSFOLLOW_API_KEY
+#    TRANSFOLLOW_WEBHOOK_USER / TRANSFOLLOW_WEBHOOK_PASSWORD
+#    SMTP_HOST / SMTP_PORT / SMTP_USER / SMTP_PASSWORD / SMTP_FROM
+#    (opcional) DB_USER, DB_NAME, MASTER_DB_NAME, SUPERADMIN_USER / SUPERADMIN_PASSWORD
+#
+#  Estructura esperada junto a este compose:
+#    ./backend/   -> raíz de tms-trimble (Dockerfile + backend/ + frontend/ + db/init/)
+#    ./worker/    -> raíz de tms-telemetry/worker (Dockerfile + ingest_worker.py + requirements.txt)
+#    ./frontend/  -> raíz de tms-frontend (Dockerfile + src/ + package.json)
+#    ./nginx.conf -> configuración del frontend (montada como volumen)
+# =============================================================================
+
+services:
+  timescaledb:
+    image: timescale/timescaledb:latest-pg15
+    container_name: tms-timescaledb
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USER:-tms}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD no definido en .env}
+      POSTGRES_DB: ${DB_NAME:-tms}
+    volumes:
+      - timescale_data:/var/lib/postgresql/data
+      - ./backend/db/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-tms} -d ${DB_NAME:-tms}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks: [tms_net]
+
+  redis:
+    image: redis:7-alpine
+    container_name: tms-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks: [tms_net]
+
+  tms-backend:
+    build: ./backend
+    container_name: tms-backend
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - DB_HOST=timescaledb
+      - DB_PORT=5432
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks: [tms_net]
+
+  tms-worker:
+    build: ./worker
+    container_name: tms-worker
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - DB_HOST=timescaledb
+      - DB_PORT=5432
+      - DB_USER=${DB_USER:-tms}
+      - DB_NAME=${DB_NAME:-tms}
+      - REDIS_URL=redis://redis:6379/0
+      - BROKER=redis
+      - STREAM_KEY=telemetria:ingesta
+      - CONSUMER_GROUP=workers
+      - DEAD_STREAM=telemetria:ingesta:dead
+      - BATCH_SIZE=500
+      - FLUSH_INTERVAL=2.0
+      - BLOCK_MS=5000
+      - LOG_LEVEL=INFO
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks: [tms_net]
+
+  frontend:
+    build: ./frontend
+    container_name: tms-frontend
+    restart: unless-stopped
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    # Loopback solo para verificar en local. En producción el tráfico entra por
+    # el túnel (cloudflared -> frontend:80). Elimina/ajusta esta línea si no
+    # quieres ningún puerto expuesto al host.
+    ports:
+      - "127.0.0.1:8080:80"
+    depends_on:
+      - tms-backend
+    networks: [tms_net]
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: tms-cloudflared
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      - TUNNEL_TOKEN=${TUNNEL_TOKEN:?TUNNEL_TOKEN no definido en .env}
+    depends_on:
+      - frontend
+    networks: [tms_net]
+
+networks:
+  tms_net:
+    driver: bridge
+
+volumes:
+  timescale_data:
+  redis_data:

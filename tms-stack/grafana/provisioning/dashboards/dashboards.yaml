@@ -1,0 +1,15 @@
+apiVersion: 1
+
+# Proveedor de dashboards "as code": Grafana lee los .json de este directorio
+# y los provisiona automáticamente al arrancar (y los recarga cada 30s).
+providers:
+  - name: 'TMS Flota'
+    orgId: 1
+    folder: 'Flota'
+    type: file
+    disableDeletion: true
+    updateIntervalSeconds: 30
+    allowUiUpdates: false
+    options:
+      path: /etc/grafana/provisioning/dashboards
+      foldersFromFilesStructure: false

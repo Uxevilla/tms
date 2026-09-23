@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.pyc
+backend/data/
+backend/history.db
+*.db
+test_*.py
+probe.py
+delegate_frontend.py
+extract_frontend.py
+delegation_msg.txt
+delegation_reply.txt
+.env
