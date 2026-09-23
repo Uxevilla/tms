@@ -142,3 +142,93 @@ def _viajes_snapshot() -> dict:
             "coste": r["coste"] or 0,
         }
     return _json_safe(out)
+
+
+def _extraer_posicion(block):
+    """Extrae la posición de un bloque <traces> con coordenada, o None.
+    Devuelve dict {source, lat, lng, time, speed, heading, mileage}."""
+    lat = re.search(r"<latitude>([^<]*)</latitude>", block)
+    lng = re.search(r"<longitude>([^<]*)</longitude>", block)
+    src = re.search(r"<source>([^<]*)</source>", block)
+    if not (lat and lng and src):
+        return None
+    try:
+        def _f(pattern):
+            m = re.search(pattern, block)
+            return float(m.group(1)) if m else None
+        tm = re.search(r"<time>([^<]*)</time>", block)
+        return {
+            "source": src.group(1).strip(),
+            "lat": float(lat.group(1)),
+            "lng": float(lng.group(1)),
+            "time": tm.group(1) if tm else "",
+            "speed": _f(r"<speed>([^<]*)</speed>"),
+            "heading": _f(r"<heading>([^<]*)</heading>"),
+            "mileage": _f(r"<mileage>([^<]*)</mileage>"),
+        }
+    except ValueError:
+        return None
+
+
+def _parse_trimble_ts(s):
+    """Convierte una fecha ISO de Trimble (p.ej. '2026-09-21T11:43:34.739Z') a datetime, o None."""
+    if not s:
+        return None
+    s = s.strip()
+    if s.endswith("Z"):
+        s = s[:-1] + "+00:00"
+    try:
+        return datetime.datetime.fromisoformat(s)
+    except ValueError:
+        return None
+
+
+def _guardar_telemetria(pos, vehiculo_id):
+    """Publica la posición en el Redis Stream `telemetria:ingesta` (xadd).
+
+    ingest_worker.py consume el stream y hace la escritura masiva en TimescaleDB.
+    Los nombres de campo se mapean al contrato del worker
+    (speed->speed_kmh, mileage->odometer_km, source->fuente).
+    """
+    try:
+        msg = {
+            "vehiculo_id": vehiculo_id,
+            "time": pos.get("time", ""),
+            "lat": pos.get("lat"),
+            "lng": pos.get("lng"),
+            "speed_kmh": pos.get("speed"),
+            "heading": pos.get("heading"),
+            "odometer_km": pos.get("mileage"),
+            "fuente": pos.get("source"),
+        }
+        _get_redis().xadd(REDIS_STREAM, {"data": json.dumps(msg)})
+    except Exception:
+        pass  # Redis caído no debe interrumpir la sync SOAP
+
+
+def _source_a_vehiculo(conn, source):
+    """Mapea el 'source' de una traza al id de vehículo.
+
+    El source puede ser la matrícula (id del vehículo) o el serial del OBC (device).
+    """
+    if not source:
+        return None
+    # 1) match directo por id (referencia Trimble = matrícula)
+    row = conn.execute("SELECT id FROM vehiculos WHERE id=? LIMIT 1", (source,)).fetchone()
+    if row:
+        return row["id"]
+    # 2) match por device (serial OBC)
+    row = conn.execute("SELECT id FROM vehiculos WHERE device=? LIMIT 1", (source,)).fetchone()
+    if row:
+        return row["id"]
+    # 3) fallback por sufijo
+    suffix = source.rsplit("-", 1)[-1].strip().lower()
+    if suffix:
+        row = conn.execute(
+            "SELECT id FROM vehiculos WHERE LOWER(id) LIKE ? OR LOWER(COALESCE(matricula,'')) LIKE ? LIMIT 1",
+            (f"%{suffix}%", f"%{suffix}%"),
+        ).fetchone()
+        if row:
+            return row["id"]
+    return None
+

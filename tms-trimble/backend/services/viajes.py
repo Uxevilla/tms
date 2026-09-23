@@ -536,3 +536,32 @@ def _enviar_viaje(trip_id, viaje, terminal, semirremolque, remolque):
         "estado_pago": viaje.estado_pago or "pendiente",
         "pasos": pasos,
     }
+
+
+def _terminal_app(conn, vehiculo_id):
+    """Resuelve el terminal APP (Fleet XPS) para el despacho SOAP, desde un vehículo T4U.
+
+    El T4U (id = matrícula) solo da telemetría/tacógrafo; los viajes y question paths
+    se envían a la APP vinculada (id con sufijo 'APP'). Si no hay APP vinculada,
+    cae al terminal APP por defecto (config.DEFAULT_TRIMBLE_TERMINAL, p. ej. 'demo').
+    """
+    row = conn.execute("SELECT app_terminal FROM vehiculos WHERE id=?", (vehiculo_id,)).fetchone()
+    if row and row["app_terminal"]:
+        return row["app_terminal"]
+    return config.DEFAULT_TRIMBLE_TERMINAL or vehiculo_id
+
+
+def _vehiculo_ptv(terminal):
+    """Atributos PTV del vehículo para el cálculo de peaje exacto."""
+    conn = _db()
+    row = conn.execute(
+        "SELECT ptv_profile, ejes, mma, clase_euro FROM vehiculos WHERE id=?", (terminal,)
+    ).fetchone()
+    conn.close()
+    return {
+        "ptv_profile": (row["ptv_profile"] if row and row["ptv_profile"] else "EUR_TRAILER_TRUCK"),
+        "ejes": (row["ejes"] if row else None),
+        "mma": (row["mma"] if row else None),
+        "clase_euro": (row["clase_euro"] if row and row["clase_euro"] else ""),
+    }
+

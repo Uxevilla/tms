@@ -30,6 +30,7 @@ from models import *
 from config import TRANSFOLLOW_WEBHOOK_USER, TRANSFOLLOW_WEBHOOK_PASSWORD
 
 from config import REDIS_URL, REDIS_STREAM, REDIS_CHANNEL, ACTIVITY_TYPES
+from services.telemetria import _extraer_posicion, _parse_trimble_ts, _guardar_telemetria, _source_a_vehiculo
 
 
 def _query_terminal_states(terminal=None) -> dict:
