@@ -351,12 +351,6 @@ CREATE TABLE IF NOT EXISTS audit_log (
     despues TEXT,
     ts TEXT
 );
-ALTER TABLE clientes ADD COLUMN IF NOT EXISTS borrado BOOLEAN DEFAULT false;
-ALTER TABLE clientes ADD COLUMN IF NOT EXISTS borrado_por TEXT;
-ALTER TABLE clientes ADD COLUMN IF NOT EXISTS borrado_en TEXT;
-ALTER TABLE proveedores ADD COLUMN IF NOT EXISTS borrado BOOLEAN DEFAULT false;
-ALTER TABLE proveedores ADD COLUMN IF NOT EXISTS borrado_por TEXT;
-ALTER TABLE proveedores ADD COLUMN IF NOT EXISTS borrado_en TEXT;
 ALTER TABLE asientos ADD COLUMN IF NOT EXISTS borrado BOOLEAN DEFAULT false;
 ALTER TABLE asientos ADD COLUMN IF NOT EXISTS borrado_por TEXT;
 ALTER TABLE asientos ADD COLUMN IF NOT EXISTS borrado_en TEXT;
@@ -582,8 +576,6 @@ def _db():
             cur.execute("ALTER TABLE asientos ADD COLUMN IF NOT EXISTS origen_id TEXT")
             cur.execute("ALTER TABLE conductores ADD COLUMN IF NOT EXISTS did TEXT")
             cur.execute("ALTER TABLE mensajes ADD COLUMN IF NOT EXISTS terminal TEXT")
-            cur.execute("ALTER TABLE clientes ADD COLUMN IF NOT EXISTS cuenta_contable_defecto TEXT DEFAULT '430'")
-            cur.execute("ALTER TABLE proveedores ADD COLUMN IF NOT EXISTS cuenta_contable_defecto TEXT DEFAULT '400'")
             cur.execute("ALTER TABLE gastos_vehiculos ADD COLUMN IF NOT EXISTS base_imponible NUMERIC(12,2) DEFAULT 0")
             cur.execute("ALTER TABLE gastos_vehiculos ADD COLUMN IF NOT EXISTS iva NUMERIC(6,2) DEFAULT 21")
             cur.execute("ALTER TABLE gastos_vehiculos ADD COLUMN IF NOT EXISTS cuenta_contable_gasto TEXT")
@@ -652,7 +644,7 @@ def _db():
                 despues TEXT,
                 ts TEXT
             )""")
-            for _t in ("clientes", "proveedores", "asientos", "facturas"):
+            for _t in ("asientos", "facturas"):
                 cur.execute(f"ALTER TABLE {_t} ADD COLUMN IF NOT EXISTS borrado BOOLEAN DEFAULT false")
                 cur.execute(f"ALTER TABLE {_t} ADD COLUMN IF NOT EXISTS borrado_por TEXT")
                 cur.execute(f"ALTER TABLE {_t} ADD COLUMN IF NOT EXISTS borrado_en TEXT")
