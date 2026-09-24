@@ -65,7 +65,10 @@ class TrimbleClient:
             op_m = re.search(r"<ser:(\w+)>", body)
             op = op_m.group(1) if op_m else "?"
             ids = [i for i in re.findall(r"<tripIds?>(.*?)</tripIds?>", body) if i]
-            _FAKE_CALLS.append({"op": op, "ids": ids})
+            # Solo el ciclo de vida del viaje interesa a los e2e; el polling de fondo
+            # (pollTraces/pollFiles/pollMessages/findAll*) es ruido y no se registra.
+            if op in ("createTrips", "assignTrips", "deployTrips", "unAssignTrips", "removeTrips"):
+                _FAKE_CALLS.append({"op": op, "ids": ids})
             for i in ids:
                 if i.startswith("E2E-FAIL"):
                     return {"ok": False, "status": 500,

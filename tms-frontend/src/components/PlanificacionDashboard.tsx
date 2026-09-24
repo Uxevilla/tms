@@ -83,6 +83,13 @@ function enTrimble(v: ViajePlanificacion): boolean {
 function enCursoEstado(v: ViajePlanificacion): boolean {
   return ESTADOS_EN_CURSO.includes(v.estado);
 }
+// Duración del viaje: fin−inicio si la tiene; si no, tiempo_min de la ruta; si no, 2 h.
+function duracionDe(v: ViajePlanificacion): number {
+  const d = aTs(v.fin) - aTs(v.inicio);
+  if (!isNaN(d) && d > 0) return d;
+  if (v.tiempo_min > 0) return v.tiempo_min * 60000;
+  return 2 * 3600000;
+}
 
 export function PlanificacionDashboard() {
   const qc = useQueryClient();
@@ -180,17 +187,23 @@ export function PlanificacionDashboard() {
     [lista],
   );
 
-  // ---- x → tiempo (saltos de 15 min) ----
+  // ---- x → tiempo (saltos de 15 min). Día: hora; semana: día + hora. ----
   const ejeRef = useRef<HTMLDivElement>(null);
   const xATiempo = useCallback((clientX: number): string => {
     const eje = ejeRef.current;
     if (!eje) return "";
     const rect = eje.getBoundingClientRect();
     const x = clientX - rect.left + eje.scrollLeft - 160; // - columna de matrícula
-    const ms = desdeTs + (x / pxHora) * 3600000;
-    const snapped = Math.round(ms / 900000) * 900000;
-    return fmtLocalISO(new Date(snapped));
-  }, [desdeTs, pxHora]);
+    if (x < 0) return "";
+    if (vista === "dia") {
+      const ms = desdeTs + (x / pxHora) * 3600000;
+      return fmtLocalISO(new Date(Math.round(ms / 900000) * 900000));
+    }
+    const diaIdx = Math.min(6, Math.floor(x / pxDia));
+    const horaFrac = (x - diaIdx * pxDia) / pxDia; // 0..1 dentro del día
+    const ms = desdeTs + diaIdx * 86400000 + Math.round(horaFrac * 96) * 900000;
+    return fmtLocalISO(new Date(ms));
+  }, [desdeTs, pxHora, pxDia, vista]);
 
   // ---- mover (optimista + enCurso + avisos + historial + reversión) ----
   const moverViaje = useCallback(
@@ -284,26 +297,35 @@ export function PlanificacionDashboard() {
     moverViaje(viaje, destino, ec);
   };
 
-  // ---- Arrastre (soltar = mover al momento; el validar solo colorea) ----
+  // ---- Arrastre visual (copia semitransparente + sombra + auto-scroll + Esc) ----
   const [arrastre, setArrastre] = useState<ViajePlanificacion | null>(null);
   const [sobreTractora, setSobreTractora] = useState<string | null>(null);
+  const [horaArrastre, setHoraArrastre] = useState<string>("");
   const [validacion, setValidacion] = useState<{ ok: boolean; bloqueos: ValidacionMotivo[]; avisos: ValidacionMotivo[] } | null>(null);
   const [validacionError, setValidacionError] = useState(false);
   const arrastreRef = useRef<ViajePlanificacion | null>(null);
   const sobreTractoraRef = useRef<string | null>(null);
+  const horaArrastreRef = useRef<string>("");
   const validacionRef = useRef<{ ok: boolean; bloqueos: ValidacionMotivo[]; avisos: ValidacionMotivo[] } | null>(null);
   const validacionErrorRef = useRef(false);
   const validacionGen = useRef(0);
   const abortRef = useRef<AbortController | null>(null);
+  const copiaRef = useRef<HTMLDivElement>(null);
+  const sombraRef = useRef<HTMLDivElement>(null);
+  const rafRef = useRef<number>(0);
+
+  // ---- Redimensionar (estirar el borde derecho = ajustar "fin", F) ----
+  const [redimensionando, setRedimensionando] = useState<{ viaje: ViajePlanificacion; fin: string } | null>(null);
+  const redimensionandoRef = useRef<{ viaje: ViajePlanificacion; fin: string } | null>(null);
 
   const validar = useCallback(
-    async (v: ViajePlanificacion, tractora: string, semi: string, cond: number | null, signal?: AbortSignal) => {
+    async (v: ViajePlanificacion, tractora: string, semi: string, cond: number | null, inicio: string, fin: string, signal?: AbortSignal) => {
       try {
         return await api<{ ok: boolean; bloqueos: ValidacionMotivo[]; avisos: ValidacionMotivo[] }>(REST_PLANIFICACION_VALIDAR, {
           method: "POST",
           body: JSON.stringify({
             trip_id: v.id, terminal: tractora, semirremolque_id: semi, remolque_id: v.remolque_id,
-            conductor_id: cond, inicio: v.inicio, fin: v.fin, kilos: v.kilos, palets: v.palets,
+            conductor_id: cond, inicio, fin, kilos: v.kilos, palets: v.palets,
           }),
           signal,
         });
@@ -329,8 +351,10 @@ export function PlanificacionDashboard() {
     abortRef.current = ac;
     const semi = ultimoUsado(sobreTractora).semi;
     const cond = ultimoUsado(sobreTractora).cond;
+    const inicio = horaArrastre || arrastre.inicio;
+    const fin = fmtLocalISO(new Date(aTs(inicio) + duracionDe(arrastre)));
     const timer = window.setTimeout(() => {
-      validar(arrastre, sobreTractora, semi, cond, ac.signal).then((r) => {
+      validar(arrastre, sobreTractora, semi, cond, inicio, fin, ac.signal).then((r) => {
         if (ac.signal.aborted) return;
         if (gen === validacionGen.current) {
           validacionRef.current = r;
@@ -341,25 +365,25 @@ export function PlanificacionDashboard() {
       });
     }, 150);
     return () => { window.clearTimeout(timer); ac.abort(); };
-  }, [arrastre, sobreTractora, validar, ultimoUsado]);
+  }, [arrastre, sobreTractora, horaArrastre, validar, ultimoUsado]);
 
   const iniciarArrastre = useCallback((v: ViajePlanificacion) => {
     arrastreRef.current = v;
+    horaArrastreRef.current = "";
     setArrastre(v);
+    setHoraArrastre("");
   }, []);
 
   const soltar = useCallback(
     (v: ViajePlanificacion, tractora: string | null, clientX: number) => {
-      const inicio = xATiempo(clientX);
-      const dur = (aTs(v.fin) - aTs(v.inicio)) || (v.tiempo_min * 60000);
-      const finMs = aTs(inicio) + (isNaN(dur) ? 0 : dur);
-      const fin = isNaN(aTs(inicio)) ? v.fin : fmtLocalISO(new Date(finMs));
+      // B/C: la fila decide la tractora; la posición horizontal decide la hora (siempre).
+      const inicio = xATiempo(clientX) || v.inicio;
+      const fin = fmtLocalISO(new Date(aTs(inicio) + duracionDe(v)));
       const cambia = tractora !== v.terminal;
-      // Reasignación a OTRA tractora → preseleccionar el último semi/conductor; mismo tractora
-      // (mover en horizontal) → conservar el semi/conductor actual.
+      // Reasignación → preseleccionar el último semi/conductor; mismo tractora → conservar.
       const semi = cambia ? (tractora ? ultimoUsado(tractora).semi : "") : v.semirremolque_id;
       const cond = cambia ? (tractora ? ultimoUsado(tractora).cond : null) : v.conductor_id;
-      const destino: Asignacion = { terminal: tractora ?? "", semirremolque_id: semi, conductor_id: cond, inicio: inicio || v.inicio, fin };
+      const destino: Asignacion = { terminal: tractora ?? "", semirremolque_id: semi, conductor_id: cond, inicio, fin };
 
       // Bloqueos → no soltar + toast (el servidor re-valida, pero el color ya lo anticipa).
       if (validacionErrorRef.current) { toast("No se pudo validar la asignación", "error"); return; }
@@ -377,14 +401,67 @@ export function PlanificacionDashboard() {
   );
 
   useEffect(() => {
+    const limpiarArrastre = () => {
+      arrastreRef.current = null;
+      sobreTractoraRef.current = null;
+      horaArrastreRef.current = "";
+      validacionRef.current = null;
+      validacionErrorRef.current = false;
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+      setArrastre(null);
+      setSobreTractora(null);
+      setHoraArrastre("");
+      setValidacion(null);
+      setValidacionError(false);
+    };
+
     const onMove = (e: PointerEvent) => {
+      if (!arrastreRef.current) return;
       const el = document.elementFromPoint(e.clientX, e.clientY)?.closest?.("[data-tractora]") as HTMLElement | null;
       const tid = el?.getAttribute("data-tractora") ?? null;
       if (tid !== sobreTractoraRef.current) {
         sobreTractoraRef.current = tid;
         setSobreTractora(tid);
       }
+      // Hora (snap 15 min) — re-valida solo cuando cambia el snap.
+      const hora = xATiempo(e.clientX);
+      if (hora && hora !== horaArrastreRef.current) {
+        horaArrastreRef.current = hora;
+        setHoraArrastre(hora);
+      }
+      // D: auto-scroll al acercarse a los bordes (más rápido cuanto más cerca).
+      const eje = ejeRef.current;
+      if (eje) {
+        const r = eje.getBoundingClientRect();
+        const margen = 40;
+        let dx = 0; let dy = 0;
+        if (e.clientX < r.left + margen) dx = -Math.max(4, (r.left + margen - e.clientX) / 2);
+        else if (e.clientX > r.right - margen) dx = Math.max(4, (e.clientX - (r.right - margen)) / 2);
+        if (e.clientY < r.top + margen) dy = -Math.max(4, (r.top + margen - e.clientY) / 2);
+        else if (e.clientY > r.bottom - margen) dy = Math.max(4, (e.clientY - (r.bottom - margen)) / 2);
+        if (dx || dy) { eje.scrollLeft += dx; eje.scrollTop += dy; }
+      }
+      // A/H: copia + sombra con transform vía rAF (sin re-render del tablero).
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = requestAnimationFrame(() => {
+        if (copiaRef.current) copiaRef.current.style.transform = `translate(${e.clientX}px, ${e.clientY}px) translate(-50%, -50%)`;
+        if (sombraRef.current) {
+          const eje2 = ejeRef.current;
+          if (!eje2 || !el || !hora) { sombraRef.current.style.display = "none"; return; }
+          const ejeRect = eje2.getBoundingClientRect();
+          const inicioMs = aTs(hora);
+          const dur = duracionDe(arrastreRef.current!);
+          const leftInAxis = ((inicioMs - desdeTs) / span) * totalWidth;
+          const width = Math.max(2, (dur / span) * totalWidth);
+          const rowRect = el.getBoundingClientRect();
+          sombraRef.current.style.display = "block";
+          sombraRef.current.style.transform = `translate(${ejeRect.left + 160 - eje2.scrollLeft + leftInAxis}px, ${rowRect.top + 4}px)`;
+          sombraRef.current.style.width = `${width}px`;
+          sombraRef.current.style.height = `${ROW_H - 8}px`;
+        }
+      });
     };
+
     const onUp = (e: PointerEvent) => {
       const v = arrastreRef.current;
       const enPendientes = !!document.elementFromPoint(e.clientX, e.clientY)?.closest?.("[data-zona-pendientes]");
@@ -393,23 +470,46 @@ export function PlanificacionDashboard() {
       if (v) {
         if (enPendientes) soltar(v, null, e.clientX);
         else if (tid) soltar(v, tid, e.clientX);
+        // G: soltar fuera del tablero y de Pendientes = cancelar (sin mover).
       }
-      arrastreRef.current = null;
-      sobreTractoraRef.current = null;
-      setArrastre(null);
-      setSobreTractora(null);
-      setValidacion(null);
-      setValidacionError(false);
-      validacionRef.current = null;
-      validacionErrorRef.current = false;
+      limpiarArrastre();
     };
+
+    const onKey = (e: KeyboardEvent) => {
+      // G: Esc cancela el arrastre.
+      if (e.key === "Escape" && arrastreRef.current) { e.preventDefault(); limpiarArrastre(); }
+    };
+
     document.addEventListener("pointermove", onMove);
     document.addEventListener("pointerup", onUp);
+    window.addEventListener("keydown", onKey);
     return () => {
       document.removeEventListener("pointermove", onMove);
       document.removeEventListener("pointerup", onUp);
+      window.removeEventListener("keydown", onKey);
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
     };
-  }, [soltar]);
+  }, [soltar, xATiempo, desdeTs, span, totalWidth]);
+
+  // ---- Redimensionar (F): estirar el borde derecho ajusta "fin" en saltos de 15 min ----
+  useEffect(() => {
+    if (!redimensionando) return;
+    const onMove = (e: PointerEvent) => {
+      const fin = xATiempo(e.clientX);
+      if (fin) redimensionandoRef.current = { viaje: redimensionando.viaje, fin };
+    };
+    const onUp = () => {
+      const r = redimensionandoRef.current;
+      if (r && r.fin !== r.viaje.fin) {
+        moverViaje(r.viaje, { terminal: r.viaje.terminal, semirremolque_id: r.viaje.semirremolque_id, conductor_id: r.viaje.conductor_id, inicio: r.viaje.inicio, fin: r.fin });
+      }
+      redimensionandoRef.current = null;
+      setRedimensionando(null);
+    };
+    document.addEventListener("pointermove", onMove);
+    document.addEventListener("pointerup", onUp);
+    return () => { document.removeEventListener("pointermove", onMove); document.removeEventListener("pointerup", onUp); };
+  }, [redimensionando, xATiempo, moverViaje]);
 
   // ---- Ctrl+Z: deshacer el último movimiento que no tocó Trimble ----
   useEffect(() => {
@@ -453,6 +553,18 @@ export function PlanificacionDashboard() {
           : (validacion.avisos?.length ?? 0) > 0
             ? "ring-2 ring-inset ring-amber-500/70 bg-amber-500/10"
             : "ring-2 ring-inset ring-green-500/70 bg-green-500/10";
+
+  const sombraCls = !sobreTractora
+    ? "border-sky-500/50 bg-sky-500/10"
+    : validacionError
+      ? "border-red-500/70 bg-red-500/20"
+      : !validacion
+        ? "border-sky-400/60 bg-sky-400/15"
+        : !validacion.ok
+          ? "border-red-500/70 bg-red-500/20"
+          : (validacion.avisos?.length ?? 0) > 0
+            ? "border-amber-500/70 bg-amber-500/20"
+            : "border-green-500/70 bg-green-500/20";
 
   const etiquetaRango = useMemo(() => {
     if (vista === "dia") return new Intl.DateTimeFormat("es-ES", { weekday: "long", day: "numeric", month: "long", year: "numeric" }).format(rango.desde);
@@ -515,9 +627,9 @@ export function PlanificacionDashboard() {
                 <ContextMenuTrigger asChild>
                   <div
                     data-viaje-pendiente={v.id}
-                    onPointerDown={(e) => { e.preventDefault(); iniciarArrastre(v); }}
+                    onPointerDown={(e) => { if (e.button !== 0) return; e.preventDefault(); iniciarArrastre(v); }}
                     className={`mb-1.5 cursor-grab select-none rounded-md border bg-card p-2 shadow-sm active:cursor-grabbing ${bloqueCls(v)}`}
-                    style={{ pointerEvents: arrastre?.id === v.id ? "none" : undefined }}
+                    style={{ pointerEvents: arrastre?.id === v.id ? "none" : undefined, opacity: arrastre?.id === v.id ? 0.4 : undefined }}
                   >
                     <div className="flex items-center gap-1 truncate text-xs font-medium">
                       {guardando.has(v.id) && <Loader2 size={11} className="animate-spin" />}
@@ -535,7 +647,7 @@ export function PlanificacionDashboard() {
           </div>
         </aside>
 
-        <div ref={ejeRef} className="min-w-0 flex-1 overflow-auto">
+        <div ref={ejeRef} data-eje className="min-w-0 flex-1 overflow-auto">
           <div style={{ width: totalWidth + 160, minWidth: "100%" }}>
             <div className="sticky top-0 z-10 flex border-b bg-background">
               <div className="w-40 shrink-0" />
@@ -574,9 +686,9 @@ export function PlanificacionDashboard() {
                           <ContextMenuTrigger asChild>
                             <div
                               data-viaje-bloque={v.id}
-                              onPointerDown={(e) => { e.preventDefault(); iniciarArrastre(v); }}
+                              onPointerDown={(e) => { if (e.button !== 0) return; e.preventDefault(); iniciarArrastre(v); }}
                               className={`absolute top-1 overflow-hidden rounded border px-1.5 py-0.5 text-[10px] cursor-grab active:cursor-grabbing ${bloqueCls(v)}`}
-                              style={{ left: pos.left, width: pos.width, height: ROW_H - 8, pointerEvents: arrastre?.id === v.id ? "none" : undefined }}
+                              style={{ left: pos.left, width: pos.width, height: ROW_H - 8, pointerEvents: arrastre?.id === v.id ? "none" : undefined, opacity: arrastre?.id === v.id ? 0.4 : undefined }}
                               title={`${v.id} · ${v.origen} → ${v.destino} · ${fmtHora(v.inicio)}–${fmtHora(v.fin)}${enviado ? " · Enviado" : ""}${avisosViaje[v.id]?.map((a) => " · ⚠️ " + a.mensaje).join("") ?? ""}`}
                             >
                               <div className="flex items-center gap-1 truncate font-medium">
@@ -586,6 +698,12 @@ export function PlanificacionDashboard() {
                                 {v.id}
                               </div>
                               <div className="truncate text-muted-foreground">{fmtHora(v.inicio)}–{fmtHora(v.fin)}</div>
+                              {/* F: estirar el borde derecho = ajustar "fin" */}
+                              <div
+                                data-redimensionar={v.id}
+                                className="absolute inset-y-0 right-0 w-2 cursor-ew-resize hover:bg-sky-400/40"
+                                onPointerDown={(e) => { if (e.button !== 0) return; e.preventDefault(); e.stopPropagation(); redimensionandoRef.current = { viaje: v, fin: v.fin }; setRedimensionando({ viaje: v, fin: v.fin }); }}
+                              />
                             </div>
                           </ContextMenuTrigger>
                           <MenuViaje v={v} enviarViaje={enviarViaje} quitarTerminal={quitarTerminal} moverViaje={moverViaje} ultimoUsado={ultimoUsado} abrirFicha={(id) => navigate({ search: { panel: `viaje:${id}` } as never })} semirremolques={semirremolques.data ?? []} conductores={conductores.data ?? []} />
@@ -632,6 +750,28 @@ export function PlanificacionDashboard() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Copia semitransparente que sigue al cursor + sombra de destino (A) */}
+      {arrastre && (
+        <div
+          ref={copiaRef}
+          className="pointer-events-none fixed left-0 top-0 z-[70] w-52 rounded-md border border-sky-500/60 bg-card px-2 py-1 text-[10px] opacity-80 shadow-lg"
+          style={{ transform: "translate(-9999px, -9999px)" }}
+        >
+          <div className="flex items-center gap-1 truncate font-medium">
+            {enTrimble(arrastre) && <Truck size={10} className="text-muted-foreground" />}
+            {arrastre.id}
+          </div>
+          <div className="truncate text-muted-foreground">{arrastre.origen} → {arrastre.destino}</div>
+        </div>
+      )}
+      {arrastre && (
+        <div
+          ref={sombraRef}
+          className={`pointer-events-none fixed left-0 top-0 z-[69] rounded border-2 border-dashed ${sombraCls}`}
+          style={{ display: "none", transform: "translate(-9999px, -9999px)" }}
+        />
       )}
 
       {/* Toasts */}
