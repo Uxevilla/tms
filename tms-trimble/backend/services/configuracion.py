@@ -13,6 +13,7 @@ import psycopg2
 
 import config
 from db import _db, _tenant_ctx
+from crypto import _encrypt_valor
 
 # Caché en memoria del mapa {nombre: referencia} por tenant (actividades Trimble).
 _act_cache = {}
@@ -159,7 +160,7 @@ def _sync_valor_integracion(conn, config_key, valor):
         conn.execute(
             "INSERT INTO integracion_valores (campo_id, valor) VALUES (?,?) "
             "ON CONFLICT (campo_id) DO UPDATE SET valor=EXCLUDED.valor",
-            (campo["id"], valor),
+            (campo["id"], _encrypt_valor(valor)),
         )
 
 
@@ -225,7 +226,7 @@ def _migrar_config_integraciones(dbname: str) -> None:
                 cur.execute(
                     "INSERT INTO integracion_valores (campo_id, valor) VALUES (%s,%s) "
                     "ON CONFLICT (campo_id) DO NOTHING",
-                    (campo[0], row[0]),
+                    (campo[0], _encrypt_valor(row[0])),
                 )
         conn.commit()
     finally:

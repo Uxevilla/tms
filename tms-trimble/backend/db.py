@@ -8,6 +8,7 @@ import psycopg2.pool
 
 import config
 from core import *
+from crypto import _decrypt_valor
 
 _tenant_ctx = contextvars.ContextVar("tenant", default=None)
 _usuario_ctx = contextvars.ContextVar("usuario", default="sistema")
@@ -611,7 +612,7 @@ def _get_config(key, default=""):
 
 
 def _valores_proveedor(conn, codigo):
-    """{clave: valor} de los valores de configuración de un proveedor de integración."""
+    """{clave: valor} de los valores de configuración de un proveedor de integración (descifrados)."""
     rows = conn.execute(
         "SELECT c.clave, v.valor FROM integracion_proveedores p "
         "JOIN integracion_campos c ON c.proveedor_id = p.id "
@@ -619,7 +620,7 @@ def _valores_proveedor(conn, codigo):
         "WHERE p.codigo=?",
         (codigo,),
     ).fetchall()
-    return {r["clave"]: (r["valor"] or "") for r in rows}
+    return {r["clave"]: _decrypt_valor(r["valor"] or "") for r in rows}
 
 
 def get_conn():

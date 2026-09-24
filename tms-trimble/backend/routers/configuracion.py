@@ -2,6 +2,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 
 from db import get_conn
+from crypto import _encrypt_valor, _decrypt_valor
 from security import require_role, _hash_password
 from services.configuracion import _invalida_actividades
 
@@ -23,11 +24,20 @@ def listar_proveedores(conn=Depends(get_conn)):
             "WHERE c.proveedor_id=? ORDER BY c.orden",
             (p["id"],),
         ).fetchall()
+        # Enmascarar secretos (nunca devolver la credencial al navegador); el resto va en claro.
+        campos_salida = []
+        for c in campos:
+            d = dict(c)
+            if d["tipo"] == "password":
+                d["valor"] = ""  # vacío = "no cambiar" en el formulario
+            else:
+                d["valor"] = _decrypt_valor(d["valor"] or "")
+            campos_salida.append(d)
         out.append({
             "id": p["id"], "codigo": p["codigo"], "nombre": p["nombre"],
             "categoria": p["categoria"], "icono": p["icono"] or "",
             "activo": p["activo"], "orden": p["orden"],
-            "campos": [dict(c) for c in campos],
+            "campos": campos_salida,
         })
     return {"proveedores": out}
 
@@ -56,14 +66,18 @@ def guardar_valores(codigo: str, body: dict, conn=Depends(get_conn)):
         raise HTTPException(status_code=404, detail={"error": "Proveedor no encontrado"})
     for clave, valor in (body or {}).items():
         campo = conn.execute(
-            "SELECT id FROM integracion_campos WHERE proveedor_id=? AND clave=?",
+            "SELECT id, tipo FROM integracion_campos WHERE proveedor_id=? AND clave=?",
             (prov["id"], clave),
         ).fetchone()
         if campo:
+            v = str(valor) if valor is not None else ""
+            # Campo secreto vacío = "no cambiar" (el cliente lo devuelve enmascarado).
+            if campo["tipo"] == "password" and not v:
+                continue
             conn.execute(
                 "INSERT INTO integracion_valores (campo_id, valor) VALUES (?,?) "
                 "ON CONFLICT (campo_id) DO UPDATE SET valor=EXCLUDED.valor",
-                (campo["id"], valor),
+                (campo["id"], _encrypt_valor(v)),
             )
     conn.commit()
     return {"ok": True}

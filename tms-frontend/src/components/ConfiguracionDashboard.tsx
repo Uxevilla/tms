@@ -418,6 +418,7 @@ function ProviderModal({
                   <input
                     type={c.tipo === "password" ? "password" : "text"}
                     value={valores[c.clave] ?? ""}
+                    placeholder={c.tipo === "password" ? "vacío = no cambiar" : undefined}
                     onChange={(e) => setValores((v) => ({ ...v, [c.clave]: e.target.value }))}
                     className="w-full rounded-md border border-slate-300 px-2.5 py-1.5 text-[12px] focus:border-blue-500 focus:outline-none"
                   />
