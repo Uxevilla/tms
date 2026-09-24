@@ -1,3 +1,4 @@
+import { useState } from "react";
 import {
   LayoutGrid,
   Truck,
@@ -10,6 +11,7 @@ import {
   WifiOff,
   Loader2,
   LogOut,
+  Menu,
   MessageCircle,
   Settings,
 } from "lucide-react";
@@ -47,8 +49,9 @@ interface TopToolbarProps {
 export function TopToolbar({ seccion, onSeccion, wsStatus, onLogout }: TopToolbarProps) {
   const rol = getRol();
   const visibles = ITEMS.filter((i) => rol === "admin" || !SOLO_ADMIN.includes(i.id));
+  const [menuAbierto, setMenuAbierto] = useState(false);
   return (
-    <header className="flex h-[72px] shrink-0 items-stretch gap-1 border-b border-slate-950 bg-slate-800 px-2 text-slate-300">
+    <header className="relative flex h-[72px] shrink-0 items-stretch gap-1 border-b border-slate-950 bg-slate-800 px-2 text-slate-300">
       {/* Marca */}
       <div className="flex items-center gap-2 border-r border-slate-700 pr-3">
         <span className="flex h-10 w-10 items-center justify-center rounded-md bg-blue-600 text-white shadow">
@@ -60,8 +63,19 @@ export function TopToolbar({ seccion, onSeccion, wsStatus, onLogout }: TopToolba
         </div>
       </div>
 
-      {/* Ribbon de módulos */}
-      <nav className="flex flex-1 items-stretch gap-1 overflow-x-auto">
+      {/* Menú móvil (hamburguesa) */}
+      <button
+        type="button"
+        onClick={() => setMenuAbierto((v) => !v)}
+        className="flex items-center rounded-md p-2 text-slate-300 hover:bg-slate-700 hover:text-white md:hidden"
+        aria-label="Abrir menú"
+        aria-expanded={menuAbierto}
+      >
+        <Menu size={22} />
+      </button>
+
+      {/* Ribbon de módulos (escritorio) */}
+      <nav className="hidden flex-1 items-stretch gap-1 overflow-x-auto md:flex">
         {visibles.map(({ id, label, icon: Icon }) => {
           const activo = seccion === id;
           return (
@@ -84,7 +98,7 @@ export function TopToolbar({ seccion, onSeccion, wsStatus, onLogout }: TopToolba
       </nav>
 
       {/* Estado WS + cerrar sesión */}
-      <div className="flex items-center gap-2 border-l border-slate-700 pl-3">
+      <div className="ml-auto flex items-center gap-2 border-l border-slate-700 pl-3">
         <IndicadorConexion status={wsStatus} />
         <button
           type="button"
@@ -96,6 +110,33 @@ export function TopToolbar({ seccion, onSeccion, wsStatus, onLogout }: TopToolba
           <LogOut size={18} />
         </button>
       </div>
+
+      {/* Desplegable móvil */}
+      {menuAbierto && (
+        <div className="absolute left-0 right-0 top-full z-50 border-b border-slate-700 bg-slate-800 p-2 md:hidden">
+          {visibles.map(({ id, label, icon: Icon }) => {
+            const activo = seccion === id;
+            return (
+              <button
+                key={id}
+                type="button"
+                onClick={() => {
+                  onSeccion(id);
+                  setMenuAbierto(false);
+                }}
+                className={`flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-sm font-medium ${
+                  activo
+                    ? "bg-blue-600 text-white"
+                    : "text-slate-300 hover:bg-slate-700 hover:text-white"
+                }`}
+              >
+                <Icon size={18} />
+                {label}
+              </button>
+            );
+          })}
+        </div>
+      )}
     </header>
   );
 }

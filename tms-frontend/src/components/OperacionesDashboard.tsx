@@ -175,7 +175,7 @@ function RutaMiniMapa({ puntos, polyline, onAddWaypoint, onMovePoint }: {
 
 export function OperacionesDashboard() {
   const [rowData, setRowData] = useState<Viaje[]>([]);
-  const [vista, setVista] = useState<Vista>("dividido");
+  const [vista, setVista] = useState<Vista>(() => (window.innerWidth < 768 ? "mapa" : "dividido"));
   const [focus, setFocus] = useState<FocusMapa | null>(null);
   const gridApiRef = useRef<GridApi<Viaje> | null>(null);
   // Ref espejo del estado actual por id: permite mergear actualizaciones

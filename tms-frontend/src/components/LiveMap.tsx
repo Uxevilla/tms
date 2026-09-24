@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { MapContainer, TileLayer, Marker, Polyline, useMap } from "react-leaflet";
+import { MapContainer, TileLayer, Marker, Polyline, useMap, ZoomControl } from "react-leaflet";
 import MarkerClusterGroup from "react-leaflet-cluster";
 import L from "leaflet";
 import { useSocketSubscribe } from "../context/SocketContext";
@@ -425,11 +425,12 @@ export function LiveMap({ focus }: { focus: FocusMapa | null }) {
 
   return (
     <div className="relative h-full w-full">
-      <MapContainer center={[40.0, -3.0]} zoom={6} className="h-full w-full" zoomControl>
+      <MapContainer center={[40.0, -3.0]} zoom={6} className="h-full w-full" zoomControl={false}>
         <TileLayer
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
           url="https://tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
+        <ZoomControl position="bottomright" />
         <TileLayer
           attribution='Transporte &copy; Esri'
           url="https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Transportation/MapServer/tile/{z}/{y}/{x}"
