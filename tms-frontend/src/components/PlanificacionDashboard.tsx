@@ -595,6 +595,7 @@ function PopoverAsignacion({ popover, semirremolques, conductores, viajes, valid
     const ac = new AbortController();
     const timer = window.setTimeout(() => {
       validar(popover.viaje, popover.tractora, semi, cond, ac.signal).then((r) => {
+        if (ac.signal.aborted) return;
         setRes(r);
         setValidando(false);
       });
