@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AgGridReact } from "ag-grid-react";
-import { AllCommunityModule, ModuleRegistry } from "ag-grid-community";
 import type { ColDef, ValueFormatterParams, CellValueChangedEvent } from "ag-grid-community";
 import { Users, Receipt, CalendarDays, CalendarRange, X, Plus, FilePlus2, Save, UserPlus, RotateCcw, Download, FileDown } from "lucide-react";
 import { REST_EMPLEADOS, REST_NOMINAS, REST_AUSENCIAS } from "../config";
@@ -11,7 +10,6 @@ import { PlanningCalendario } from "./PlanningCalendario";
 import { CaducidadRenderer } from "./CaducidadRenderer";
 
 import { gridTheme, GRID_ROW_HEIGHT, GRID_HEADER_HEIGHT } from "../gridConfig";
-ModuleRegistry.registerModules([AllCommunityModule]);
 
 // Celdas editables: cursor de texto + fondo gris sutil al hover.
 const editableCell = "cursor-text hover:bg-slate-100";

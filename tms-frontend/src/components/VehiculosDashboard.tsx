@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AgGridReact } from "ag-grid-react";
-import { AllCommunityModule, ModuleRegistry } from "ag-grid-community";
 import type { ColDef, ValueFormatterParams, CellValueChangedEvent } from "ag-grid-community";
 import { Truck, Wrench, X, Save, Plus, UploadCloud, FileText, Download, Trash2, RotateCcw } from "lucide-react";
 import { REST_VEHICULOS, REST_MANTENIMIENTOS, REST_MANTENIMIENTO_ALERTAS, REST_MANTENIMIENTO_CONVERTIR, PATCH_VEHICULO, REST_PROVEEDORES } from "../config";
@@ -10,7 +9,6 @@ import { TallerCalendario } from "./TallerCalendario";
 import { CaducidadRenderer } from "./CaducidadRenderer";
 
 import { gridTheme, GRID_ROW_HEIGHT, GRID_HEADER_HEIGHT } from "../gridConfig";
-ModuleRegistry.registerModules([AllCommunityModule]);
 
 // ------------------------------------------------------------------ tipos
 interface Vehiculo {

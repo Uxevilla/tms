@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AgGridReact } from "ag-grid-react";
-import { AllCommunityModule, ModuleRegistry } from "ag-grid-community";
 import type { ColDef, ValueFormatterParams, CellValueChangedEvent } from "ag-grid-community";
 import { FileText, HandCoins, X, Check, Users, Truck, BookOpen, Plus, Trash2, TrendingUp, RotateCcw, Download, ShieldCheck, Package, Tags } from "lucide-react";
 import { EMITIR_BORRADOR, REST_BORRADORES, REST_LIQUIDACIONES, REST_CLIENTES, REST_PROVEEDORES, REST_TARIFAS, REST_ASIENTOS, REST_PYG, REST_BALANCE, REST_RECONCILIACION, REST_AUDITORIA } from "../config";
@@ -10,7 +9,6 @@ import { useAgGridState } from "../hooks/useAgGridState";
 
 // Registro único de los módulos Community (master/detail incluido).
 import { gridTheme, GRID_ROW_HEIGHT, GRID_HEADER_HEIGHT } from "../gridConfig";
-ModuleRegistry.registerModules([AllCommunityModule]);
 
 // Tema Alpine en modo compacto (alta densidad para monitores ultrawide).
 

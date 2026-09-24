@@ -1,13 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { AgGridReact } from "ag-grid-react";
-import { AllCommunityModule, ModuleRegistry } from "ag-grid-community";
 import type { ColDef } from "ag-grid-community";
 import { BarChart3, LineChart } from "lucide-react";
 import { GRAFANA_URL, REST_RENTABILIDAD } from "../config";
 import { api } from "../api";
 
 import { gridTheme, GRID_ROW_HEIGHT, GRID_HEADER_HEIGHT } from "../gridConfig";
-ModuleRegistry.registerModules([AllCommunityModule]);
 
 const eur = (v: number) => v.toLocaleString("es-ES", { style: "currency", currency: "EUR" });
 

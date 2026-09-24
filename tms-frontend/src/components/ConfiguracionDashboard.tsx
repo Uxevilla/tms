@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
 import { AgGridReact } from "ag-grid-react";
-import { AllCommunityModule, ModuleRegistry } from "ag-grid-community";
 import type { ColDef } from "ag-grid-community";
 import {
   Plug,
@@ -26,7 +25,6 @@ import { api } from "../api";
 import { Modal } from "./Modal";
 import { gridTheme, GRID_ROW_HEIGHT, GRID_HEADER_HEIGHT } from "../gridConfig";
 
-ModuleRegistry.registerModules([AllCommunityModule]);
 
 // ------------------------------------------------------------------ tipos
 interface Campo {

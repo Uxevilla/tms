@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import { AgGridReact } from "ag-grid-react";
-import { AllCommunityModule, ModuleRegistry } from "ag-grid-community";
 import type { ColDef, CellValueChangedEvent } from "ag-grid-community";
 import { FileUp, X, Save, Loader2, Plus, Download, RotateCcw } from "lucide-react";
 import { REST_GASTOS_VEHICULOS, REST_GASTOS_OCR, REST_VEHICULOS, REST_PROVEEDORES } from "../config";
@@ -9,7 +8,6 @@ import { useAgGridState } from "../hooks/useAgGridState";
 import { VisorDocumentos } from "./VisorDocumentos";
 
 import { gridTheme, GRID_ROW_HEIGHT, GRID_HEADER_HEIGHT } from "../gridConfig";
-ModuleRegistry.registerModules([AllCommunityModule]);
 
 const eur = (v: number) => v.toLocaleString("es-ES", { style: "currency", currency: "EUR" });
 const editableCell = "cursor-text hover:bg-slate-100";

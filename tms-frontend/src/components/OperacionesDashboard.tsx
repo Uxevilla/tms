@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AgGridReact } from "ag-grid-react";
-import { AllCommunityModule, ModuleRegistry } from "ag-grid-community";
 import type {
   ColDef,
   GridApi,
@@ -24,7 +23,6 @@ import { useAgGridState } from "../hooks/useAgGridState";
 
 // Registro único de los módulos Community (filtros, ordenación, transacciones…).
 import { gridTheme, GRID_ROW_HEIGHT, GRID_HEADER_HEIGHT } from "../gridConfig";
-ModuleRegistry.registerModules([AllCommunityModule]);
 
 // Tema claro, limpio, sin bordes excesivos. `spacing`/`fontSize` controlan la
 // densidad; la altura de fila se ajusta vía opción del grid (rowHeight).

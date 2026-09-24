@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AgGridReact } from "ag-grid-react";
-import { AllCommunityModule, ModuleRegistry } from "ag-grid-community";
 import type { ColDef, CellValueChangedEvent } from "ag-grid-community";
 import { Search, Eye, X, Download, RotateCcw } from "lucide-react";
 import { REST_DOCUMENTOS } from "../config";
@@ -9,7 +8,6 @@ import { useAgGridState } from "../hooks/useAgGridState";
 import { VisorDocumentos } from "./VisorDocumentos";
 
 import { gridTheme, GRID_ROW_HEIGHT, GRID_HEADER_HEIGHT } from "../gridConfig";
-ModuleRegistry.registerModules([AllCommunityModule]);
 const editableCell = "cursor-text hover:bg-slate-100";
 
 interface Documento {
