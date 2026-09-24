@@ -79,7 +79,7 @@ def atencion(user: dict = Depends(require_role(["admin", "dispatcher"])), conn: 
 
     # 2. conduccion_limite: < 30 min de conducción continua (>=240/270) o diaria (>=510/540).
     for r in conn.execute(
-        "SELECT d.did, d.vehiculo_id, d.driving_coupure_min, d.day_driving_min, d.remaining_week_available_min, c.nombre "
+        "SELECT d.did, d.vehiculo_id, d.driving_coupure_min, d.day_driving_min, d.remaining_week_available_min, c.id AS conductor_id, c.nombre "
         "FROM (SELECT DISTINCT ON (vehiculo_id) * FROM tacografo_dstat "
         "      ORDER BY vehiculo_id, COALESCE(time, creado) DESC) d "
         "LEFT JOIN conductores c ON c.did = d.did "
@@ -94,7 +94,7 @@ def atencion(user: dict = Depends(require_role(["admin", "dispatcher"])), conn: 
             "conduccion_limite", "critico",
             f"Conducción al límite — {r['nombre'] or r['did']}",
             f"Quedan {max(0, round(restante))} min de conducción legal",
-            {"tipo": "conductor", "id": r["did"], "codigo": r["nombre"] or r["did"]},
+            {"tipo": "conductor", "id": r["conductor_id"] or r["did"], "codigo": r["nombre"] or r["did"]},
         ))
 
     # 3. caducidad: ITV/seguro (vehículos) + carné/CAP/médico (conductores).
@@ -115,7 +115,7 @@ def atencion(user: dict = Depends(require_role(["admin", "dispatcher"])), conn: 
                                    f"Vence en {dias} días",
                                    {"tipo": "vehiculo", "id": r["codigo"], "codigo": r["codigo"]}))
     for r in conn.execute(
-        "SELECT e.id, e.nombre, e.apellidos, e.caducidad_carnet, e.caducidad_cap, e.caducidad_medica "
+        "SELECT c.id, e.nombre, e.apellidos, e.caducidad_carnet, e.caducidad_cap, e.caducidad_medica "
         "FROM empleados e JOIN rrhh.conductores c ON c.empleado_id = e.id "
         "WHERE COALESCE(e.fecha_baja,'') = ''",
     ).fetchall():
@@ -134,12 +134,14 @@ def atencion(user: dict = Depends(require_role(["admin", "dispatcher"])), conn: 
                                    {"tipo": "conductor", "id": r["id"], "codigo": nombre}))
 
     # 4. viaje_sin_facturar: entregado sin factura (solo admin).
+    facturacion_pendiente = 0.0
     if es_admin:
         for r in conn.execute(
             "SELECT codigo, cliente, origen, destino, precio FROM operaciones.trips "
             "WHERE estado = 'Entregado' AND (factura IS NULL OR factura = '') "
             "ORDER BY COALESCE(fecha_actualizacion, creado) DESC LIMIT 50",
         ).fetchall():
+            facturacion_pendiente += float(r["precio"] or 0)
             items.append(_item(
                 "viaje_sin_facturar", "aviso",
                 f"Viaje {r['codigo']} sin facturar",
@@ -217,9 +219,11 @@ def atencion(user: dict = Depends(require_role(["admin", "dispatcher"])), conn: 
     # Orden: por severidad (critico > aviso > info) y, dentro, por antigüedad.
     items.sort(key=lambda it: (_ORDEN_SEVERIDAD.get(it["severidad"], 9), it.get("ts") or ""))
 
-    resumen = {"critico": 0, "aviso": 0, "info": 0}
+    resumen: dict = {"critico": 0, "aviso": 0, "info": 0}
     for it in items:
         resumen[it["severidad"]] += 1
+    if es_admin:
+        resumen["facturacion_pendiente"] = round(facturacion_pendiente, 2)
 
     return {"items": items, "resumen": resumen}
 
