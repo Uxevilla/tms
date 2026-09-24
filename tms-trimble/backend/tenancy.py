@@ -58,6 +58,7 @@ def _ensure_master():
             "auth_password": config.DEFAULT_AUTH_PASSWORD,
         })
         _seed_rbac(config.DB_NAME)
+        _seed_integraciones_tenant(config.DB_NAME)
         _master_ready = True
     except Exception as e:
         print(f"[bootstrap] {e}")
@@ -132,6 +133,13 @@ def _seed_rbac(dbname: str) -> None:
         conn.close()
 
 
+def _seed_integraciones_tenant(dbname: str) -> None:
+    """Siembra proveedores/campos/actividades y migra la config de integración (idempotente)."""
+    from services.configuracion import _seed_integraciones, _migrar_config_integraciones
+    _seed_integraciones(dbname)
+    _migrar_config_integraciones(dbname)
+
+
 def _provision_tenant(slug, nombre, seed_values=None):
     """Crea la BD del cliente + esquema + registro. Devuelve (db_name, error)."""
     db_name = f"tms_{slug}"
@@ -160,6 +168,7 @@ def _provision_tenant(slug, nombre, seed_values=None):
         seed.setdefault(k, "")
     _seed_tenant_config(db_name, seed)
     _seed_rbac(db_name)
+    _seed_integraciones_tenant(db_name)
     # 3) registrar en la BD maestra
     m = _db_master()
     try:

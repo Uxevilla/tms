@@ -211,7 +211,7 @@ def _build_trip(viaje: ViajeRequest, trip_id: str, documentos: list = None) -> d
             "nombre": label,
             "descripcion": descripcion,
             "actividad": actividad,
-            "tipo": ACTIVITY_TYPES.get(actividad, actividad),
+            "tipo": actividad,
             "contacto": contacto(d),
         }
         inicio = _to_trimble_ts(getattr(d, "fecha_inicio", "") or "")

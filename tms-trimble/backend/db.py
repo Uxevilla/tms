@@ -375,6 +375,39 @@ ALTER TABLE asientos ADD COLUMN IF NOT EXISTS borrado_en TEXT;
 ALTER TABLE facturas ADD COLUMN IF NOT EXISTS borrado BOOLEAN DEFAULT false;
 ALTER TABLE facturas ADD COLUMN IF NOT EXISTS borrado_por TEXT;
 ALTER TABLE facturas ADD COLUMN IF NOT EXISTS borrado_en TEXT;
+CREATE TABLE IF NOT EXISTS integracion_proveedores (
+    id SERIAL PRIMARY KEY,
+    codigo TEXT UNIQUE NOT NULL,
+    nombre TEXT NOT NULL,
+    categoria TEXT NOT NULL DEFAULT 'telemetria',
+    icono TEXT DEFAULT '',
+    activo BOOLEAN DEFAULT true,
+    orden INTEGER DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS integracion_campos (
+    id SERIAL PRIMARY KEY,
+    proveedor_id INTEGER NOT NULL REFERENCES integracion_proveedores(id) ON DELETE CASCADE,
+    clave TEXT NOT NULL,
+    etiqueta TEXT NOT NULL,
+    tipo TEXT NOT NULL DEFAULT 'texto',
+    requerido BOOLEAN DEFAULT false,
+    orden INTEGER DEFAULT 0,
+    UNIQUE(proveedor_id, clave)
+);
+CREATE TABLE IF NOT EXISTS integracion_valores (
+    id SERIAL PRIMARY KEY,
+    campo_id INTEGER NOT NULL REFERENCES integracion_campos(id) ON DELETE CASCADE,
+    valor TEXT,
+    UNIQUE(campo_id)
+);
+CREATE TABLE IF NOT EXISTS actividades (
+    id SERIAL PRIMARY KEY,
+    proveedor_id INTEGER NOT NULL REFERENCES integracion_proveedores(id) ON DELETE CASCADE,
+    nombre TEXT NOT NULL,
+    referencia TEXT NOT NULL,
+    activo BOOLEAN DEFAULT true,
+    UNIQUE(proveedor_id, nombre)
+);
 """
 
 
