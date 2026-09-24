@@ -132,3 +132,47 @@ export interface BuscarResultado {
   titulo: string;
   subtitulo: string;
 }
+
+// ---- Fase 3: tablero de planificación ----
+export interface ViajePlanificacion {
+  id: string;
+  codigo: string;
+  terminal: string;
+  semirremolque_id: string;
+  remolque_id: string;
+  conductor: string;
+  conductor_id: number | null;
+  estado: string;
+  origen: string;
+  destino: string;
+  cliente: string;
+  matricula: string;
+  kilos: number;
+  palets: number;
+  tiempo_min: number;
+  inicio: string;
+  fin: string;
+}
+
+export interface VehiculoPlanificacion {
+  id: string;
+  codigo: string;
+  matricula: string;
+  categoria: string;
+  activo: boolean;
+  capacidad_peso: number;
+  capacidad_palets: number;
+  fecha_caducidad_itv: string;
+  fecha_caducidad_seguro: string;
+}
+
+export interface ValidacionMotivo {
+  tipo: string;
+  mensaje: string;
+}
+
+export interface ValidacionResultado {
+  ok: boolean;
+  bloqueos: ValidacionMotivo[];
+  avisos: ValidacionMotivo[];
+}

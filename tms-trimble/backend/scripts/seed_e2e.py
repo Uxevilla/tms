@@ -73,6 +73,18 @@ def main() -> None:
             "INSERT INTO telemetria.posiciones_gps (time, vehiculo_id, lat, lng) VALUES (%s, %s, %s, %s)",
             (now, "E2E-VEH", 40.4, -3.7),
         )
+    # Segundo vehículo con posición: para que el test del encuadre pueda rastrear un marcador
+    # fijo mientras cambia la posición de OTRO vehículo (la cámara no debe re-encuadrar).
+    cur.execute(
+        "INSERT INTO flota.vehiculos (codigo, terminal_trimble, matricula, categoria, activo) "
+        "VALUES ('E2E-VEH2', 'E2E-VEH2', '0002-TST', 'tractora', true) ON CONFLICT (codigo) DO NOTHING",
+    )
+    cur.execute("SELECT 1 FROM telemetria.posiciones_gps WHERE vehiculo_id = 'E2E-VEH2' LIMIT 1")
+    if not cur.fetchone():
+        cur.execute(
+            "INSERT INTO telemetria.posiciones_gps (time, vehiculo_id, lat, lng) VALUES (%s, %s, %s, %s)",
+            (now, "E2E-VEH2", 41.4, 2.17),
+        )
 
     # Gasto sin imputar (idempotente: solo si no existe el concepto marcador).
     cur.execute("SELECT 1 FROM finanzas.gastos WHERE concepto = 'gasto suelto e2e' LIMIT 1")
@@ -98,6 +110,17 @@ def main() -> None:
     cur.execute(
         "INSERT INTO rrhh.conductores (empleado_id, tarjeta_tacografo) VALUES ('EMP-E2E', 'E2E-DID') "
         "ON CONFLICT (empleado_id) DO NOTHING",
+    )
+
+    # Tablero de planificación (Fase 3): tractora limpia (validación ok → verde) + semirremolque.
+    # matricula 0003-TST → se ordena al inicio del timeline (junto a las de test), visible sin scroll.
+    cur.execute(
+        "INSERT INTO flota.vehiculos (codigo, terminal_trimble, matricula, categoria, activo) "
+        "VALUES ('E2E-TRAC', 'E2E-TRAC', '0003-TST', 'tractora', true) ON CONFLICT (codigo) DO NOTHING",
+    )
+    cur.execute(
+        "INSERT INTO flota.vehiculos (codigo, terminal_trimble, matricula, categoria, activo, capacidad_peso, capacidad_palets) "
+        "VALUES ('E2E-SEMI', 'E2E-SEMI', 'SEMI-TST', 'semirremolque', true, 25000, 33) ON CONFLICT (codigo) DO NOTHING",
     )
 
     conn.close()

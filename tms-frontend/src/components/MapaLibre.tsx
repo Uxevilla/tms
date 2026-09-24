@@ -133,7 +133,7 @@ export function MapaLibre({ vehiculos, onSelect }: MapaLibreProps) {
         <button
           type="button"
           onClick={encuadrarFlota}
-          className="absolute left-3 top-3 z-10 rounded-md border border-slate-200 bg-white/90 px-2.5 py-1.5 text-xs font-medium text-slate-700 shadow backdrop-blur hover:bg-white"
+          className="absolute left-3 top-3 z-10 rounded-md border bg-card/90 px-2.5 py-1.5 text-xs font-medium text-foreground shadow backdrop-blur hover:bg-card"
         >
           Encuadrar flota
         </button>

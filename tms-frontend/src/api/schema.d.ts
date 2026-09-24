@@ -2787,6 +2787,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/planificacion": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Planificacion
+         * @description Tractoras + viajes no finalizados con su ventana temporal (inicio/fin).
+         */
+        get: operations["planificacion_api_planificacion_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/planificacion/validar": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Validar
+         * @description Devuelve {ok, bloqueos, avisos} para la asignación propuesta. NO asigna.
+         */
+        post: operations["validar_api_planificacion_validar_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -4105,6 +4145,51 @@ export interface components {
             gastos?: number | null;
             /** Iva */
             iva?: number | null;
+        };
+        /** ValidarRequest */
+        ValidarRequest: {
+            /**
+             * Trip Id
+             * @default
+             */
+            trip_id: string;
+            /**
+             * Terminal
+             * @default
+             */
+            terminal: string;
+            /**
+             * Semirremolque Id
+             * @default
+             */
+            semirremolque_id: string;
+            /**
+             * Remolque Id
+             * @default
+             */
+            remolque_id: string;
+            /** Conductor Id */
+            conductor_id?: number | null;
+            /**
+             * Inicio
+             * @default
+             */
+            inicio: string;
+            /**
+             * Fin
+             * @default
+             */
+            fin: string;
+            /**
+             * Kilos
+             * @default 0
+             */
+            kilos: number;
+            /**
+             * Palets
+             * @default 0
+             */
+            palets: number;
         };
         /** ValidationError */
         ValidationError: {
@@ -11050,6 +11135,75 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["EntidadConductor"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    planificacion_api_planificacion_get: {
+        parameters: {
+            query?: {
+                desde?: string;
+                hasta?: string;
+            };
+            header?: {
+                authorization?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    validar_api_planificacion_validar_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ValidarRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */

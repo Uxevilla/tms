@@ -2,7 +2,7 @@ import { useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
 import { useSocketSubscribe } from "../context/SocketContext";
-import type { ViajeEvent, Viaje, TelemetriaActiva } from "../types";
+import type { ViajeEvent, Viaje, TelemetriaActiva, ViajePlanificacion } from "../types";
 
 /**
  * Adaptador del WebSocket → TanStack Query. Cada evento creado/estado/telemetria/
@@ -21,12 +21,27 @@ export function WsQueryAdapter() {
           old ? (old.some((v) => v.id === evt.viaje.id) ? old : [...old, evt.viaje]) : [evt.viaje],
         );
         qc.setQueryData(["viaje", evt.viaje.id], evt.viaje);
+        // Tablero de planificación (Fase 3): el viaje nuevo entra como pendiente (sin tractora).
+        const nuevo: ViajePlanificacion = {
+          id: evt.viaje.id, codigo: evt.viaje.id, terminal: "", semirremolque_id: "", remolque_id: "",
+          conductor: evt.viaje.conductor, conductor_id: null, estado: evt.viaje.estado,
+          origen: evt.viaje.origen, destino: evt.viaje.destino, cliente: evt.viaje.cliente ?? "",
+          matricula: evt.viaje.matricula, kilos: evt.viaje.kilos ?? 0, palets: 0,
+          tiempo_min: evt.viaje.tiempo_min ?? 0,
+          inicio: evt.viaje.fecha_esperada_carga ?? "", fin: evt.viaje.fecha_esperada_descarga ?? "",
+        };
+        qc.setQueryData(["planificacion"], (old: ViajePlanificacion[] | undefined) =>
+          old ? (old.some((v) => v.id === evt.viaje.id) ? old : [...old, nuevo]) : [nuevo],
+        );
       } else if (evt.tipo === "estado") {
         qc.setQueryData(["viajes"], (old: Viaje[] | undefined) =>
           old?.map((v) => (v.id === evt.id ? { ...v, estado: evt.estado } : v)),
         );
         qc.setQueryData(["viaje", evt.id], (old: Viaje | undefined) =>
           old ? { ...old, estado: evt.estado } : old,
+        );
+        qc.setQueryData(["planificacion"], (old: ViajePlanificacion[] | undefined) =>
+          old?.map((v) => (v.id === evt.id ? { ...v, estado: evt.estado } : v)),
         );
       } else if (evt.tipo === "telemetria") {
         const patch = { velocidad: evt.velocidad, progreso: evt.progreso, lat: evt.lat, lng: evt.lng };
@@ -51,6 +66,9 @@ export function WsQueryAdapter() {
           old?.filter((v) => v.id !== evt.id),
         );
         qc.removeQueries({ queryKey: ["viaje", evt.id] });
+        qc.setQueryData(["planificacion"], (old: ViajePlanificacion[] | undefined) =>
+          old?.filter((v) => v.id !== evt.id),
+        );
       }
     });
   }, [qc, subscribe]);
