@@ -5,6 +5,7 @@ Validado contra el entorno de formacion 'PTX ES Formacion':
   no la referencia numerica.
 """
 import base64
+import os
 import re
 import time
 import urllib.error
@@ -28,6 +29,24 @@ def _envelope(body: str) -> str:
     )
 
 
+# ---- Modo falso de Trimble (TMS_TRIMBLE_FAKE=1) para CI y e2e ----
+# Registra cada operación SOAP (create/assign/deploy/unassign/remove) y responde OK,
+# o fault si algún id de viaje empieza por "E2E-FAIL". Sin red ni credenciales.
+_FAKE_CALLS: list = []
+
+
+def _trimble_fake() -> bool:
+    return os.environ.get("TMS_TRIMBLE_FAKE") == "1"
+
+
+def _fake_calls() -> list:
+    return list(_FAKE_CALLS)
+
+
+def _fake_reset() -> None:
+    _FAKE_CALLS.clear()
+
+
 class TrimbleClient:
     """Cliente fino para los servicios Planning/Customer/Tracking de FleetWorks."""
 
@@ -42,6 +61,16 @@ class TrimbleClient:
     # Transporte
     # ------------------------------------------------------------------ #
     def _call(self, url: str, body: str) -> dict:
+        if _trimble_fake():
+            op_m = re.search(r"<ser:(\w+)>", body)
+            op = op_m.group(1) if op_m else "?"
+            ids = [i for i in re.findall(r"<tripIds?>(.*?)</tripIds?>", body) if i]
+            _FAKE_CALLS.append({"op": op, "ids": ids})
+            for i in ids:
+                if i.startswith("E2E-FAIL"):
+                    return {"ok": False, "status": 500,
+                            "body": f"<faultstring>E2E fake fault: {i}</faultstring>"}
+            return {"ok": True, "status": 200, "body": "<return/>"}
         xml = _envelope(body).encode("utf-8")
         req = urllib.request.Request(url, data=xml)
         req.add_header("Content-Type", "text/xml; charset=utf-8")
@@ -209,6 +238,21 @@ class TrimbleClient:
         body = (
             f"<ser:removeTrips><customer>{escape(self.customer)}</customer>"
             f"{ids_xml}</ser:removeTrips>"
+        )
+        resp = self._call(PLANNING_URL, body)
+        fault = self._fault(resp)
+        return {"ok": resp["ok"] and fault is None, "status": resp["status"], "fault": fault}
+
+    def unassign_trips(self, trip_ids) -> dict:
+        """Quita viajes del terminal (siguen en el servidor de Trimble para reasignarlos).
+
+        Manual 1.6.5 §5.2: UnassignTrips desvincula del terminal sin borrar del servidor;
+        a diferencia de removeTrips, el viaje queda disponible para volver a asignarlo.
+        """
+        ids_xml = "".join(f"<tripId>{escape(t)}</tripId>" for t in trip_ids)
+        body = (
+            f"<ser:unAssignTrips><customer>{escape(self.customer)}</customer>"
+            f"{ids_xml}</ser:unAssignTrips>"
         )
         resp = self._call(PLANNING_URL, body)
         fault = self._fault(resp)

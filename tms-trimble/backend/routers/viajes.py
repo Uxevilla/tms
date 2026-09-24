@@ -240,14 +240,24 @@ def delete_tarifa(tarifa_id: int, conn = Depends(get_conn)):
 
 
 @router.delete("/api/trips/{trip_id}")
-def delete_trip(trip_id: str, user: dict = Depends(require_role(["admin", "dispatcher"])), conn = Depends(get_conn)):
-    """Elimina un viaje. Los viajes finalizados solo puede eliminarlos un administrador."""
-    row = conn.execute("SELECT estado FROM trips WHERE id=?", (trip_id,)).fetchone()
+def delete_trip(trip_id: str, force: bool = False, user: dict = Depends(require_role(["admin", "dispatcher"])), conn = Depends(get_conn)):
+    """Elimina un viaje. Los viajes finalizados solo puede eliminarlos un administrador.
+    Si el viaje ya está en Trimble, lo borra del servidor (removeTrips) antes de la BD."""
+    row = conn.execute("SELECT estado, terminal FROM trips WHERE id=?", (trip_id,)).fetchone()
     if not row:
         raise HTTPException(status_code=404, detail={"error": f"Viaje {trip_id} no encontrado"})
     estado = (row["estado"] or "").lower()
     if estado in _ESTADOS_FINALES and user.get("rol") != "admin":
         raise HTTPException(status_code=403, detail={"error": "Solo un administrador puede eliminar un viaje finalizado."})
+
+    # Si estaba en el terminal, borrarlo de Trimble ANTES (si Trimble falla, la BD no cambia).
+    in_trimble = estado == "enviado" or estado in ("llegada_origen", "cargando", "en_transito", "llegada_destino", "descargando")
+    if in_trimble:
+        r = get_client().remove_trips([trip_id])
+        if not r["ok"] and not force:
+            raise HTTPException(status_code=502, detail={
+                "error": f"Trimble: no se pudo borrar del terminal ({r['fault'] or r['status']})"})
+
     # Limpiar tablas hijas sin ON DELETE CASCADE.
     conn.execute("DELETE FROM files WHERE trip_id=?", (trip_id,))
     conn.execute("DELETE FROM mensajes WHERE trip_id=?", (trip_id,))
@@ -342,6 +352,29 @@ def enviar_trip(trip_id: str, force: bool = False, conn = Depends(get_conn)):
         _chequear_conduccion_legal(viaje, row)
 
     return _enviar_viaje(trip_id, viaje, terminal, viaje.semirremolque_id, viaje.remolque_id)
+
+
+@router.post("/api/trips/{trip_id}/quitar-terminal")
+def quitar_terminal(trip_id: str, conn = Depends(get_conn)):
+    """Quita el viaje del terminal (unassignTrips) y lo deja planificado, CONSERVANDO
+    la tractora asignada, para volver a enviarlo cuando toque (menú contextual)."""
+    row = conn.execute("SELECT * FROM trips WHERE id=?", (trip_id,)).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail={"error": f"Viaje {trip_id} no encontrado"})
+    estado = (row["estado"] or "").strip()
+    in_trimble = estado == "enviado" or estado in ("Llegada_Origen", "Cargando", "En_Transito", "Llegada_Destino", "Descargando")
+    if not in_trimble:
+        raise HTTPException(status_code=409, detail={"error": "El viaje no está en el terminal"})
+    r = get_client().unassign_trips([trip_id])
+    if not r["ok"]:
+        raise HTTPException(status_code=502, detail={
+            "error": f"Trimble: no se pudo quitar del terminal ({r['fault'] or r['status']})"})
+    terminal = row["terminal"] or ""
+    conn.execute("UPDATE trips SET estado='sin_asignar' WHERE id=?", (trip_id,))
+    conn.commit()
+    _del_viaje_activo(terminal)
+    _auditar(conn, "trips", trip_id, "quitar_terminal", None, {"estado": estado}, {"estado": "sin_asignar"})
+    return {"ok": True}
 
 
 
