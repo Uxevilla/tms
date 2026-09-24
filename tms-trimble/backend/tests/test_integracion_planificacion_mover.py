@@ -228,3 +228,14 @@ def test_enviar_quita_pendiente_reenvio(scratch_db, monkeypatch):
     finally:
         conn.close()
         main._tenant_ctx.reset(tok)
+
+
+# 12. Blindaje del modo falso: los endpoints de inspección dan 404 si el fake no está activo.
+def test_fake_endpoints_404_sin_modo_falso(monkeypatch):
+    monkeypatch.delenv("TMS_TRIMBLE_FAKE", raising=False)
+    with pytest.raises(HTTPException) as ei:
+        planificacion.trimble_fake_calls()
+    assert ei.value.status_code == 404
+    with pytest.raises(HTTPException) as ei:
+        planificacion.trimble_fake_reset()
+    assert ei.value.status_code == 404
