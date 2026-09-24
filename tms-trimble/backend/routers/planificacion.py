@@ -13,7 +13,7 @@ import json
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from core import _ESTADOS_FINALES, _EXT_DIA_CONDUCCION_MIN, _MAX_CONDUCCION_CONTINUA_MIN, _MAX_DIA_CONDUCCION_MIN
 from db import get_conn
@@ -111,6 +111,21 @@ class ValidarRequest(BaseModel):
     fin: str = ""
     kilos: float = 0.0
     palets: int = 0
+
+    @field_validator("trip_id", "terminal", "semirremolque_id", "remolque_id", "inicio", "fin", mode="before")
+    @classmethod
+    def _nulo_a_vacio(cls, v):
+        return "" if v is None else v
+
+    @field_validator("kilos", mode="before")
+    @classmethod
+    def _kilos_nulo(cls, v):
+        return 0.0 if v is None else v
+
+    @field_validator("palets", mode="before")
+    @classmethod
+    def _palets_nulo(cls, v):
+        return 0 if v is None else v
 
 
 @router.post("/api/planificacion/validar")
