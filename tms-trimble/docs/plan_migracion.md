@@ -196,12 +196,17 @@ Razonamiento (coincide con Claude):
 - `sistema` (roles/usuarios/config/integraciones/actividades) y `flota` (remap PK de vehiculos)
   se intercalan antes de operaciones; flota justo antes de operaciones por el vehiculo_id.
 
-## Decisiones pendientes antes de empezar
+## Decisiones
 
-1. **Cifrado de credenciales** en `integracion_valores` (pgcrypto) o texto plano actual. ← la única que pido confirmación explícita (es seguridad). El resto las decido yo.
-2. ~~Almacén de objetos para docs~~ → **DECIDIDO: disco** (mínimo cambio; MinIO/S3 cuando haga falta).
-3. ~~`tramos`~~ → **DECIDIDO: se recalcula** (trayecto entre paradas consecutivas), se elimina la tabla.
-4. ~~`pedidos` como entidad separada~~ → **DECIDIDO: sí** (viajes en vacío quedan con `pedido_id NULL`).
+1. ~~Cifrado de credenciales~~ → **DECIDIDO e implementado: Fernet** (clave derivada de `TMS_SECRET_KEY`), valores cifrados en reposo + enmascarados en la API. `crypto.py` + `_valores_proveedor` descifra.
+2. ~~Almacén de objetos para docs~~ → **DECIDIDO: disco** (`/app/backend/data/docs`, content-addressed por SHA-256).
+3. ~~`tramos`~~ → **DECIDIDO: se recalcula**, se elimina la tabla.
+4. ~~`pedidos` como entidad separada~~ → **DECIDIDO: sí**.
+
+## Progreso
+
+- ✅ **Fase 0** — backup `pg_dump` (tms + tms_master) + copia de prueba `tms_mig`.
+- ✅ **Fase 1 (docs)** — base64 sale de la BD a disco (`files.storage_key/sha256/bytes`, `gastos_vehiculos.storage_key`); 10+ rutas migradas (subida/serve/sync/OCR/pedido/e-CMR) + borrado con chequeo de referencias. Verificado en producción (0 base64 previo, sin datos que migrar).
 
 ## Nota sobre el punto 8 de Claude (secretos)
 
