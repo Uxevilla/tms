@@ -57,6 +57,15 @@ class _Conn:
 
 
 _SCHEMA = """
+CREATE SCHEMA IF NOT EXISTS sistema;
+CREATE SCHEMA IF NOT EXISTS config;
+CREATE SCHEMA IF NOT EXISTS maestros;
+CREATE SCHEMA IF NOT EXISTS rrhh;
+CREATE SCHEMA IF NOT EXISTS flota;
+CREATE SCHEMA IF NOT EXISTS operaciones;
+CREATE SCHEMA IF NOT EXISTS telemetria;
+CREATE SCHEMA IF NOT EXISTS finanzas;
+CREATE SCHEMA IF NOT EXISTS docs;
 CREATE TABLE IF NOT EXISTS flota.vehiculos (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     codigo TEXT UNIQUE, terminal_trimble TEXT UNIQUE,
@@ -158,7 +167,6 @@ CREATE TABLE IF NOT EXISTS alertas_mantenimiento (
 );
 CREATE INDEX IF NOT EXISTS idx_alertas_vehiculo_estado ON alertas_mantenimiento (vehiculo_id, estado);
 -- Telemetría (nueva arquitectura): posiciones con odómetro (la escribe ingest_worker).
-CREATE SCHEMA IF NOT EXISTS telemetria;
 CREATE TABLE IF NOT EXISTS telemetria.posiciones_gps (
     time TIMESTAMPTZ NOT NULL,
     vehiculo_id TEXT NOT NULL,
@@ -172,7 +180,6 @@ CREATE TABLE IF NOT EXISTS telemetria.posiciones_gps (
     fuente TEXT
 );
 -- Mantenimiento predictivo (reglas + alertas).
-CREATE SCHEMA IF NOT EXISTS flota;
 CREATE TABLE IF NOT EXISTS flota.reglas_mantenimiento (
     id SERIAL PRIMARY KEY,
     vehiculo_id TEXT NOT NULL,
@@ -325,7 +332,6 @@ ALTER TABLE files ADD COLUMN IF NOT EXISTS storage_key TEXT;
 ALTER TABLE files ADD COLUMN IF NOT EXISTS sha256 TEXT;
 ALTER TABLE files ADD COLUMN IF NOT EXISTS bytes INTEGER;
 ALTER TABLE finanzas.gastos_vehiculos ADD COLUMN IF NOT EXISTS storage_key TEXT;
-CREATE SCHEMA IF NOT EXISTS maestros;
 CREATE TABLE IF NOT EXISTS maestros.terceros (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     razon_social TEXT NOT NULL,
@@ -428,7 +434,6 @@ DROP TRIGGER IF EXISTS transportistas_upd ON transportistas;
 CREATE TRIGGER transportistas_upd INSTEAD OF UPDATE ON transportistas FOR EACH ROW EXECUTE FUNCTION maestros.transportistas_upd();
 DROP TRIGGER IF EXISTS transportistas_del ON transportistas;
 CREATE TRIGGER transportistas_del INSTEAD OF DELETE ON transportistas FOR EACH ROW EXECUTE FUNCTION maestros.transportistas_del();
-CREATE SCHEMA IF NOT EXISTS rrhh;
 CREATE TABLE IF NOT EXISTS rrhh.conductores (
     id SERIAL PRIMARY KEY,
     empleado_id TEXT NOT NULL UNIQUE REFERENCES empleados(id) ON DELETE CASCADE,
@@ -484,8 +489,6 @@ DROP TRIGGER IF EXISTS conductores_upd ON conductores;
 CREATE TRIGGER conductores_upd INSTEAD OF UPDATE ON conductores FOR EACH ROW EXECUTE FUNCTION rrhh.conductores_upd();
 DROP TRIGGER IF EXISTS conductores_del ON conductores;
 CREATE TRIGGER conductores_del INSTEAD OF DELETE ON conductores FOR EACH ROW EXECUTE FUNCTION rrhh.conductores_del();
-CREATE SCHEMA IF NOT EXISTS sistema;
-CREATE SCHEMA IF NOT EXISTS config;
 CREATE TABLE IF NOT EXISTS sistema.roles (
     id SERIAL PRIMARY KEY, nombre TEXT UNIQUE NOT NULL, descripcion TEXT
 );
@@ -568,7 +571,6 @@ DROP TRIGGER IF EXISTS usuarios_upd ON config.usuarios;
 CREATE TRIGGER usuarios_upd INSTEAD OF UPDATE ON config.usuarios FOR EACH ROW EXECUTE FUNCTION sistema.usuarios_upd();
 DROP TRIGGER IF EXISTS usuarios_del ON config.usuarios;
 CREATE TRIGGER usuarios_del INSTEAD OF DELETE ON config.usuarios FOR EACH ROW EXECUTE FUNCTION sistema.usuarios_del();
-CREATE SCHEMA IF NOT EXISTS finanzas;
 CREATE TABLE IF NOT EXISTS finanzas.series (
     codigo TEXT PRIMARY KEY, ultimo INTEGER NOT NULL DEFAULT 0
 );
@@ -619,20 +621,22 @@ CREATE TABLE IF NOT EXISTS finanzas.facturas_recibidas_lineas (
     concepto TEXT, litros NUMERIC(10,2) DEFAULT 0, base NUMERIC(12,2) DEFAULT 0, iva_pct NUMERIC(5,2) DEFAULT 21
 );
 INSERT INTO finanzas.series (codigo, ultimo) VALUES ('F', 0), ('A', 0) ON CONFLICT (codigo) DO NOTHING;
+"""
+
+_SCHEMA_VIEWS = """
+DROP VIEW IF EXISTS cuentas, asientos, apuntes, facturas, factura_lineas, gastos, gastos_vehiculos, costes_fijos, liquidaciones, vehiculos, mantenimientos, trips, paradas, tramos CASCADE;
+DROP VIEW IF EXISTS finanzas.rentabilidad_viaje CASCADE;
 CREATE OR REPLACE VIEW finanzas.rentabilidad_viaje AS
-SELECT t.id AS viaje_id, t.referencia AS codigo, t.estado,
+SELECT t.id AS viaje_id, t.codigo, t.referencia, t.estado,
        COALESCE(t.precio, 0) AS ingresos,
-       COALESCE((
-           SELECT SUM(fr.total) FROM finanzas.facturas_recibidas fr
-           JOIN finanzas.facturas_recibidas_lineas frl ON frl.factura_id = fr.id
-           WHERE frl.viaje_id = t.id
-       ), 0) AS costes,
-       COALESCE(t.precio, 0) - COALESCE((
-           SELECT SUM(fr.total) FROM finanzas.facturas_recibidas fr
-           JOIN finanzas.facturas_recibidas_lineas frl ON frl.factura_id = fr.id
-           WHERE frl.viaje_id = t.id
-       ), 0) AS margen
-FROM operaciones.trips t;
+       COALESCE(c.coste, 0) AS costes,
+       COALESCE(t.precio, 0) - COALESCE(c.coste, 0) AS margen
+FROM operaciones.trips t
+LEFT JOIN (SELECT frl.viaje_id, SUM(frl.base) AS coste
+           FROM finanzas.facturas_recibidas_lineas frl
+           JOIN finanzas.facturas_recibidas fr ON fr.id = frl.factura_id
+           WHERE fr.estado <> 'anulada'
+           GROUP BY frl.viaje_id) c ON c.viaje_id = t.codigo;
 -- Vistas de compatibilidad (el código sigue usando los nombres viejos).
 CREATE OR REPLACE VIEW cuentas AS SELECT * FROM finanzas.cuentas;
 CREATE OR REPLACE VIEW asientos AS SELECT * FROM finanzas.asientos;
@@ -703,11 +707,15 @@ def _db():
             # rápido (se reintenta en la próxima _db()) en vez de encadenar locks.
             cur.execute("SET LOCAL lock_timeout = '15000'")
             cur.execute(_SCHEMA)
-            # TimescaleDB: hypertable de posiciones GPS (particionada por tiempo).
+            # TimescaleDB: extensión (una BD nueva no la trae) + hypertable de posiciones GPS.
+            # SAVEPOINT: si la extensión no está disponible, NO aborta la transacción entera.
+            cur.execute("SAVEPOINT sp_timescale")
             try:
+                cur.execute("CREATE EXTENSION IF NOT EXISTS timescaledb")
                 cur.execute("SELECT create_hypertable('telemetria.posiciones_gps', 'time', if_not_exists => TRUE, migrate_data => TRUE)")
+                cur.execute("RELEASE SAVEPOINT sp_timescale")
             except Exception:
-                pass
+                cur.execute("ROLLBACK TO SAVEPOINT sp_timescale")
             cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_posiciones_vehiculo_time ON telemetria.posiciones_gps (vehiculo_id, time)")
             cur.execute("INSERT INTO empresa (id, nombre, pais, iva) VALUES (1, '', 'ES', 21) ON CONFLICT (id) DO NOTHING")
             cur.execute("ALTER TABLE flota.vehiculos ADD COLUMN IF NOT EXISTS itv TEXT")
@@ -845,10 +853,14 @@ def _db():
                     "ON CONFLICT (codigo) DO NOTHING",
                     (cod, nom, grupo, tipo, orden),
                 )
+            # Vistas de compatibilidad: se recrean DESPUÉS de los ALTER, para que
+            # vean las columnas añadidas por migración (device, origen_id, coste, kilos…).
+            cur.execute(_SCHEMA_VIEWS)
             conn.commit()
             cur.close()
             _schema_done.add(dbname)
-        except Exception:
+        except Exception as e:
+            print(f"[schema] {dbname}: fallo de inicialización — {e}", flush=True)
             conn.rollback()
     return _Conn(conn, pool)
 
@@ -884,4 +896,4 @@ def get_conn():
         conn.close()
 
 
-__all__ = ["_tenant_ctx", "_usuario_ctx", "_schema_done", "_Conn", "_SCHEMA", "_db", "_get_config", "_valores_proveedor", "get_conn"]
+__all__ = ["_tenant_ctx", "_usuario_ctx", "_schema_done", "_Conn", "_SCHEMA", "_SCHEMA_VIEWS", "_db", "_get_config", "_valores_proveedor", "get_conn"]
