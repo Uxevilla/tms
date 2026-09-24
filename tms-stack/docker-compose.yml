@@ -28,6 +28,9 @@ services:
     volumes:
       - timescale_data:/var/lib/postgresql/data
       - /root/tms-stack/db/init:/docker-entrypoint-initdb.d:ro
+    ports:
+      # Solo localhost: para los tests de integración (pytest) y depuración. Nunca a la LAN.
+      - "127.0.0.1:5432:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-tms} -d ${DB_NAME:-tms}"]
       interval: 10s
