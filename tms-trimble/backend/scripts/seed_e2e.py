@@ -65,6 +65,15 @@ def main() -> None:
         (now, now),
     )
 
+    # Posición GPS para que el mapa (telemetría activa) muestre un marcador en e2e.
+    # posiciones_gps.vehiculo_id referencia el CODIGO del vehículo (vista vehiculos.id = codigo).
+    cur.execute("SELECT 1 FROM telemetria.posiciones_gps WHERE vehiculo_id = 'E2E-VEH' LIMIT 1")
+    if not cur.fetchone():
+        cur.execute(
+            "INSERT INTO telemetria.posiciones_gps (time, vehiculo_id, lat, lng) VALUES (%s, %s, %s, %s)",
+            (now, "E2E-VEH", 40.4, -3.7),
+        )
+
     # Gasto sin imputar (idempotente: solo si no existe el concepto marcador).
     cur.execute("SELECT 1 FROM finanzas.gastos WHERE concepto = 'gasto suelto e2e' LIMIT 1")
     if not cur.fetchone():
