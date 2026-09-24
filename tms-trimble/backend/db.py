@@ -648,7 +648,6 @@ def _db():
             cur.execute("ALTER TABLE trips ADD COLUMN IF NOT EXISTS ecmr_id TEXT")
             cur.execute("ALTER TABLE facturas ADD COLUMN IF NOT EXISTS coste NUMERIC(12,2) DEFAULT 0")
             cur.execute("ALTER TABLE facturas ADD COLUMN IF NOT EXISTS margen NUMERIC(12,2) DEFAULT 0")
-            cur.execute("ALTER TABLE conductores ADD COLUMN IF NOT EXISTS tarifa_km NUMERIC(10,3) DEFAULT 0")
             cur.execute("ALTER TABLE liquidaciones ADD COLUMN IF NOT EXISTS conductor_id INTEGER")
             cur.execute("ALTER TABLE liquidaciones ADD COLUMN IF NOT EXISTS viaje_id TEXT")
             cur.execute("ALTER TABLE gastos ADD COLUMN IF NOT EXISTS trip_id TEXT")
@@ -720,7 +719,6 @@ def _db():
                 )
             cur.execute("ALTER TABLE gastos ADD COLUMN IF NOT EXISTS cuenta TEXT")
             cur.execute("ALTER TABLE categorias_gasto ADD COLUMN IF NOT EXISTS cuenta TEXT")
-            cur.execute("ALTER TABLE conductores ADD COLUMN IF NOT EXISTS empleado_id TEXT")
             for cat, cuenta in _CATEGORIA_CUENTA.items():
                 cur.execute("UPDATE categorias_gasto SET cuenta=%s WHERE nombre=%s AND cuenta IS NULL", (cuenta, cat))
             for cat, info in _PEAJE_CATEGORIAS.items():

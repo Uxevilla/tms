@@ -15,4 +15,5 @@ INSERT INTO rrhh.conductores (id, empleado_id, tarjeta_tacografo)
 SELECT id, empleado_id, did FROM conductores
 WHERE COALESCE(empleado_id,'') <> ''
 ON CONFLICT (id) DO NOTHING;
+SELECT setval('rrhh_conductores_id_seq', (SELECT MAX(id) FROM rrhh.conductores));
 DROP TABLE IF EXISTS conductores CASCADE;
