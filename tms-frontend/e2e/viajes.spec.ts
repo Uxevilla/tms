@@ -46,9 +46,10 @@ test.describe("Viajes (Fase 4)", () => {
     await abrirViajes(page);
     const t0 = Date.now();
 
-    // 1. Abrir el Sheet con el atajo "n" (sin click).
-    await page.keyboard.press("n");
-    await expect(page.getByPlaceholder("Buscar cliente…")).toBeVisible();
+    // 1. Abrir el Sheet con el atajo "n" (down/up crudos: sin el settle que espera las llamadas del Sheet).
+    await page.keyboard.down("n");
+    await page.keyboard.up("n");
+    await expect(page.getByPlaceholder("Buscar cliente…")).toBeVisible({ timeout: 15000 });
 
     // 2. Cliente → focus + type + Enter.
     await page.getByPlaceholder("Buscar cliente…").focus();
@@ -126,8 +127,9 @@ test.describe("Viajes (Fase 4)", () => {
 
   test("validación en vivo: el botón se habilita solo con los obligatorios", async ({ page }) => {
     await abrirViajes(page);
-    await page.keyboard.press("n");
-    await expect(page.getByPlaceholder("Buscar cliente…")).toBeVisible();
+    await page.keyboard.down("n");
+    await page.keyboard.up("n");
+    await expect(page.getByPlaceholder("Buscar cliente…")).toBeVisible({ timeout: 15000 });
 
     // Sin rellenar nada, el botón de guardar está deshabilitado.
     const guardar = page.getByRole("button", { name: /Crear viaje/i });
