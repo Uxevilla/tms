@@ -88,7 +88,7 @@ export function KpiDashboard() {
         cellRenderer: (p: { value: number | null }) => <MargenBar value={p.value} />,
         cellStyle: (p) => {
           const v = p.value as number | null;
-          if (v == null) return {};
+          if (v == null) return null;
           if (v > 15) return { backgroundColor: "#ecfdf5" };
           if (v >= 5) return { backgroundColor: "#fffbeb" };
           return { backgroundColor: "#fef2f2" };

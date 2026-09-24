@@ -7,6 +7,7 @@ import { themeQuartz } from "ag-grid-community";
 export const gridTheme = themeQuartz.withParams({
   spacing: 2,
   fontSize: 11,
+  fontFamily: "inherit",
 });
 
 // Alturas mínimas aceptables para máxima información en pantalla

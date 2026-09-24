@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { SocketProvider, useSocketStatus } from "./context/SocketContext";
 import { AppShell } from "./components/AppShell";
 import { OperacionesDashboard } from "./components/OperacionesDashboard";
@@ -42,6 +42,17 @@ export default function App() {
     setTokenState(null);
   };
 
+  // Sesión caducada en caliente (token expirado a mitad de uso): el WS cierra con
+  // código 1008 o una llamada fetch recibe 401 → se dispara tms:sesion-caducada.
+  useEffect(() => {
+    const onSesionCaducada = () => {
+      clearToken();
+      setTokenState(null);
+    };
+    window.addEventListener("tms:sesion-caducada", onSesionCaducada);
+    return () => window.removeEventListener("tms:sesion-caducada", onSesionCaducada);
+  }, []);
+
   if (!token) {
     return <Login onLogin={handleLogin} />;
   }
@@ -54,8 +65,26 @@ export default function App() {
 }
 
 function AppInner({ onLogout }: { onLogout: () => void }) {
-  const [seccion, setSeccion] = useState<Seccion>("operaciones");
+  const [seccion, setSeccion] = useState<Seccion>(() => {
+    const h = location.hash.replace("#", "");
+    return (h in TITULOS ? h : "operaciones") as Seccion;
+  });
   const wsStatus = useSocketStatus();
+
+  // Sección → hash: permite enlaces directos (#contabilidad) y botón atrás.
+  useEffect(() => {
+    if (location.hash !== `#${seccion}`) location.hash = seccion;
+  }, [seccion]);
+
+  // hash → sección: botón atrás/adelante del navegador.
+  useEffect(() => {
+    const onHash = () => {
+      const h = location.hash.replace("#", "");
+      if (h in TITULOS) setSeccion(h as Seccion);
+    };
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+  }, []);
 
   return (
     <AppShell

@@ -813,9 +813,10 @@ export function OperacionesDashboard() {
       if (!api) return;
 
       if (evt.tipo === "creado") {
+        const existe = rowsRef.current.has(evt.viaje.id);
         rowsRef.current.set(evt.viaje.id, evt.viaje);
-        api.applyTransaction({ add: [evt.viaje] });
-        flashRow(api, evt.viaje.id);
+        api.applyTransaction(existe ? { update: [evt.viaje] } : { add: [evt.viaje] });
+        if (!existe) flashRow(api, evt.viaje.id);
         return;
       }
 
@@ -1079,7 +1080,7 @@ export function OperacionesDashboard() {
               singleClickEdit
               stopEditingWhenCellsLoseFocus
               onCellValueChanged={onCellValueChanged}
-              sideBar={{ toolPanels: ["columns"] }}
+
               {...gridHandlers}
               rowHeight={GRID_ROW_HEIGHT}
               headerHeight={GRID_HEADER_HEIGHT}

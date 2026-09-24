@@ -461,7 +461,7 @@ export function RrhhDashboard() {
 
       <div className="min-h-0 flex-1 overflow-hidden rounded-xl border border-slate-200 bg-white">
         {tab === "plantilla" && (
-          <AgGridReact<Empleado> theme={gridTheme} columnDefs={plantillaCols} defaultColDef={defaultColDef} rowData={empleados} rowHeight={GRID_ROW_HEIGHT} headerHeight={GRID_HEADER_HEIGHT} rowSelection="single" singleClickEdit stopEditingWhenCellsLoseFocus onCellValueChanged={onCellValueChanged} onCellClicked={(e) => { if (e.colDef.editable) return; if (e.data) selectEmpleado(e.data); }} sideBar={{ toolPanels: ["columns"] }} {...gridHandlers} />
+          <AgGridReact<Empleado> theme={gridTheme} columnDefs={plantillaCols} defaultColDef={defaultColDef} rowData={empleados} rowHeight={GRID_ROW_HEIGHT} headerHeight={GRID_HEADER_HEIGHT} rowSelection="single" singleClickEdit stopEditingWhenCellsLoseFocus onCellValueChanged={onCellValueChanged} onCellClicked={(e) => { if (e.colDef.editable) return; if (e.data) selectEmpleado(e.data); }} {...gridHandlers} />
         )}
         {tab === "nominas" && (
           <AgGridReact<Nomina> theme={gridTheme} columnDefs={nominaCols} defaultColDef={defaultColDef} rowData={nominas} rowHeight={GRID_ROW_HEIGHT} headerHeight={GRID_HEADER_HEIGHT} />

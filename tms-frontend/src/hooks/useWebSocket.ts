@@ -33,8 +33,14 @@ export function useWebSocket<T>(url: string, onMessage: (data: T) => void): WsSt
         }
       };
 
-      ws.onclose = () => {
+      ws.onclose = (ev) => {
         if (disposed) return;
+        // Código 1008 (policy violation): el servidor cerró por token inválido/caducado.
+        // No reintentar en bucle: notificar la caducidad de sesión y parar.
+        if (ev.code === 1008) {
+          window.dispatchEvent(new Event("tms:sesion-caducada"));
+          return;
+        }
         setStatus("desconectado");
         retryTimer = window.setTimeout(connect, 3000);
       };

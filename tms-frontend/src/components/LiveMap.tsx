@@ -171,7 +171,7 @@ function Filtros({
         ))}
       </div>
       <button
-        onClick={() => setMostrarTrayectorias((x) => !x)}
+        onClick={() => setMostrarTrayectorias(!mostrarTrayectorias)}
         className={`rounded-lg px-2 py-1 text-[11px] font-medium shadow-lg backdrop-blur transition ${
           mostrarTrayectorias ? "bg-slate-100 text-slate-900" : "bg-slate-900/85 text-slate-300 hover:text-white"
         }`}

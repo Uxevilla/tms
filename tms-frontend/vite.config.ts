@@ -6,6 +6,11 @@ export default defineConfig({
   server: {
     host: true,
     port: 5173,
+    // Proxy para desarrollo sin nginx: /api/ y /ws/ al backend local.
+    proxy: {
+      "/api": "http://localhost:8750",
+      "/ws": { target: "ws://localhost:8750", ws: true },
+    },
   },
   preview: {
     host: true,

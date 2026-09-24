@@ -7,6 +7,7 @@ import { REST_VEHICULOS, REST_MANTENIMIENTOS, REST_MANTENIMIENTO_ALERTAS, REST_M
 import { getToken } from "../auth";
 import { useAgGridState } from "../hooks/useAgGridState";
 import { TallerCalendario } from "./TallerCalendario";
+import { CaducidadRenderer } from "./CaducidadRenderer";
 
 import { gridTheme, GRID_ROW_HEIGHT, GRID_HEADER_HEIGHT } from "../gridConfig";
 ModuleRegistry.registerModules([AllCommunityModule]);
@@ -398,10 +399,9 @@ export function VehiculosDashboard() {
         valueFormatter: (p) => `${Math.round(Number(p.value) || 0).toLocaleString("es-ES")} km`,
       },
       { field: "anno", headerName: "Año", width: 70 },
-      { field: "itv", headerName: "ITV", width: 105, editable: true, cellClass: editableCell },
-      { field: "fecha_caducidad_itv", headerName: "Caducidad ITV", width: 120, editable: true, cellClass: editableCell },
+      { field: "fecha_caducidad_itv", headerName: "Caducidad ITV", width: 120, editable: true, cellClass: editableCell, cellEditor: "agDateStringCellEditor", cellRenderer: CaducidadRenderer },
       { field: "seguro_compania", headerName: "Cía. Seguro", width: 130, editable: true, cellClass: editableCell },
-      { field: "fecha_caducidad_seguro", headerName: "Caducidad Seguro", width: 125, editable: true, cellClass: editableCell },
+      { field: "fecha_caducidad_seguro", headerName: "Caducidad Seguro", width: 125, editable: true, cellClass: editableCell, cellEditor: "agDateStringCellEditor", cellRenderer: CaducidadRenderer },
       {
         field: "tipo_tenencia",
         headerName: "Tenencia",
@@ -750,7 +750,7 @@ export function VehiculosDashboard() {
               if (e.colDef.editable) return;
               if (e.data) selectVehicle(e.data);
             }}
-            sideBar={{ toolPanels: ["columns"] }}
+
             {...gridHandlers}
           />
         </div>
@@ -766,7 +766,7 @@ export function VehiculosDashboard() {
                 <button onClick={() => exportAlertas("alertas_preventivas.csv")} className="text-xs text-slate-400 hover:text-slate-600"><Download size={14} /></button>
               </div>
               <div className="min-h-0 flex-1 overflow-hidden">
-                <AgGridReact<Alerta> theme={gridTheme} columnDefs={alertaCols} defaultColDef={defaultColDef} rowData={alertas} rowHeight={GRID_ROW_HEIGHT} headerHeight={GRID_HEADER_HEIGHT} sideBar={{ toolPanels: ["columns"] }} {...alertHandlers} />
+                <AgGridReact<Alerta> theme={gridTheme} columnDefs={alertaCols} defaultColDef={defaultColDef} rowData={alertas} rowHeight={GRID_ROW_HEIGHT} headerHeight={GRID_HEADER_HEIGHT} {...alertHandlers} />
               </div>
             </div>
             <div className="flex min-h-0 flex-1 flex-col rounded-xl border border-slate-200 bg-white">
@@ -775,7 +775,7 @@ export function VehiculosDashboard() {
                 <button onClick={() => exportMant("historial.csv")} className="text-xs text-slate-400 hover:text-slate-600"><Download size={14} /></button>
               </div>
               <div className="min-h-0 flex-1 overflow-hidden">
-                <AgGridReact<Mantenimiento> theme={gridTheme} columnDefs={mantCols} defaultColDef={defaultColDef} rowData={mantenimientos} rowHeight={GRID_ROW_HEIGHT} headerHeight={GRID_HEADER_HEIGHT} singleClickEdit stopEditingWhenCellsLoseFocus onCellValueChanged={onCellValueChangedMant} sideBar={{ toolPanels: ["columns"] }} {...mantHandlers} />
+                <AgGridReact<Mantenimiento> theme={gridTheme} columnDefs={mantCols} defaultColDef={defaultColDef} rowData={mantenimientos} rowHeight={GRID_ROW_HEIGHT} headerHeight={GRID_HEADER_HEIGHT} singleClickEdit stopEditingWhenCellsLoseFocus onCellValueChanged={onCellValueChangedMant} {...mantHandlers} />
               </div>
             </div>
           </div>

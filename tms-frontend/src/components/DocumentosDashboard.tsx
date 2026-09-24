@@ -168,7 +168,6 @@ export function DocumentosDashboard() {
           singleClickEdit
           stopEditingWhenCellsLoseFocus
           onCellValueChanged={onCellValueChanged}
-          sideBar={{ toolPanels: ["columns"] }}
           {...gridHandlers}
         />
       </div>

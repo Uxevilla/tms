@@ -83,7 +83,7 @@ export function BuscadorDireccion({ placeholder = "Buscar empresa o lugar…", v
     setTexto("");
     setSug([]);
     setAbierto(false);
-    onSelect({ ...s, id });
+    onSelect({ ...s, id: id as number });
   }
 
   function limpiar() {

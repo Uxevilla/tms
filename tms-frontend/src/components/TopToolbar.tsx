@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import type { Seccion, WsStatus } from "../types";
+import { getRol } from "../auth";
 
 const ITEMS: { id: Seccion; label: string; icon: LucideIcon }[] = [
   { id: "operaciones", label: "Operaciones", icon: LayoutGrid },
@@ -27,6 +28,9 @@ const ITEMS: { id: Seccion; label: string; icon: LucideIcon }[] = [
   { id: "mensajeria", label: "Mensajería", icon: MessageCircle },
   { id: "configuracion", label: "Configuración", icon: Settings },
 ];
+
+// Secciones restringidas a admin (el backend responde 403 para el resto de roles).
+const SOLO_ADMIN: Seccion[] = ["contabilidad", "rrhh", "configuracion"];
 
 interface TopToolbarProps {
   seccion: Seccion;
@@ -41,6 +45,8 @@ interface TopToolbarProps {
  * el nombre del módulo debajo en texto pequeño y negrita.
  */
 export function TopToolbar({ seccion, onSeccion, wsStatus, onLogout }: TopToolbarProps) {
+  const rol = getRol();
+  const visibles = ITEMS.filter((i) => rol === "admin" || !SOLO_ADMIN.includes(i.id));
   return (
     <header className="flex h-[72px] shrink-0 items-stretch gap-1 border-b border-slate-950 bg-slate-800 px-2 text-slate-300">
       {/* Marca */}
@@ -56,7 +62,7 @@ export function TopToolbar({ seccion, onSeccion, wsStatus, onLogout }: TopToolba
 
       {/* Ribbon de módulos */}
       <nav className="flex flex-1 items-stretch gap-1 overflow-x-auto">
-        {ITEMS.map(({ id, label, icon: Icon }) => {
+        {visibles.map(({ id, label, icon: Icon }) => {
           const activo = seccion === id;
           return (
             <button

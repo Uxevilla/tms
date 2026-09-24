@@ -148,6 +148,9 @@ export function Login({ onLogin }: LoginProps) {
         <label className="mb-3 block text-sm font-medium text-slate-700">
           Usuario
           <input
+            id="username"
+            name="username"
+            autoComplete="username"
             className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
             value={usuario}
             onChange={(e) => setUsuario(e.target.value)}
@@ -168,7 +171,10 @@ export function Login({ onLogin }: LoginProps) {
         <label className="mb-4 block text-sm font-medium text-slate-700">
           Contraseña
           <input
+            id="password"
+            name="password"
             type="password"
+            autoComplete="current-password"
             className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
             value={contrasena}
             onChange={(e) => setContrasena(e.target.value)}

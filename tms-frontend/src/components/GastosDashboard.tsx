@@ -330,7 +330,6 @@ export function GastosDashboard() {
           singleClickEdit
           stopEditingWhenCellsLoseFocus
           onCellValueChanged={onCellValueChanged}
-          sideBar={{ toolPanels: ["columns"] }}
           {...gridHandlers}
         />
       </div>

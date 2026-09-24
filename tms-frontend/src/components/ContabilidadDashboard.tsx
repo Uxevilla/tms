@@ -637,7 +637,7 @@ export function ContabilidadDashboard() {
         width: 110,
         type: "rightAligned",
         valueFormatter: (p) => `${Number(p.value).toLocaleString("es-ES")} km`,
-        cellStyle: (p) => (Number(p.value) < 0 ? { color: "#dc2626" } : {}),
+        cellStyle: (p) => (Number(p.value) < 0 ? { color: "#dc2626" } : null),
       },
       {
         field: "pct_vacio",
@@ -697,22 +697,8 @@ export function ContabilidadDashboard() {
     [],
   );
 
-  // Parámetros del panel master/detail para el desglose de costes del borrador.
-  const detailParams = useMemo(
-    () => ({
-      detailGridOptions: {
-        columnDefs: [
-          { field: "concepto", headerName: "Concepto", flex: 1 },
-          { field: "importe", headerName: "Importe", width: 140, type: "rightAligned", valueFormatter: (p: ValueFormatterParams) => eur(Number(p.value) || 0) },
-        ],
-      },
-      getDetailRowData: (p: { data: BorradorFactura; successCallback: (rows: CosteDesglose[]) => void }) => {
-        p.successCallback(p.data.desglose);
-      },
-    }),
-    [],
-  );
-
+  // Parámetros del panel master/detail para el desglose de costes del borrador
+  // (eliminado: masterDetail es de AG Grid Enterprise; el desglose se muestra en el drawer).
   const defaultColDef = useMemo<ColDef>(() => ({ sortable: true, resizable: true, filter: true }), []);
   const revertGuard = useRef(false);
   const { resetColumnState: resetClientes, exportToCsv: exportClientes, ...clientesGrid } = useAgGridState("tms_clientes_grid");
@@ -1021,9 +1007,6 @@ export function ContabilidadDashboard() {
             rowData={borradores}
             rowHeight={GRID_ROW_HEIGHT}
             headerHeight={GRID_HEADER_HEIGHT}
-            masterDetail
-            detailCellRendererParams={detailParams}
-            detailRowHeight={140}
             rowSelection="single"
             onRowClicked={(p) => setSelected(p.data ?? null)}
           />
@@ -1051,7 +1034,7 @@ export function ContabilidadDashboard() {
             singleClickEdit
             stopEditingWhenCellsLoseFocus
             onCellValueChanged={guardarCelda(REST_CLIENTES)}
-            sideBar={{ toolPanels: ["columns"] }}
+
             {...clientesGrid}
           />
         )}
@@ -1067,7 +1050,7 @@ export function ContabilidadDashboard() {
             singleClickEdit
             stopEditingWhenCellsLoseFocus
             onCellValueChanged={guardarCelda(REST_PROVEEDORES)}
-            sideBar={{ toolPanels: ["columns"] }}
+
             {...proveedoresGrid}
           />
         )}
@@ -1083,7 +1066,7 @@ export function ContabilidadDashboard() {
             singleClickEdit
             stopEditingWhenCellsLoseFocus
             onCellValueChanged={guardarTarifaCelda}
-            sideBar={{ toolPanels: ["columns"] }}
+
             {...tarifasGrid}
           />
         )}
@@ -1201,7 +1184,7 @@ export function ContabilidadDashboard() {
             rowData={auditoria}
             rowHeight={GRID_ROW_HEIGHT}
             headerHeight={GRID_HEADER_HEIGHT}
-            sideBar={{ toolPanels: ["columns"] }}
+
           />
         )}
       </div>
@@ -1255,6 +1238,19 @@ export function ContabilidadDashboard() {
                 </div>
               </dl>
             </div>
+            {(selected.desglose?.length ?? 0) > 0 && (
+              <div className="border-t border-slate-100 pt-3">
+                <div className="mb-1.5 text-xs font-medium uppercase tracking-wide text-slate-400">Desglose de costes</div>
+                <ul className="space-y-1">
+                  {selected.desglose!.map((c, i) => (
+                    <li key={i} className="flex justify-between">
+                      <span className="text-slate-600">{c.concepto}</span>
+                      <span className="tabular-nums font-medium text-slate-800">{eur(c.importe)}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </div>
           <footer className="border-t border-slate-200 p-4">
             <button
