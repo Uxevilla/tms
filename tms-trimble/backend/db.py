@@ -629,7 +629,7 @@ CREATE TABLE IF NOT EXISTS finanzas.facturas_recibidas (
     base NUMERIC(12,2) DEFAULT 0, cuota_iva NUMERIC(12,2) DEFAULT 0,
     retencion NUMERIC(12,2) DEFAULT 0, total NUMERIC(12,2) DEFAULT 0,
     estado TEXT DEFAULT 'pendiente', origen TEXT DEFAULT 'manual',
-    asiento_id INTEGER, creado_en TIMESTAMPTZ DEFAULT now(),
+    gasto_origen TEXT, asiento_id INTEGER, creado_en TIMESTAMPTZ DEFAULT now(),
     UNIQUE(proveedor_id, numero_proveedor)
 );
 CREATE TABLE IF NOT EXISTS finanzas.facturas_recibidas_lineas (
@@ -638,6 +638,44 @@ CREATE TABLE IF NOT EXISTS finanzas.facturas_recibidas_lineas (
     categoria_id INTEGER, cuenta TEXT, vehiculo_id TEXT, viaje_id TEXT,
     concepto TEXT, litros NUMERIC(10,2) DEFAULT 0, base NUMERIC(12,2) DEFAULT 0, iva_pct NUMERIC(5,2) DEFAULT 21
 );
+-- Propagación del borrado/edición de gastos (dual-write) a facturas_recibidas.
+CREATE OR REPLACE FUNCTION finanzas.gastos_sync_fr() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE v_base NUMERIC;
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    DELETE FROM finanzas.facturas_recibidas WHERE gasto_origen = 'gastos:' || OLD.id;
+    RETURN OLD;
+  END IF;
+  IF NEW.importe IS DISTINCT FROM OLD.importe OR NEW.iva IS DISTINCT FROM OLD.iva OR NEW.retencion IS DISTINCT FROM OLD.retencion THEN
+    v_base := CASE WHEN COALESCE(NEW.iva,0) > 0 THEN round(NEW.importe / (1 + NEW.iva/100.0), 2) ELSE NEW.importe END;
+    UPDATE finanzas.facturas_recibidas SET
+      base = v_base,
+      cuota_iva = round(NEW.importe - v_base, 2),
+      retencion = CASE WHEN COALESCE(NEW.retencion,0) > 0 THEN round(v_base * NEW.retencion/100.0, 2) ELSE 0 END,
+      total = NEW.importe
+    WHERE gasto_origen = 'gastos:' || NEW.id;
+  END IF;
+  RETURN NEW;
+END $$;
+DROP TRIGGER IF EXISTS gastos_sync_fr ON finanzas.gastos;
+CREATE TRIGGER gastos_sync_fr AFTER DELETE OR UPDATE ON finanzas.gastos FOR EACH ROW EXECUTE FUNCTION finanzas.gastos_sync_fr();
+CREATE OR REPLACE FUNCTION finanzas.gastos_veh_sync_fr() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    DELETE FROM finanzas.facturas_recibidas WHERE gasto_origen = 'gastos_vehiculos:' || OLD.id;
+    RETURN OLD;
+  END IF;
+  IF NEW.base_imponible IS DISTINCT FROM OLD.base_imponible OR NEW.iva IS DISTINCT FROM OLD.iva OR NEW.importe_total IS DISTINCT FROM OLD.importe_total THEN
+    UPDATE finanzas.facturas_recibidas SET
+      base = NEW.base_imponible,
+      cuota_iva = round(COALESCE(NEW.importe_total,0) - COALESCE(NEW.base_imponible,0), 2),
+      total = NEW.importe_total
+    WHERE gasto_origen = 'gastos_vehiculos:' || NEW.id;
+  END IF;
+  RETURN NEW;
+END $$;
+DROP TRIGGER IF EXISTS gastos_veh_sync_fr ON finanzas.gastos_vehiculos;
+CREATE TRIGGER gastos_veh_sync_fr AFTER DELETE OR UPDATE ON finanzas.gastos_vehiculos FOR EACH ROW EXECUTE FUNCTION finanzas.gastos_veh_sync_fr();
 INSERT INTO finanzas.series (codigo, ultimo) VALUES ('F', 0), ('A', 0) ON CONFLICT (codigo) DO NOTHING;
 """
 

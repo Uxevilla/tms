@@ -201,7 +201,8 @@ def _gasto_subcontrata(conn, trip, fecha):
     gasto_id = cur.fetchone()["id"]
     _sync_factura_recibida(conn, origen="subcontrata", proveedor_id=trip["proveedor_id"],
                            fecha=fecha, base=base, cuota_iva=cuota, total=coste, cuenta="624",
-                           viaje_id=trip["id"], concepto=concepto, iva_pct=iva_pct)
+                           viaje_id=trip["id"], concepto=concepto, iva_pct=iva_pct,
+                           gasto_origen=f"gastos:{gasto_id}")
     lineas = [("624", base, 0, concepto)]
     if cuota > 0:
         lineas.append(("472", cuota, 0, "IVA soportado"))
@@ -213,16 +214,18 @@ def _gasto_subcontrata(conn, trip, fecha):
 def _sync_factura_recibida(conn, *, origen, proveedor_id=None, numero_proveedor=None,
                            fecha=None, base=0.0, cuota_iva=0.0, retencion=0.0, total=0.0,
                            categoria_id=None, cuenta=None, vehiculo_id=None, viaje_id=None,
-                           concepto=None, litros=0.0, iva_pct=21.0):
+                           concepto=None, litros=0.0, iva_pct=21.0, gasto_origen=None):
     """Dual-write (merge Fase 5 2b): registra el gasto unificado en
     finanzas.facturas_recibidas(_lineas), con imputación por vehículo/viaje.
-    Se llama en la MISMA transacción que el INSERT en gastos/gastos_vehiculos."""
+    Se llama en la MISMA transacción que el INSERT en gastos/gastos_vehiculos.
+    `gasto_origen` (p. ej. 'gastos:123') enlaza la factura con su gasto fuente
+    para que borrar/editar el gasto se propague (triggers gastos_sync_fr)."""
     cur = conn.execute(
         "INSERT INTO finanzas.facturas_recibidas "
-        "(proveedor_id, numero_proveedor, fecha, base, cuota_iva, retencion, total, estado, origen) "
-        "VALUES (?,?,?,?,?,?,?,?,?) RETURNING id",
+        "(proveedor_id, numero_proveedor, fecha, base, cuota_iva, retencion, total, estado, origen, gasto_origen) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?) RETURNING id",
         (proveedor_id, numero_proveedor, (fecha or "")[:10] or None,
-         base, cuota_iva, retencion, total, "pendiente", origen),
+         base, cuota_iva, retencion, total, "pendiente", origen, gasto_origen),
     )
     fr_id = cur.fetchone()["id"]
     conn.execute(
