@@ -118,6 +118,20 @@ CREATE TABLE IF NOT EXISTS direcciones (
     ciudad TEXT, cp TEXT, pais TEXT DEFAULT 'ES',
     lat NUMERIC(10,7), lng NUMERIC(10,7), comentario TEXT, creado TEXT
 );
+CREATE TABLE IF NOT EXISTS finanzas.gastos (
+    id SERIAL PRIMARY KEY, terminal TEXT, trip_id TEXT, categoria TEXT, fecha TEXT,
+    importe NUMERIC(12,2) DEFAULT 0, concepto TEXT, foto TEXT, creado TEXT,
+    proveedor_id INTEGER,
+    categoria_id INTEGER REFERENCES categorias_gasto(id)
+);
+CREATE TABLE IF NOT EXISTS finanzas.gastos_vehiculos (
+    id SERIAL PRIMARY KEY, vehiculo_id TEXT, proveedor_id INTEGER,
+    fecha TEXT, tipo TEXT, litros NUMERIC(10,2) DEFAULT 0,
+    base_imponible NUMERIC(12,2) DEFAULT 0, iva NUMERIC(6,2) DEFAULT 21,
+    importe_total NUMERIC(12,2) DEFAULT 0, factura_ref TEXT,
+    cuenta_contable_gasto TEXT, estado_pago TEXT DEFAULT 'Pendiente',
+    archivo_base64 TEXT, creado TEXT
+);
 CREATE TABLE IF NOT EXISTS finanzas.costes_fijos (
     id SERIAL PRIMARY KEY, terminal TEXT, concepto TEXT, importe NUMERIC(12,2) DEFAULT 0
 );
@@ -188,6 +202,9 @@ CREATE TABLE IF NOT EXISTS finanzas.liquidaciones (
 CREATE INDEX IF NOT EXISTS idx_trips_creado ON operaciones.trips(creado);
 CREATE INDEX IF NOT EXISTS idx_trips_terminal ON operaciones.trips(terminal);
 CREATE INDEX IF NOT EXISTS idx_trips_cliente ON operaciones.trips(cliente_id);
+CREATE INDEX IF NOT EXISTS idx_gastos_terminal ON finanzas.gastos(terminal);
+CREATE INDEX IF NOT EXISTS idx_gastos_fecha ON finanzas.gastos(fecha);
+CREATE INDEX IF NOT EXISTS idx_gastos_proveedor ON finanzas.gastos(proveedor_id);
 CREATE INDEX IF NOT EXISTS idx_paradas_trip ON operaciones.paradas(trip_id);
 CREATE TABLE IF NOT EXISTS finanzas.cuentas (
     codigo TEXT PRIMARY KEY, nombre TEXT NOT NULL,
@@ -314,6 +331,7 @@ ALTER TABLE finanzas.facturas ADD COLUMN IF NOT EXISTS borrado_en TEXT;
 ALTER TABLE files ADD COLUMN IF NOT EXISTS storage_key TEXT;
 ALTER TABLE files ADD COLUMN IF NOT EXISTS sha256 TEXT;
 ALTER TABLE files ADD COLUMN IF NOT EXISTS bytes INTEGER;
+ALTER TABLE finanzas.gastos_vehiculos ADD COLUMN IF NOT EXISTS storage_key TEXT;
 CREATE TABLE IF NOT EXISTS maestros.terceros (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     razon_social TEXT NOT NULL,
@@ -612,7 +630,7 @@ CREATE TABLE IF NOT EXISTS finanzas.facturas_recibidas (
     retencion NUMERIC(12,2) DEFAULT 0, total NUMERIC(12,2) DEFAULT 0,
     estado TEXT DEFAULT 'pendiente', origen TEXT DEFAULT 'manual',
     terminal TEXT, categoria TEXT, storage_key TEXT,
-    asiento_id INTEGER, creado_en TIMESTAMPTZ DEFAULT now(),
+    gasto_origen TEXT, asiento_id INTEGER, creado_en TIMESTAMPTZ DEFAULT now(),
     UNIQUE(proveedor_id, numero_proveedor)
 );
 CREATE TABLE IF NOT EXISTS finanzas.facturas_recibidas_lineas (
@@ -644,102 +662,73 @@ CREATE OR REPLACE VIEW asientos AS SELECT * FROM finanzas.asientos;
 CREATE OR REPLACE VIEW apuntes AS SELECT * FROM finanzas.apuntes;
 CREATE OR REPLACE VIEW facturas AS SELECT * FROM finanzas.facturas;
 CREATE OR REPLACE VIEW factura_lineas AS SELECT * FROM finanzas.factura_lineas;
-CREATE OR REPLACE VIEW gastos AS
-SELECT fr.id, fr.terminal, frl.viaje_id AS trip_id, fr.categoria, fr.fecha,
-       fr.total AS importe, frl.concepto, NULL::text AS foto, fr.creado_en::text AS creado,
-       fr.proveedor_id, frl.categoria_id, frl.cuenta, frl.iva_pct AS iva, fr.retencion,
-       (fr.estado = 'pagada') AS pagado
-FROM finanzas.facturas_recibidas fr
-JOIN finanzas.facturas_recibidas_lineas frl ON frl.factura_id = fr.id
-WHERE fr.origen IN ('viaje', 'subcontrata');
-CREATE OR REPLACE VIEW gastos_vehiculos AS
-SELECT fr.id, frl.vehiculo_id, fr.proveedor_id, fr.fecha, fr.categoria AS tipo,
-       frl.litros, frl.base AS base_imponible, frl.iva_pct AS iva, fr.total AS importe_total,
-       fr.numero_proveedor AS factura_ref, frl.cuenta AS cuenta_contable_gasto,
-       fr.estado AS estado_pago, NULL::text AS archivo_base64, fr.storage_key,
-       fr.creado_en::text AS creado
-FROM finanzas.facturas_recibidas fr
-JOIN finanzas.facturas_recibidas_lineas frl ON frl.factura_id = fr.id
-WHERE fr.origen IN ('vehiculo', 'mantenimiento');
-CREATE OR REPLACE FUNCTION finanzas.gastos_view_ins() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE VIEW gastos AS SELECT * FROM finanzas.gastos;
+CREATE OR REPLACE VIEW gastos_vehiculos AS SELECT * FROM finanzas.gastos_vehiculos;
+-- Sincronización garantizada por la BD: los gastos (tabla plana, fuente de verdad)
+-- alimentan facturas_recibidas (capa analítica) vía triggers AFTER.
+CREATE OR REPLACE FUNCTION finanzas.gastos_sync_fr() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE v_base NUMERIC; v_cuota NUMERIC; v_ret NUMERIC; v_id BIGINT;
 BEGIN
+  IF TG_OP = 'DELETE' THEN
+    DELETE FROM finanzas.facturas_recibidas WHERE gasto_origen = 'gastos:' || OLD.id;
+    RETURN OLD;
+  END IF;
   v_base := CASE WHEN COALESCE(NEW.iva,0) > 0 THEN round(COALESCE(NEW.importe,0) / (1 + NEW.iva/100.0), 2) ELSE COALESCE(NEW.importe,0) END;
   v_cuota := round(COALESCE(NEW.importe,0) - v_base, 2);
   v_ret := CASE WHEN COALESCE(NEW.retencion,0) > 0 THEN round(v_base * NEW.retencion/100.0, 2) ELSE 0 END;
-  INSERT INTO finanzas.facturas_recibidas (proveedor_id, fecha, base, cuota_iva, retencion, total, estado, origen, terminal, categoria)
-  VALUES (NEW.proveedor_id, NEW.fecha, v_base, v_cuota, v_ret, COALESCE(NEW.importe,0),
-          CASE WHEN NEW.pagado THEN 'pagada' ELSE 'pendiente' END, 'viaje', NEW.terminal, NEW.categoria)
-  RETURNING id INTO v_id;
-  INSERT INTO finanzas.facturas_recibidas_lineas (factura_id, categoria_id, cuenta, viaje_id, concepto, base, iva_pct)
-  VALUES (v_id, NEW.categoria_id, NEW.cuenta, NEW.trip_id, NEW.concepto, v_base, NEW.iva);
-  NEW.id := v_id;
+  IF TG_OP = 'INSERT' THEN
+    INSERT INTO finanzas.facturas_recibidas (proveedor_id, fecha, base, cuota_iva, retencion, total, estado, origen, terminal, categoria, gasto_origen)
+    VALUES (NEW.proveedor_id, NEW.fecha, v_base, v_cuota, v_ret, COALESCE(NEW.importe,0),
+            CASE WHEN NEW.pagado THEN 'pagada' ELSE 'pendiente' END, 'viaje', NEW.terminal, NEW.categoria,
+            'gastos:' || NEW.id)
+    RETURNING id INTO v_id;
+    INSERT INTO finanzas.facturas_recibidas_lineas (factura_id, categoria_id, cuenta, viaje_id, concepto, base, iva_pct)
+    VALUES (v_id, NEW.categoria_id, NEW.cuenta, NEW.trip_id, NEW.concepto, v_base, NEW.iva);
+  ELSE
+    UPDATE finanzas.facturas_recibidas SET proveedor_id=NEW.proveedor_id, fecha=NEW.fecha,
+      base=v_base, cuota_iva=v_cuota, retencion=v_ret, total=COALESCE(NEW.importe,0),
+      estado=CASE WHEN NEW.pagado THEN 'pagada' ELSE 'pendiente' END, terminal=NEW.terminal, categoria=NEW.categoria
+    WHERE gasto_origen = 'gastos:' || NEW.id;
+    UPDATE finanzas.facturas_recibidas_lineas SET viaje_id=NEW.trip_id, categoria_id=NEW.categoria_id,
+      cuenta=NEW.cuenta, concepto=NEW.concepto, base=v_base, iva_pct=NEW.iva
+    WHERE factura_id = (SELECT id FROM finanzas.facturas_recibidas WHERE gasto_origen = 'gastos:' || NEW.id);
+  END IF;
   RETURN NEW;
 END $$;
-CREATE OR REPLACE FUNCTION finanzas.gastos_view_upd() RETURNS trigger LANGUAGE plpgsql AS $$
-DECLARE v_base NUMERIC; v_cuota NUMERIC; v_ret NUMERIC;
-BEGIN
-  v_base := CASE WHEN COALESCE(NEW.iva,0) > 0 THEN round(COALESCE(NEW.importe,0) / (1 + NEW.iva/100.0), 2) ELSE COALESCE(NEW.importe,0) END;
-  v_cuota := round(COALESCE(NEW.importe,0) - v_base, 2);
-  v_ret := CASE WHEN COALESCE(NEW.retencion,0) > 0 THEN round(v_base * NEW.retencion/100.0, 2) ELSE 0 END;
-  UPDATE finanzas.facturas_recibidas SET proveedor_id=NEW.proveedor_id, fecha=NEW.fecha,
-    base=v_base, cuota_iva=v_cuota, retencion=v_ret, total=COALESCE(NEW.importe,0),
-    estado=CASE WHEN NEW.pagado THEN 'pagada' ELSE 'pendiente' END, terminal=NEW.terminal, categoria=NEW.categoria
-  WHERE id = OLD.id;
-  UPDATE finanzas.facturas_recibidas_lineas SET viaje_id=NEW.trip_id, categoria_id=NEW.categoria_id,
-    cuenta=NEW.cuenta, concepto=NEW.concepto, base=v_base, iva_pct=NEW.iva
-  WHERE factura_id = OLD.id;
-  RETURN NEW;
-END $$;
-CREATE OR REPLACE FUNCTION finanzas.gastos_view_del() RETURNS trigger LANGUAGE plpgsql AS $$
-BEGIN
-  DELETE FROM finanzas.facturas_recibidas WHERE id = OLD.id;
-  RETURN OLD;
-END $$;
-CREATE OR REPLACE FUNCTION finanzas.gastos_veh_view_ins() RETURNS trigger LANGUAGE plpgsql AS $$
+DROP TRIGGER IF EXISTS gastos_sync_fr ON finanzas.gastos;
+CREATE TRIGGER gastos_sync_fr AFTER INSERT OR UPDATE OR DELETE ON finanzas.gastos FOR EACH ROW EXECUTE FUNCTION finanzas.gastos_sync_fr();
+CREATE OR REPLACE FUNCTION finanzas.gastos_veh_sync_fr() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE v_base NUMERIC; v_cuota NUMERIC; v_id BIGINT;
 BEGIN
+  IF TG_OP = 'DELETE' THEN
+    DELETE FROM finanzas.facturas_recibidas WHERE gasto_origen = 'gastos_vehiculos:' || OLD.id;
+    RETURN OLD;
+  END IF;
   v_base := COALESCE(NEW.base_imponible,0);
   IF v_base <= 0 AND COALESCE(NEW.importe_total,0) > 0 THEN
     v_base := CASE WHEN COALESCE(NEW.iva,0) > 0 THEN round(NEW.importe_total / (1 + NEW.iva/100.0), 2) ELSE NEW.importe_total END;
   END IF;
   v_cuota := round(COALESCE(NEW.importe_total,0) - v_base, 2);
-  INSERT INTO finanzas.facturas_recibidas (proveedor_id, numero_proveedor, fecha, base, cuota_iva, total, estado, origen, categoria, storage_key)
-  VALUES (NEW.proveedor_id, NEW.factura_ref, NEW.fecha, v_base, v_cuota, COALESCE(NEW.importe_total,0),
-          NEW.estado_pago, 'vehiculo', NEW.tipo, NEW.storage_key)
-  RETURNING id INTO v_id;
-  INSERT INTO finanzas.facturas_recibidas_lineas (factura_id, cuenta, vehiculo_id, concepto, litros, base, iva_pct)
-  VALUES (v_id, NEW.cuenta_contable_gasto, NEW.vehiculo_id, COALESCE(NEW.factura_ref, NEW.tipo), COALESCE(NEW.litros,0), v_base, NEW.iva);
-  NEW.id := v_id;
+  IF TG_OP = 'INSERT' THEN
+    INSERT INTO finanzas.facturas_recibidas (proveedor_id, numero_proveedor, fecha, base, cuota_iva, total, estado, origen, categoria, storage_key, gasto_origen)
+    VALUES (NEW.proveedor_id, NEW.factura_ref, NEW.fecha, v_base, v_cuota, COALESCE(NEW.importe_total,0),
+            NEW.estado_pago, 'vehiculo', NEW.tipo, NEW.storage_key, 'gastos_vehiculos:' || NEW.id)
+    RETURNING id INTO v_id;
+    INSERT INTO finanzas.facturas_recibidas_lineas (factura_id, cuenta, vehiculo_id, concepto, litros, base, iva_pct)
+    VALUES (v_id, NEW.cuenta_contable_gasto, NEW.vehiculo_id, COALESCE(NEW.factura_ref, NEW.tipo), COALESCE(NEW.litros,0), v_base, NEW.iva);
+  ELSE
+    UPDATE finanzas.facturas_recibidas SET proveedor_id=NEW.proveedor_id, numero_proveedor=NEW.factura_ref,
+      fecha=NEW.fecha, base=v_base, cuota_iva=v_cuota, total=COALESCE(NEW.importe_total,0), estado=NEW.estado_pago,
+      categoria=NEW.tipo, storage_key=NEW.storage_key
+    WHERE gasto_origen = 'gastos_vehiculos:' || NEW.id;
+    UPDATE finanzas.facturas_recibidas_lineas SET vehiculo_id=NEW.vehiculo_id,
+      cuenta=NEW.cuenta_contable_gasto, litros=COALESCE(NEW.litros,0), base=v_base, iva_pct=NEW.iva
+    WHERE factura_id = (SELECT id FROM finanzas.facturas_recibidas WHERE gasto_origen = 'gastos_vehiculos:' || NEW.id);
+  END IF;
   RETURN NEW;
 END $$;
-CREATE OR REPLACE FUNCTION finanzas.gastos_veh_view_upd() RETURNS trigger LANGUAGE plpgsql AS $$
-BEGIN
-  UPDATE finanzas.facturas_recibidas SET proveedor_id=NEW.proveedor_id, numero_proveedor=NEW.factura_ref,
-    fecha=NEW.fecha, estado=NEW.estado_pago, categoria=NEW.tipo
-  WHERE id = OLD.id;
-  UPDATE finanzas.facturas_recibidas_lineas SET vehiculo_id=NEW.vehiculo_id,
-    cuenta=NEW.cuenta_contable_gasto, litros=COALESCE(NEW.litros,0)
-  WHERE factura_id = OLD.id;
-  RETURN NEW;
-END $$;
-CREATE OR REPLACE FUNCTION finanzas.gastos_veh_view_del() RETURNS trigger LANGUAGE plpgsql AS $$
-BEGIN
-  DELETE FROM finanzas.facturas_recibidas WHERE id = OLD.id;
-  RETURN OLD;
-END $$;
-DROP TRIGGER IF EXISTS gastos_view_ins ON gastos;
-CREATE TRIGGER gastos_view_ins INSTEAD OF INSERT ON gastos FOR EACH ROW EXECUTE FUNCTION finanzas.gastos_view_ins();
-DROP TRIGGER IF EXISTS gastos_view_upd ON gastos;
-CREATE TRIGGER gastos_view_upd INSTEAD OF UPDATE ON gastos FOR EACH ROW EXECUTE FUNCTION finanzas.gastos_view_upd();
-DROP TRIGGER IF EXISTS gastos_view_del ON gastos;
-CREATE TRIGGER gastos_view_del INSTEAD OF DELETE ON gastos FOR EACH ROW EXECUTE FUNCTION finanzas.gastos_view_del();
-DROP TRIGGER IF EXISTS gastos_veh_view_ins ON gastos_vehiculos;
-CREATE TRIGGER gastos_veh_view_ins INSTEAD OF INSERT ON gastos_vehiculos FOR EACH ROW EXECUTE FUNCTION finanzas.gastos_veh_view_ins();
-DROP TRIGGER IF EXISTS gastos_veh_view_upd ON gastos_vehiculos;
-CREATE TRIGGER gastos_veh_view_upd INSTEAD OF UPDATE ON gastos_vehiculos FOR EACH ROW EXECUTE FUNCTION finanzas.gastos_veh_view_upd();
-DROP TRIGGER IF EXISTS gastos_veh_view_del ON gastos_vehiculos;
-CREATE TRIGGER gastos_veh_view_del INSTEAD OF DELETE ON gastos_vehiculos FOR EACH ROW EXECUTE FUNCTION finanzas.gastos_veh_view_del();
+DROP TRIGGER IF EXISTS gastos_veh_sync_fr ON finanzas.gastos_vehiculos;
+CREATE TRIGGER gastos_veh_sync_fr AFTER INSERT OR UPDATE OR DELETE ON finanzas.gastos_vehiculos FOR EACH ROW EXECUTE FUNCTION finanzas.gastos_veh_sync_fr();
 CREATE OR REPLACE VIEW costes_fijos AS SELECT * FROM finanzas.costes_fijos;
 CREATE OR REPLACE VIEW liquidaciones AS SELECT * FROM finanzas.liquidaciones;
 CREATE OR REPLACE VIEW vehiculos AS
@@ -842,6 +831,10 @@ def _db():
             cur.execute("ALTER TABLE files ADD COLUMN IF NOT EXISTS vehiculo_id TEXT")
             cur.execute("ALTER TABLE finanzas.asientos ADD COLUMN IF NOT EXISTS origen_id TEXT")
             cur.execute("ALTER TABLE mensajes ADD COLUMN IF NOT EXISTS terminal TEXT")
+            cur.execute("ALTER TABLE finanzas.gastos_vehiculos ADD COLUMN IF NOT EXISTS base_imponible NUMERIC(12,2) DEFAULT 0")
+            cur.execute("ALTER TABLE finanzas.gastos_vehiculos ADD COLUMN IF NOT EXISTS iva NUMERIC(6,2) DEFAULT 21")
+            cur.execute("ALTER TABLE finanzas.gastos_vehiculos ADD COLUMN IF NOT EXISTS cuenta_contable_gasto TEXT")
+            cur.execute("ALTER TABLE finanzas.gastos_vehiculos ADD COLUMN IF NOT EXISTS estado_pago TEXT DEFAULT 'Pendiente'")
             cur.execute("ALTER TABLE flota.mantenimientos ADD COLUMN IF NOT EXISTS fecha_fin TEXT")
             cur.execute("ALTER TABLE empleados ADD COLUMN IF NOT EXISTS caducidad_carnet TEXT")
             cur.execute("ALTER TABLE empleados ADD COLUMN IF NOT EXISTS caducidad_cap TEXT")
@@ -861,6 +854,10 @@ def _db():
             cur.execute("ALTER TABLE finanzas.facturas ADD COLUMN IF NOT EXISTS margen NUMERIC(12,2) DEFAULT 0")
             cur.execute("ALTER TABLE finanzas.liquidaciones ADD COLUMN IF NOT EXISTS conductor_id INTEGER")
             cur.execute("ALTER TABLE finanzas.liquidaciones ADD COLUMN IF NOT EXISTS viaje_id TEXT")
+            cur.execute("ALTER TABLE finanzas.gastos ADD COLUMN IF NOT EXISTS trip_id TEXT")
+            cur.execute("ALTER TABLE finanzas.gastos ADD COLUMN IF NOT EXISTS iva NUMERIC(5,2) DEFAULT 21")
+            cur.execute("ALTER TABLE finanzas.gastos ADD COLUMN IF NOT EXISTS retencion NUMERIC(5,2) DEFAULT 0")
+            cur.execute("ALTER TABLE finanzas.gastos ADD COLUMN IF NOT EXISTS pagado BOOLEAN DEFAULT false")
             cur.execute("ALTER TABLE operaciones.trips ADD COLUMN IF NOT EXISTS peaje_km NUMERIC(10,1) DEFAULT 0")
             cur.execute("ALTER TABLE operaciones.trips ADD COLUMN IF NOT EXISTS peaje_estimado NUMERIC(10,2) DEFAULT 0")
             cur.execute("ALTER TABLE operaciones.trips ADD COLUMN IF NOT EXISTS peaje_fuente TEXT")
@@ -925,6 +922,8 @@ def _db():
                     (c,),
                 )
             cur.execute("ALTER TABLE categorias_gasto ADD COLUMN IF NOT EXISTS cuenta TEXT")
+            cur.execute("ALTER TABLE finanzas.gastos ADD COLUMN IF NOT EXISTS cuenta TEXT")
+            cur.execute("ALTER TABLE finanzas.facturas_recibidas ADD COLUMN IF NOT EXISTS gasto_origen TEXT")
             cur.execute("ALTER TABLE finanzas.facturas_recibidas ADD COLUMN IF NOT EXISTS terminal TEXT")
             cur.execute("ALTER TABLE finanzas.facturas_recibidas ADD COLUMN IF NOT EXISTS categoria TEXT")
             cur.execute("ALTER TABLE finanzas.facturas_recibidas ADD COLUMN IF NOT EXISTS storage_key TEXT")
