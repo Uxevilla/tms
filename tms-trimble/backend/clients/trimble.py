@@ -2,7 +2,7 @@
 from fastapi import HTTPException
 
 import config
-from db import _db, _tenant_ctx
+from db import _db, _tenant_ctx, _valores_proveedor
 from soap_client import TrimbleClient
 
 _client_cache = {}
@@ -17,19 +17,12 @@ def get_client():
         c = config.DEFAULT_TRIMBLE_CUSTOMER
         term = config.DEFAULT_TRIMBLE_TERMINAL
     else:
-        conn = _db()
-        try:
-            rows = conn.execute(
-                "SELECT key, value FROM config WHERE key IN (?,?,?,?)",
-                ("trimble_username", "trimble_password", "trimble_customer", "trimble_terminal"),
-            ).fetchall()
-        finally:
-            conn.close()
-        cfg = {r["key"]: r["value"] for r in rows}
-        u = cfg.get("trimble_username", "") or ""
-        p = cfg.get("trimble_password", "") or ""
-        c = cfg.get("trimble_customer", "") or ""
-        term = cfg.get("trimble_terminal", "") or ""
+        with _db() as conn:
+            cfg = _valores_proveedor(conn, "trimble")
+        u = cfg.get("username", "") or ""
+        p = cfg.get("password", "") or ""
+        c = cfg.get("customer", "") or ""
+        term = cfg.get("terminal", "") or ""
         if not u or not c:
             raise HTTPException(status_code=503, detail={"error": "Trimble no configurado para este cliente"})
     key = (u, c)

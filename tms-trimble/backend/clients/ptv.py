@@ -6,7 +6,16 @@ import urllib.request
 
 import config
 from core import _is_toll_step
-from db import _get_config
+from db import _db, _tenant_ctx, _valores_proveedor
+
+
+def _ptv_api_key() -> str:
+    """API key de PTV del tenant actual (fallback a .env para el caso sin tenant)."""
+    t = _tenant_ctx.get()
+    if not t:
+        return config.DEFAULT_PTV_API_KEY
+    with _db() as conn:
+        return _valores_proveedor(conn, "ptv").get("api_key", "") or config.DEFAULT_PTV_API_KEY
 
 
 def _ptv_route(puntos, veh, conduccion_acumulada_min=0.0):
@@ -18,7 +27,7 @@ def _ptv_route(puntos, veh, conduccion_acumulada_min=0.0):
     Devuelve dict {'distance_km', 'travel_time_min', 'traffic_delay_min', 'toll',
     'currency', 'polyline', 'traffic_events', 'schedule'} o None si falla.
     """
-    if not _get_config("ptv_api_key", config.DEFAULT_PTV_API_KEY) or len(puntos) < 2:
+    if not _ptv_api_key() or len(puntos) < 2:
         return None
     waypoints = [{"onRoad": {"latitude": p["lat"], "longitude": p["lng"]}} for p in puntos]
     profile = veh.get("ptv_profile") or "EUR_TRAILER_TRUCK"
@@ -45,7 +54,7 @@ def _ptv_route(puntos, veh, conduccion_acumulada_min=0.0):
         req = urllib.request.Request(
             url, method="POST",
             data=json.dumps(body).encode(),
-            headers={"Content-Type": "application/json", "apiKey": _get_config("ptv_api_key", config.DEFAULT_PTV_API_KEY)},
+            headers={"Content-Type": "application/json", "apiKey": _ptv_api_key()},
         )
         with urllib.request.urlopen(req, timeout=12) as r:
             data = json.loads(r.read().decode())

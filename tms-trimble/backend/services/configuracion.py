@@ -120,6 +120,31 @@ def _invalida_actividades():
         _act_cache.pop(dbname, None)
 
 
+def _sync_valor_integracion(conn, config_key, valor):
+    """Sincroniza una clave de `config` (si es de integración) a `integracion_valores`.
+
+    Puente durante la transición: la UI antigua (POST /api/config) sigue escribiendo en
+    `config`; esto replica el valor a `integracion_valores` para que los clientes lo lean.
+    """
+    m = MIGRACION_CONFIG.get(config_key)
+    if not m:
+        return
+    codigo, campo_clave = m
+    prov = conn.execute("SELECT id FROM integracion_proveedores WHERE codigo=?", (codigo,)).fetchone()
+    if not prov:
+        return
+    campo = conn.execute(
+        "SELECT id FROM integracion_campos WHERE proveedor_id=? AND clave=?",
+        (prov["id"], campo_clave),
+    ).fetchone()
+    if campo:
+        conn.execute(
+            "INSERT INTO integracion_valores (campo_id, valor) VALUES (?,?) "
+            "ON CONFLICT (campo_id) DO UPDATE SET valor=EXCLUDED.valor",
+            (campo["id"], valor),
+        )
+
+
 def _conn(dbname):
     return psycopg2.connect(host=config.DB_HOST, port=config.DB_PORT, dbname=dbname,
                             user=config.DB_USER, password=config.DB_PASSWORD)

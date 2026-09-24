@@ -610,6 +610,18 @@ def _get_config(key, default=""):
     return row["value"] if row else default
 
 
+def _valores_proveedor(conn, codigo):
+    """{clave: valor} de los valores de configuración de un proveedor de integración."""
+    rows = conn.execute(
+        "SELECT c.clave, v.valor FROM integracion_proveedores p "
+        "JOIN integracion_campos c ON c.proveedor_id = p.id "
+        "LEFT JOIN integracion_valores v ON v.campo_id = c.id "
+        "WHERE p.codigo=?",
+        (codigo,),
+    ).fetchall()
+    return {r["clave"]: (r["valor"] or "") for r in rows}
+
+
 def get_conn():
     """Dependencia FastAPI: una conexión por request, cerrada SIEMPRE (try/finally).
 
@@ -623,4 +635,4 @@ def get_conn():
         conn.close()
 
 
-__all__ = ["_tenant_ctx", "_usuario_ctx", "_schema_done", "_Conn", "_SCHEMA", "_db", "_get_config", "get_conn"]
+__all__ = ["_tenant_ctx", "_usuario_ctx", "_schema_done", "_Conn", "_SCHEMA", "_db", "_get_config", "_valores_proveedor", "get_conn"]

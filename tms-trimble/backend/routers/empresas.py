@@ -20,6 +20,7 @@ from clients.trimble import get_client, _client_cache
 from clients.transfollow import get_transfollow_client, _tf_cache
 from clients.ptv import _ptv_route, _calc_ruta, _haversine_km
 from clients.geocoding import _buscar_photon, reverse_geocode
+from services.configuracion import _sync_valor_integracion
 from services.contabilidad import _categoria_cuenta, _next_referencia, _auditar, _post_asiento, _registrar_asiento, _gasto_subcontrata, _facturar_viaje, _norm_fecha, _norm_total
 from services.viajes import _save_trip, _save_tramos, _save_paradas, _upsert_direccion, _peaje_rate, _vehiculo_peaje_categoria, _vehiculos_en_curso, _puntos_del_viaje, _build_trip, _calcular_ruta, _viaje_payload, _guardar_documentos_pedido, _valorar_viaje, _crear_pedido, _enviar_viaje
 from services.telemetria import _get_redis, _set_viaje_activo, _del_viaje_activo, _json_safe, _viajes_snapshot
@@ -160,10 +161,14 @@ def set_config(req: dict, conn = Depends(get_conn)):
             "INSERT INTO config (key, value) VALUES (?,?) ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value",
             (k, str(v)),
         )
+        # dual-write: si es una clave de integración, replicar a integracion_valores
+        _sync_valor_integracion(conn, k, str(v))
     conn.commit()
-    # Si cambian credenciales Trimble, invalidar el cliente SOAP cacheado
+    # Invalidar clientes cacheados cuando cambian sus credenciales
     if any(k.startswith("trimble_") for k in req.keys()):
         _client_cache.clear()
+    if any(k.startswith("transfollow_") for k in req.keys()):
+        _tf_cache.clear()
     return {"ok": True}
 
 

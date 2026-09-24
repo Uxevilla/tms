@@ -7,7 +7,7 @@ from fastapi import APIRouter, HTTPException, Depends
 from fastapi.responses import Response
 
 import config
-from db import _db, get_conn, _get_config
+from db import _db, get_conn, _get_config, _valores_proveedor
 from security import require_role
 import re
 from core import *
@@ -1023,6 +1023,17 @@ def _enviar_email(para, asunto, cuerpo, adjuntos=None):
     user = _get_config("smtp_user", "")
     pwd = _get_config("smtp_password", "")
     from_addr = _get_config("smtp_from", "") or user
+    # Preferir la config de integración (integracion_valores) si existe.
+    try:
+        with _db() as conn:
+            smtp = _valores_proveedor(conn, "smtp")
+        host = smtp.get("host", "") or host
+        port = int(smtp.get("port") or port)
+        user = smtp.get("user", "") or user
+        pwd = smtp.get("password", "") or pwd
+        from_addr = smtp.get("from", "") or user
+    except Exception:
+        pass
     if not host or not user:
         raise HTTPException(status_code=400, detail={"error": "Configura la cuenta de correo saliente (SMTP) en Configuración."})
 
