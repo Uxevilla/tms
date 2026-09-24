@@ -767,7 +767,7 @@ export function OperacionesDashboard() {
       if (!api) return;
 
       if (evt.tipo === "creado") {
-        const existe = rowsRef.current.has(evt.viaje.id);
+        const existe = !!api.getRowNode(evt.viaje.id);
         rowsRef.current.set(evt.viaje.id, evt.viaje);
         api.applyTransaction(existe ? { update: [evt.viaje] } : { add: [evt.viaje] });
         if (!existe) flashRow(api, evt.viaje.id);
@@ -776,12 +776,14 @@ export function OperacionesDashboard() {
 
       if (evt.tipo === "eliminado") {
         rowsRef.current.delete(evt.id);
-        api.applyTransaction({ remove: [{ id: evt.id } as Viaje] });
+        if (api.getRowNode(evt.id)) {
+          api.applyTransaction({ remove: [{ id: evt.id } as Viaje] });
+        }
         return;
       }
 
       const prev = rowsRef.current.get(evt.id);
-      if (!prev) return;
+      if (!prev || !api.getRowNode(evt.id)) return;
 
       if (evt.tipo === "estado") {
         const merged: Viaje = { ...prev, estado: evt.estado };
