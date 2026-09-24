@@ -7,6 +7,21 @@ async function abrirViajes(page: Page) {
   await expect(page.getByRole("button", { name: /Nuevo viaje/i })).toBeVisible();
 }
 
+// Teselas del minimapa (OSM/ArcGIS): se simulan con un PNG 1×1 para que el settle de
+// Playwright no se quede esperando peticiones externas (mismas que smoke/torre).
+const TILE_HOSTS = ["tile.openstreetmap.org", "server.arcgisonline.com"];
+const TILE_PNG = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
+  "base64",
+);
+test.beforeEach(async ({ page }) => {
+  for (const host of TILE_HOSTS) {
+    await page.route(`**${host}/**`, (route) =>
+      route.fulfill({ status: 200, contentType: "image/png", body: TILE_PNG }),
+    );
+  }
+});
+
 // Conteo de viajes en BD (verificación del "crear viaje" por total, no por texto).
 async function countTrips(): Promise<number> {
   const c = new Client({
@@ -46,9 +61,8 @@ test.describe("Viajes (Fase 4)", () => {
     await abrirViajes(page);
     const t0 = Date.now();
 
-    // 1. Abrir el Sheet con el atajo "n" (down/up crudos: sin el settle que espera las llamadas del Sheet).
-    await page.keyboard.down("n");
-    await page.keyboard.up("n");
+    // 1. Abrir el Sheet con el atajo "n".
+    await page.keyboard.press("n");
     await expect(page.getByPlaceholder("Buscar cliente…")).toBeVisible({ timeout: 15000 });
 
     // 2. Cliente → focus + type + Enter.
@@ -127,8 +141,7 @@ test.describe("Viajes (Fase 4)", () => {
 
   test("validación en vivo: el botón se habilita solo con los obligatorios", async ({ page }) => {
     await abrirViajes(page);
-    await page.keyboard.down("n");
-    await page.keyboard.up("n");
+    await page.keyboard.press("n");
     await expect(page.getByPlaceholder("Buscar cliente…")).toBeVisible({ timeout: 15000 });
 
     // Sin rellenar nada, el botón de guardar está deshabilitado.
