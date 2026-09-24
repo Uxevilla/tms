@@ -655,6 +655,10 @@ BEGIN
       total = NEW.importe
     WHERE gasto_origen = 'gastos:' || NEW.id;
   END IF;
+  IF NEW.pagado IS DISTINCT FROM OLD.pagado THEN
+    UPDATE finanzas.facturas_recibidas SET estado = CASE WHEN NEW.pagado THEN 'pagada' ELSE 'pendiente' END
+    WHERE gasto_origen = 'gastos:' || NEW.id;
+  END IF;
   RETURN NEW;
 END $$;
 DROP TRIGGER IF EXISTS gastos_sync_fr ON finanzas.gastos;

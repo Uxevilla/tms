@@ -257,10 +257,14 @@ def _costes_reales_viaje(trip, conn=None):
     if conn is None:
         with _db() as conn:
             return _costes_reales_viaje(trip, conn)
-    """Costes reales del viaje: peajes estimados + gastos vinculados exactamente al viaje."""
+    """Costes reales del viaje: peajes estimados + gastos vinculados exactamente al viaje
+    (base imponible, sin IVA soportado que se recupera). Lee de facturas_recibidas (unificado)."""
     peaje = float(trip["peaje_estimado"] or 0)
     row = conn.execute(
-        "SELECT COALESCE(SUM(importe), 0) AS total FROM gastos WHERE trip_id=?",
+        "SELECT COALESCE(SUM(frl.base), 0) AS total "
+        "FROM finanzas.facturas_recibidas_lineas frl "
+        "JOIN finanzas.facturas_recibidas fr ON fr.id = frl.factura_id "
+        "WHERE frl.viaje_id=? AND fr.estado <> 'anulada'",
         (trip["id"],),
     ).fetchone()
     gastos = float(row["total"] or 0) if row else 0.0
