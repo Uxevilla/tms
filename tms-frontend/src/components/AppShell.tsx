@@ -1,5 +1,5 @@
-import { Suspense, useEffect, useState } from "react";
-import { Outlet, useNavigate, useRouterState } from "@tanstack/react-router";
+import { lazy, Suspense, useEffect, useState } from "react";
+import { Outlet, useNavigate, useRouterState, useSearch } from "@tanstack/react-router";
 
 import { SocketProvider, useSocketStatus } from "../context/SocketContext";
 import { Sidebar } from "./Sidebar";
@@ -8,6 +8,9 @@ import { CommandPalette } from "./CommandPalette";
 import { WsQueryAdapter } from "./WsQueryAdapter";
 import { TooltipProvider } from "./ui/tooltip";
 import { clearToken, getToken } from "../auth";
+
+// El panel de entidad carga en diferido: solo se descarga al abrir ?panel=….
+const EntityPanel = lazy(() => import("./EntityPanel").then((m) => ({ default: m.EntityPanel })));
 
 /**
  * Layout autenticado (esqueleto nuevo): barra lateral plegable + cabecera +
@@ -29,6 +32,8 @@ function AppShellInner() {
   const [paleta, setPaleta] = useState(false);
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const [mostrarAviso, setMostrarAviso] = useState(false);
+  const { panel } = useSearch({ from: "/app" });
+  const cerrarPanel = () => navigate({ search: { panel: undefined } as never });
 
   // Ctrl/⌘+K abre/cierra la paleta de comandos.
   useEffect(() => {
@@ -64,6 +69,18 @@ function AppShellInner() {
     return () => window.removeEventListener("tms:sesion-caducada", onCaducada);
   }, [navigate]);
 
+  // Panel de entidad desde cualquier pantalla: cualquier elemento con [data-panel="tipo:id"]
+  // (celdas de las tablas antiguas, marcadores, avisos…) abre el panel sin cambiar de ruta.
+  useEffect(() => {
+    const onClick = (e: MouseEvent) => {
+      const el = (e.target as HTMLElement | null)?.closest?.("[data-panel]");
+      const panel = el?.getAttribute("data-panel");
+      if (panel) navigate({ search: { panel } as never });
+    };
+    document.addEventListener("click", onClick);
+    return () => document.removeEventListener("click", onClick);
+  }, [navigate]);
+
   const logout = () => {
     clearToken();
     navigate({ to: "/login" });
@@ -88,6 +105,11 @@ function AppShellInner() {
         </div>
         <CommandPalette open={paleta} onOpenChange={setPaleta} />
         <WsQueryAdapter />
+        {panel && (
+          <Suspense fallback={null}>
+            <EntityPanel panel={panel} onClose={cerrarPanel} />
+          </Suspense>
+        )}
       </div>
     </TooltipProvider>
   );

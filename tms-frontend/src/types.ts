@@ -86,3 +86,49 @@ export type ViajeEvent =
 export type WsStatus = "conectando" | "conectado" | "desconectado";
 
 export type Seccion = "operaciones" | "vehiculos" | "rrhh" | "contabilidad" | "kpi" | "gastos" | "documentos" | "mensajeria" | "configuracion";
+
+// ---------------------------------------------------------------- Torre de control (Fase 2)
+
+export type AtencionTipo =
+  | "viaje_retrasado"
+  | "conduccion_limite"
+  | "caducidad"
+  | "viaje_sin_facturar"
+  | "gasto_sin_imputar"
+  | "mensaje_sin_responder"
+  | "mantenimiento_vencido"
+  | "envio_trimble_fallido";
+
+export type Severidad = "critico" | "aviso" | "info";
+
+export interface AtencionItem {
+  id: string;
+  tipo: AtencionTipo;
+  severidad: Severidad;
+  titulo: string;
+  detalle: string;
+  entidad: { tipo: "vehiculo" | "viaje" | "conductor" | "factura" | "gasto"; id: string | number; codigo?: string };
+  acciones: { id: string; label: string }[];
+  ts: string;
+}
+
+export interface AtencionResumen {
+  critico: number;
+  aviso: number;
+  info: number;
+  facturacion_pendiente?: number;
+}
+
+export interface AtencionRespuesta {
+  items: AtencionItem[];
+  resumen: AtencionResumen;
+}
+
+export type EntidadTipo = "vehiculo" | "viaje" | "conductor" | "cliente" | "proveedor" | "factura";
+
+export interface BuscarResultado {
+  tipo: EntidadTipo;
+  id: string;
+  titulo: string;
+  subtitulo: string;
+}

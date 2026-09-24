@@ -23,6 +23,8 @@ const GastosDashboard = lazy(() => import("./components/GastosDashboard").then((
 const DocumentosDashboard = lazy(() => import("./components/DocumentosDashboard").then((m) => ({ default: m.DocumentosDashboard })));
 const MensajeriaDashboard = lazy(() => import("./components/MensajeriaDashboard").then((m) => ({ default: m.MensajeriaDashboard })));
 const ConfiguracionDashboard = lazy(() => import("./components/ConfiguracionDashboard").then((m) => ({ default: m.ConfiguracionDashboard })));
+const TorreDashboard = lazy(() => import("./components/TorreDashboard").then((m) => ({ default: m.TorreDashboard })));
+import { NotFound } from "./components/NotFound";
 
 function Placeholder({ titulo, fase }: { titulo: string; fase: string }) {
   return (
@@ -89,18 +91,27 @@ const loginRoute = createRoute({
 });
 
 // Layout autenticado (pathless)
+function validateAppSearch(search: Record<string, unknown>): { panel?: string } {
+  const panel = search.panel;
+  if (typeof panel === "string" && /^(vehiculo|viaje|conductor):.+$/.test(panel)) {
+    return { panel };
+  }
+  return {};
+}
+
 const appRoute = createRoute({
   getParentRoute: () => rootRoute,
   id: "app",
   component: AppShell,
   beforeLoad: authGuard,
+  validateSearch: validateAppSearch,
 });
 
 // Secciones
 const torreRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "/torre",
-  component: () => <Placeholder titulo="Torre de control" fase="Fase 2" />,
+  component: () => <TorreDashboard />,
 });
 const planificacionRoute = createRoute({
   getParentRoute: () => appRoute,
@@ -204,6 +215,8 @@ export const router = createRouter({
   // strict: los search params no devueltos por validateSearch se DESCARTAN
   // (si no, un ?redirect=//evil.com rechazado se conservaría como "desconocido").
   search: { strict: true },
+  // 404 propia para rutas que no coinciden con ninguna de las del árbol.
+  defaultNotFoundComponent: () => <NotFound />,
 });
 
 declare module "@tanstack/react-router" {

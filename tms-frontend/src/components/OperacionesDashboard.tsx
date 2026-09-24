@@ -15,6 +15,7 @@ import { REST_VIAJES, REST_CLIENTES, REST_CONDUCTORES, REST_DIRECCIONES, REST_VE
 import { BuscadorDireccion } from "./BuscadorDireccion";
 import { ChatViaje } from "./ChatViaje";
 import { DetalleViaje } from "./DetalleViaje";
+import { panelCell } from "./panelCell";
 import { api, ApiError } from "../api";
 import { MapContainer, TileLayer, Marker, Polyline, useMapEvents } from "react-leaflet";
 import L from "leaflet";
@@ -806,9 +807,9 @@ export function OperacionesDashboard() {
   const columnDefs = useMemo<ColDef<Viaje>[]>(
     () => [
       { field: "referencia", headerName: "Ref.", width: 90, pinned: "left" },
-      { field: "id", headerName: "ID", width: 140, pinned: "left" },
-      { field: "matricula", headerName: "Matrícula", width: 120, editable: true, cellClass: editableCell, cellEditor: "agSelectCellEditor", cellEditorParams: { values: Array.from(new Set(vehiculos.map((v) => v.matricula).filter(Boolean))) } },
-      { field: "conductor", headerName: "Conductor", width: 170, editable: true, cellClass: editableCell, cellEditor: "agSelectCellEditor", cellEditorParams: { values: Array.from(new Set(conductores.map((c) => c.nombre).filter(Boolean))) } },
+      { field: "id", headerName: "ID", width: 140, pinned: "left", cellRenderer: panelCell("viaje") },
+      { field: "matricula", headerName: "Matrícula", width: 120, editable: true, cellClass: editableCell, cellEditor: "agSelectCellEditor", cellEditorParams: { values: Array.from(new Set(vehiculos.map((v) => v.matricula).filter(Boolean))) }, cellRenderer: panelCell("vehiculo") },
+      { field: "conductor", headerName: "Conductor", width: 170, editable: true, cellClass: editableCell, cellEditor: "agSelectCellEditor", cellEditorParams: { values: Array.from(new Set(conductores.map((c) => c.nombre).filter(Boolean))) }, cellRenderer: panelCell("conductor", (d) => conductores.find((c) => c.nombre === d?.conductor)?.id) },
       { field: "origen", headerName: "Origen", flex: 1, minWidth: 150, editable: true, cellClass: editableCell, cellEditor: "agSelectCellEditor", cellEditorParams: { values: Array.from(new Set(direcciones.map((d) => d.nombre).filter(Boolean))) } },
       { field: "destino", headerName: "Destino", flex: 1, minWidth: 150, editable: true, cellClass: editableCell, cellEditor: "agSelectCellEditor", cellEditorParams: { values: Array.from(new Set(direcciones.map((d) => d.nombre).filter(Boolean))) } },
       { field: "itinerario", headerName: "Itinerario", flex: 1.2, minWidth: 180, valueFormatter: (p) => p.value || "—", cellClass: "text-xs text-slate-500" },

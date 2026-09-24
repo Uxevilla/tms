@@ -176,10 +176,11 @@ def crear_usuario(body: dict, conn=Depends(get_conn)):
         raise HTTPException(status_code=400, detail={"error": "usuario, password y rol son obligatorios"})
     if not conn.execute("SELECT nombre FROM sistema.roles WHERE nombre=?", (rol,)).fetchone():
         raise HTTPException(status_code=400, detail={"error": "Rol no existe"})
+    debe_cambiar = bool(b.get("debe_cambiar_clave", False))
     try:
         conn.execute(
-            "INSERT INTO config.usuarios (usuario, password_hash, rol, nombre) VALUES (?,?,?,?)",
-            (usuario, _hash_password(password), rol, nombre),
+            "INSERT INTO config.usuarios (usuario, password_hash, rol, nombre, debe_cambiar_clave) VALUES (?,?,?,?,?)",
+            (usuario, _hash_password(password), rol, nombre, debe_cambiar),
         )
     except Exception:
         raise HTTPException(status_code=409, detail={"error": "Ese usuario ya existe"})
@@ -200,6 +201,9 @@ def editar_usuario(uid: int, body: dict, conn=Depends(get_conn)):
     if "activo" in b:
         sets.append("activo=?")
         params.append(bool(b["activo"]))
+    if "debe_cambiar_clave" in b:
+        sets.append("debe_cambiar_clave=?")
+        params.append(bool(b["debe_cambiar_clave"]))
     if b.get("password"):
         sets.append("password_hash=?")
         params.append(_hash_password(b["password"]))

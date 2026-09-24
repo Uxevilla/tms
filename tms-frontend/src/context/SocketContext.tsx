@@ -24,7 +24,13 @@ export function SocketProvider({ children, token }: { children: ReactNode; token
 
   // Emite cada evento a todos los suscriptores (sin crear conexiones extra).
   const emit = useCallback((event: ViajeEvent) => {
-    listeners.current.forEach((fn) => fn(event));
+    listeners.current.forEach((fn) => {
+      try {
+        fn(event);
+      } catch (err) {
+        console.error("[ws] error en listener:", err);
+      }
+    });
   }, []);
 
   const status = useWebSocket<ViajeEvent>(`${WS_OPERACIONES}?token=${encodeURIComponent(token)}`, emit);

@@ -126,6 +126,9 @@ jobs:
           print("admin debe_cambiar_clave=false")
           PY
 
+          # Datos de prueba para los tests e2e de la Torre (8 clases + vehículo/viaje).
+          python scripts/seed_e2e.py
+
           # 2. Frontend: build + preview (con proxy /api y /ws al backend).
           cd ../../tms-frontend
           npm run build
