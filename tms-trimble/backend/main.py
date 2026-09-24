@@ -289,3 +289,5 @@ from routers.contabilidad import router as contabilidad_router
 app.include_router(contabilidad_router)
 from routers.rrhh import router as rrhh_router
 app.include_router(rrhh_router)
+from routers.torre import router as torre_router
+app.include_router(torre_router)
