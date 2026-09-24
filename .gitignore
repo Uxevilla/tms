@@ -30,3 +30,7 @@
 **/*.token
 **/data/
 **/history.db
+
+# Playwright
+**/test-results/
+**/playwright-report/
