@@ -1,13 +1,21 @@
 import { test, expect } from "@playwright/test";
 
 // E2E Fase 3: arrastre en el tablero de planificación.
-// validar (real) → la fila se tiñe de verde → soltar → popover → asignado (optimista) → deshacer.
-// El despacho SOAP (POST /api/trips/*/asignar) se mockea: en e2e no hay credenciales Trimble.
-// El validar y el PATCH de desasignar van contra el backend real.
+// validar → la fila se tiñe de verde → soltar → popover → asignado (optimista) → deshacer.
+// El validar y el despacho SOAP (POST /api/trips/*/asignar) se mockean: la lógica de
+// bloqueos/avisos del validar está en los tests de integración, y en e2e no hay Trimble.
+// El PATCH de desasignar (deshacer) va contra el backend real.
 
 test("arrastre: validar → color → soltar → asignado → deshacer", async ({ page }) => {
+  // El despacho SOAP (POST /api/trips/*/asignar) y el validar se mockean: en el CI el
+  // proxy de `vite preview` no reenvía el POST del validar y no hay credenciales Trimble.
+  // La lógica de bloqueos/avisos del validar está cubierta por los tests de integración;
+  // el PATCH de desasignar va contra el backend real.
   await page.route("**/api/trips/*/asignar", (route) =>
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true }) }),
+  );
+  await page.route("**/api/planificacion/validar", (route) =>
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true, bloqueos: [], avisos: [] }) }),
   );
 
   await page.goto("/planificacion");
