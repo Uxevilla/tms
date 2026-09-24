@@ -441,7 +441,7 @@ export function VehiculosDashboard() {
 
   const mantCols = useMemo<ColDef<Mantenimiento>[]>(
     () => [
-      { field: "matricula", headerName: "Vehículo", width: 120, valueGetter: (p) => p.data?.matricula || p.data?.vehiculo_id },
+      { field: "matricula", headerName: "Vehículo", width: 120, valueGetter: (p) => p.data?.matricula || p.data?.vehiculo_id, cellRenderer: panelCell<Mantenimiento>("vehiculo", (d) => d.matricula || d.vehiculo_id) },
       { field: "categoria", headerName: "Categoría", width: 130, valueGetter: (p) => cap(p.data?.categoria || "") },
       { field: "tipo", headerName: "Tipo", flex: 1, minWidth: 140 },
       { field: "fecha", headerName: "Fecha", width: 100 },
@@ -463,7 +463,7 @@ export function VehiculosDashboard() {
   );
 
   const alertaCols: ColDef<Alerta>[] = [
-    { field: "matricula", headerName: "Vehículo", width: 110, valueGetter: (p) => p.data?.matricula || p.data?.vehiculo_id },
+    { field: "matricula", headerName: "Vehículo", width: 120, valueGetter: (p) => p.data?.matricula || p.data?.vehiculo_id, cellRenderer: panelCell<Alerta>("vehiculo", (d) => d.matricula || d.vehiculo_id) },
     { field: "categoria", headerName: "Categoría", width: 120, valueGetter: (p) => cap(p.data?.categoria || "") },
     { field: "codigo", headerName: "Código", width: 130 },
     {

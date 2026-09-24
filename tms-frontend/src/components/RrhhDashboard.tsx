@@ -8,6 +8,7 @@ import { api, ApiError } from "../api";
 import { useAgGridState } from "../hooks/useAgGridState";
 import { PlanningCalendario } from "./PlanningCalendario";
 import { CaducidadRenderer } from "./CaducidadRenderer";
+import { panelCell } from "./panelCell";
 
 import { gridTheme, GRID_ROW_HEIGHT, GRID_HEADER_HEIGHT } from "../gridConfig";
 
@@ -19,6 +20,7 @@ interface Empleado {
   id: string;
   nombre: string;
   apellidos: string;
+  conductor_id?: number | null;
   dni: string;
   telefono: string;
   categoria: string;
@@ -151,7 +153,7 @@ export function RrhhDashboard() {
 
   const plantillaCols = useMemo<ColDef<Empleado>[]>(
     () => [
-      { headerName: "Nombre", flex: 1, minWidth: 180, valueGetter: (p) => `${p.data?.nombre ?? ""} ${p.data?.apellidos ?? ""}`.trim() },
+      { headerName: "Nombre", flex: 1, minWidth: 180, valueGetter: (p) => `${p.data?.nombre ?? ""} ${p.data?.apellidos ?? ""}`.trim(), cellRenderer: panelCell<Empleado>("conductor", (d) => d.conductor_id ?? undefined) },
       { field: "dni", headerName: "DNI", width: 120, editable: true, cellClass: editableCell },
       { field: "telefono", headerName: "Teléfono", width: 130, editable: true, cellClass: editableCell },
       { field: "email", headerName: "Email", width: 180, editable: true, cellClass: editableCell },

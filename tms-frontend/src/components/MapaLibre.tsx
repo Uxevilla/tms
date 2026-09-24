@@ -1,8 +1,10 @@
 import "maplibre-gl/dist/maplibre-gl.css";
 
+import { useEffect, useRef, useState } from "react";
 import maplibreWorkerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url";
 import { setWorkerUrl } from "maplibre-gl";
 import Map, { Marker, NavigationControl } from "react-map-gl/maplibre";
+import type { MapRef } from "react-map-gl/maplibre";
 import type { StyleSpecification } from "maplibre-gl";
 
 // Vite no bundlea el worker de maplibre por defecto; lo resolvemos explícitamente.
@@ -91,9 +93,30 @@ interface MapaLibreProps {
 
 /** Mapa en vivo (MapLibre) con los camiones coloreados por estado y orientados según heading. */
 export function MapaLibre({ vehiculos, onSelect }: MapaLibreProps) {
+  const mapRef = useRef<MapRef>(null);
+  const [listo, setListo] = useState(false);
+
+  // Ajustar el encuadre a los vehículos al cargar (y cuando cambie el listado).
+  useEffect(() => {
+    if (!listo) return;
+    const conPos = vehiculos.filter((v) => Number.isFinite(v.lng) && Number.isFinite(v.lat));
+    if (conPos.length === 0) return;
+    const lngs = conPos.map((v) => v.lng);
+    const lats = conPos.map((v) => v.lat);
+    const bounds: [[number, number], [number, number]] = [
+      [Math.min(...lngs), Math.min(...lats)],
+      [Math.max(...lngs), Math.max(...lats)],
+    ];
+    // Un único punto: subir el zoom máximo para no quedarnos pegados al suelo.
+    const opts = conPos.length === 1 ? { padding: 60, maxZoom: 12 } : { padding: 60 };
+    mapRef.current?.fitBounds(bounds, { ...opts, duration: 800 });
+  }, [vehiculos, listo]);
+
   return (
     <div className="relative h-full w-full">
       <Map
+        ref={mapRef}
+        onLoad={() => setListo(true)}
         mapStyle={MAP_STYLE_URL || (OSM_STYLE as unknown as string)}
         initialViewState={{ longitude: -3.0, latitude: 40.0, zoom: 6 }}
         style={{ width: "100%", height: "100%" }}

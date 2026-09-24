@@ -5,11 +5,20 @@ Uso: python scripts/seed_e2e.py  (con DB_HOST/DB_PORT/DB_USER/DB_PASSWORD/DB_NAM
 """
 import datetime
 import os
+import sys
 
 import psycopg2
 
 
 def main() -> None:
+    # Guardas: solo en entornos de test explícitos, nunca en producción.
+    if os.environ.get("E2E_SEED_OK") != "1":
+        print("ERROR: seed_e2e.py requiere E2E_SEED_OK=1 para ejecutarse.", file=sys.stderr)
+        sys.exit(1)
+    if os.environ.get("TMS_ENV") == "prod":
+        print("ERROR: seed_e2e.py no debe ejecutarse en producción (TMS_ENV=prod).", file=sys.stderr)
+        sys.exit(1)
+
     conn = psycopg2.connect(
         host=os.environ["DB_HOST"], port=int(os.environ.get("DB_PORT", "5432")),
         user=os.environ["DB_USER"], password=os.environ["DB_PASSWORD"],
@@ -56,11 +65,13 @@ def main() -> None:
         (now, now),
     )
 
-    # Gasto sin imputar.
-    cur.execute(
-        "INSERT INTO finanzas.gastos (terminal, trip_id, concepto, importe, fecha) "
-        "VALUES (NULL, NULL, 'gasto suelto e2e', 10, '2026-01-01') ON CONFLICT DO NOTHING",
-    )
+    # Gasto sin imputar (idempotente: solo si no existe el concepto marcador).
+    cur.execute("SELECT 1 FROM finanzas.gastos WHERE concepto = 'gasto suelto e2e' LIMIT 1")
+    if not cur.fetchone():
+        cur.execute(
+            "INSERT INTO finanzas.gastos (terminal, trip_id, concepto, importe, fecha) "
+            "VALUES (NULL, NULL, 'gasto suelto e2e', 10, '2026-01-01')",
+        )
 
     # Mensaje sin responder (con viaje → entidad viaje).
     cur.execute(

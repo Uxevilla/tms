@@ -54,6 +54,37 @@ def test_entidad_vehiculo_por_matricula(scratch_db):
 
 
 @pytest.mark.integration
+def test_buscar_sin_recorte_global(scratch_db):
+    tok, conn = _conn(scratch_db)
+    try:
+        # Más de `limite` (8) viajes coincidentes + un vehículo y un conductor coincidentes.
+        for i in range(12):
+            conn.execute(
+                "INSERT INTO operaciones.trips (codigo, estado, origen) VALUES (?, 'Planificado', ?)",
+                (f"TR-BUS-{i}", "BUSORIG"),
+            )
+        conn.execute(
+            "INSERT INTO flota.vehiculos (codigo, terminal_trimble, matricula, activo) VALUES (?, ?, ?, true)",
+            ("V-BUS", "V-BUS", "BUSMAT"),
+        )
+        conn.execute("INSERT INTO empleados (id, nombre, dni) VALUES ('EMP-BUS', 'BUSNOM', '00000001T')")
+        conn.execute(
+            "INSERT INTO rrhh.conductores (empleado_id, tarjeta_tacografo) VALUES ('EMP-BUS', 'DID-BUS')",
+        )
+
+        res = torre.buscar(q="bus", user={"rol": "admin"}, conn=conn)["resultados"]
+        tipos = {r["tipo"] for r in res}
+        # Con >8 viajes coincidentes, vehículos y conductores siguen apareciendo (no hay recorte global).
+        assert "vehiculo" in tipos, "los vehículos siguen apareciendo con >limite viajes"
+        assert "conductor" in tipos, "los conductores siguen apareciendo con >limite viajes"
+        viajes = [r for r in res if r["tipo"] == "viaje"]
+        assert len(viajes) <= 8, "el grupo de viajes respeta su LIMIT por grupo"
+    finally:
+        conn.close()
+        main._tenant_ctx.reset(tok)
+
+
+@pytest.mark.integration
 def test_atencion_8_clases(scratch_db):
     tok, conn = _conn(scratch_db)
     try:

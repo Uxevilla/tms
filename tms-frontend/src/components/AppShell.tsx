@@ -77,8 +77,8 @@ function AppShellInner() {
       const panel = el?.getAttribute("data-panel");
       if (panel) navigate({ search: { panel } as never });
     };
-    document.addEventListener("click", onClick);
-    return () => document.removeEventListener("click", onClick);
+    document.addEventListener("click", onClick, true);
+    return () => document.removeEventListener("click", onClick, true);
   }, [navigate]);
 
   const logout = () => {
