@@ -22,7 +22,7 @@ const WS_ETIQUETA: Record<WsStatus, string> = {
 };
 
 export function Sidebar({ wsStatus, onLogout }: SidebarProps) {
-  const [plegada, setPlegada] = useState(false);
+  const [plegada, setPlegada] = useState(() => window.innerWidth < 768);
   const rol = getRol();
   const usuario = getUsuario();
   const grupos = itemsVisibles(rol);

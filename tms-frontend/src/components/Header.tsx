@@ -10,7 +10,7 @@ export function Header({ onOpenPalette }: { onOpenPalette: () => void }) {
 
   return (
     <header className="flex h-12 shrink-0 items-center gap-3 border-b bg-card px-4">
-      <h1 className="text-sm font-semibold tracking-tight">{titulo}</h1>
+      <h1 className="min-w-0 truncate text-sm font-semibold tracking-tight">{titulo}</h1>
       <Button
         variant="outline"
         size="sm"

@@ -2,7 +2,7 @@ import { useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
 import { useSocketSubscribe } from "../context/SocketContext";
-import type { ViajeEvent, Viaje } from "../types";
+import type { ViajeEvent, Viaje, TelemetriaActiva } from "../types";
 
 /**
  * Adaptador del WebSocket → TanStack Query. Cada evento creado/estado/telemetria/
@@ -29,12 +29,23 @@ export function WsQueryAdapter() {
           old ? { ...old, estado: evt.estado } : old,
         );
       } else if (evt.tipo === "telemetria") {
-        qc.setQueryData(["viaje", evt.id], (old: Viaje | undefined) =>
-          old
-            ? { ...old, velocidad: evt.velocidad, progreso: evt.progreso, lat: evt.lat, lng: evt.lng }
-            : old,
+        const patch = { velocidad: evt.velocidad, progreso: evt.progreso, lat: evt.lat, lng: evt.lng };
+        // Lista de viajes + viaje individual: posición y velocidad SIN re-fetch.
+        qc.setQueryData(["viajes"], (old: Viaje[] | undefined) =>
+          old?.map((v) => (v.id === evt.id ? { ...v, ...patch } : v)),
         );
-        qc.invalidateQueries({ queryKey: ["telemetria"] });
+        qc.setQueryData(["viaje", evt.id], (old: Viaje | undefined) =>
+          old ? { ...old, ...patch } : old,
+        );
+        // Lista de telemetría (posiciones por vehículo): actualiza sin re-fetch
+        // (ninguna petición HTTP por cada evento de telemetría).
+        qc.setQueryData(["telemetria"], (old: TelemetriaActiva[] | undefined) =>
+          old?.map((v) =>
+            v.viaje_id === evt.id
+              ? { ...v, velocidad: evt.velocidad, lat: evt.lat, lng: evt.lng }
+              : v,
+          ),
+        );
       } else if (evt.tipo === "eliminado") {
         qc.setQueryData(["viajes"], (old: Viaje[] | undefined) =>
           old?.filter((v) => v.id !== evt.id),

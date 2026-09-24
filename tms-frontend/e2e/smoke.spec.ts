@@ -76,3 +76,32 @@ test("recargar conserva la ruta y Atrás funciona", async ({ page }) => {
   await page.waitForTimeout(500);
   expect(new URL(page.url()).pathname).toBe("/vehiculos");
 });
+
+test("token expirado conserva el destino tras login", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "admin", "solo en el proyecto admin (usa sus credenciales)");
+  const usuario = process.env.E2E_ADMIN_USER ?? "admin";
+  const contrasena = process.env.E2E_ADMIN_PASSWORD ?? "";
+
+  // Estar en /gastos con token válido, simular expiración (borrar token) y recargar.
+  await page.goto("/gastos");
+  await page.evaluate(() => localStorage.removeItem("tms_jwt"));
+  await page.reload();
+  await expect(page).toHaveURL(/\/login\?redirect=/);
+
+  await page.locator("#username").fill(usuario);
+  await page.locator("#password").fill(contrasena);
+  await page.locator('button[type="submit"]').click();
+  await expect(page).toHaveURL(/\/gastos/);
+});
+
+test("redirect externo (//evil.com) termina en /torre", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "admin", "solo en el proyecto admin");
+  const usuario = process.env.E2E_ADMIN_USER ?? "admin";
+  const contrasena = process.env.E2E_ADMIN_PASSWORD ?? "";
+
+  await page.goto("/login?redirect=//evil.com");
+  await page.locator("#username").fill(usuario);
+  await page.locator("#password").fill(contrasena);
+  await page.locator('button[type="submit"]').click();
+  await expect(page).toHaveURL(/\/torre/);
+});

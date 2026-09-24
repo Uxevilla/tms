@@ -56,6 +56,9 @@ jobs:
         run: |
           npm ci
           npm run build
+      - name: Comprobar tamaño del bundle (≤ 150 KB gzip)
+        working-directory: tms-frontend
+        run: npm run size-check
 
   e2e:
     name: E2E (Playwright)

@@ -6,6 +6,7 @@ import {
   Outlet,
   redirect,
   useNavigate,
+  useSearch,
 } from "@tanstack/react-router";
 
 import { AppShell } from "./components/AppShell";
@@ -33,9 +34,9 @@ function Placeholder({ titulo, fase }: { titulo: string; fase: string }) {
 }
 
 // Guards
-function authGuard() {
+function authGuard({ location }: { location: { pathname: string; searchStr: string } }) {
   if (!isTokenValid(getToken())) {
-    throw redirect({ to: "/login" });
+    throw redirect({ to: "/login", search: { redirect: location.pathname + location.searchStr } });
   }
 }
 
@@ -58,14 +59,23 @@ const indexRoute = createRoute({
   },
 });
 
-// /login (público)
+// /login (público). Acepta ?redirect= solo si es una ruta relativa (empieza por "/" y no por "//").
+function validateLoginSearch(search: Record<string, unknown>): { redirect?: string } {
+  const redirect = search.redirect;
+  if (typeof redirect === "string" && redirect.startsWith("/") && !redirect.startsWith("//")) {
+    return { redirect };
+  }
+  return {};
+}
+
 function LoginPage() {
   const navigate = useNavigate();
+  const search = useSearch({ from: "/login" });
   return (
     <Login
       onLogin={(token) => {
         setToken(token);
-        navigate({ to: "/torre" });
+        navigate({ to: (search.redirect ?? "/torre") as never });
       }}
     />
   );
@@ -75,6 +85,7 @@ const loginRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/login",
   component: LoginPage,
+  validateSearch: validateLoginSearch,
 });
 
 // Layout autenticado (pathless)
@@ -188,7 +199,12 @@ const routeTree = rootRoute.addChildren([
   ]),
 ]);
 
-export const router = createRouter({ routeTree });
+export const router = createRouter({
+  routeTree,
+  // strict: los search params no devueltos por validateSearch se DESCARTAN
+  // (si no, un ?redirect=//evil.com rechazado se conservaría como "desconocido").
+  search: { strict: true },
+});
 
 declare module "@tanstack/react-router" {
   interface Register {

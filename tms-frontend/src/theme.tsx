@@ -25,7 +25,10 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   const [theme, setTheme] = useState<Theme>(getInitialTheme);
 
   useEffect(() => {
-    document.documentElement.classList.toggle("dark", theme === "dark");
+    const dark = theme === "dark";
+    document.documentElement.classList.toggle("dark", dark);
+    // AG Grid: el tema quartz detecta oscuro/claro vía este atributo del body.
+    document.body.dataset.agThemeMode = dark ? "dark" : "light";
     try {
       localStorage.setItem(THEME_KEY, theme);
     } catch {

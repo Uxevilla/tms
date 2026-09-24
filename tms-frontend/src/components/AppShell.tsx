@@ -53,11 +53,12 @@ function AppShellInner() {
     }
   }, [pathname]);
 
-  // Sesión caducada en caliente (WS 1008 o fetch 401) → logout + login.
+  // Sesión caducada en caliente (WS 1008 o fetch 401) → logout + login conservando destino.
   useEffect(() => {
     const onCaducada = () => {
       clearToken();
-      navigate({ to: "/login" });
+      const redirect = window.location.pathname + window.location.search;
+      navigate({ to: "/login", search: { redirect } });
     };
     window.addEventListener("tms:sesion-caducada", onCaducada);
     return () => window.removeEventListener("tms:sesion-caducada", onCaducada);
