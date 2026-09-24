@@ -116,7 +116,7 @@ def _get_sync_state(key):
 
 def _set_sync_state(key, value):
     with _db() as conn:
-        conn.execute("INSERT INTO sync_state (key, value) VALUES (?,?) ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value", (key, value))
+        conn.execute("INSERT INTO sistema.sync_state (key, value) VALUES (?,?) ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value", (key, value))
         conn.commit()
 
 

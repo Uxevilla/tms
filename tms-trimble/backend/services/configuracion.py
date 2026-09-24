@@ -2,10 +2,10 @@
 
 Los proveedores son un catálogo sembrado (Trimble, PTV, TransFollow, SMTP + los del
 mercado inactivos). Cada proveedor define sus campos de configuración y sus tipos de
-actividad (nombre -> referencia). Los valores por cuenta viven en integracion_valores.
+actividad (nombre -> referencia). Los valores por cuenta viven en sistema.integracion_valores.
 
 Fase 1: solo siembra y migra la config actual (la lectura de credenciales sigue en `config`
-hasta la Fase 2, que pasa a leer de `integracion_valores`).
+hasta la Fase 2, que pasa a leer de `sistema.integracion_valores`).
 """
 import threading
 
@@ -118,11 +118,11 @@ def _actividades_map():
         if dbname in _act_cache:
             return _act_cache[dbname]
     with _db() as conn:
-        prov = conn.execute("SELECT id FROM integracion_proveedores WHERE codigo='trimble'").fetchone()
+        prov = conn.execute("SELECT id FROM sistema.integracion_proveedores WHERE codigo='trimble'").fetchone()
         m = {}
         if prov:
             rows = conn.execute(
-                "SELECT nombre, referencia FROM actividades WHERE proveedor_id=? AND activo",
+                "SELECT nombre, referencia FROM sistema.actividades WHERE proveedor_id=? AND activo",
                 (prov["id"],),
             ).fetchall()
             m = {r["nombre"]: r["referencia"] for r in rows}
@@ -140,25 +140,25 @@ def _invalida_actividades():
 
 
 def _sync_valor_integracion(conn, config_key, valor):
-    """Sincroniza una clave de `config` (si es de integración) a `integracion_valores`.
+    """Sincroniza una clave de `config` (si es de integración) a `sistema.integracion_valores`.
 
     Puente durante la transición: la UI antigua (POST /api/config) sigue escribiendo en
-    `config`; esto replica el valor a `integracion_valores` para que los clientes lo lean.
+    `config`; esto replica el valor a `sistema.integracion_valores` para que los clientes lo lean.
     """
     m = MIGRACION_CONFIG.get(config_key)
     if not m:
         return
     codigo, campo_clave = m
-    prov = conn.execute("SELECT id FROM integracion_proveedores WHERE codigo=?", (codigo,)).fetchone()
+    prov = conn.execute("SELECT id FROM sistema.integracion_proveedores WHERE codigo=?", (codigo,)).fetchone()
     if not prov:
         return
     campo = conn.execute(
-        "SELECT id FROM integracion_campos WHERE proveedor_id=? AND clave=?",
+        "SELECT id FROM sistema.integracion_campos WHERE proveedor_id=? AND clave=?",
         (prov["id"], campo_clave),
     ).fetchone()
     if campo:
         conn.execute(
-            "INSERT INTO integracion_valores (campo_id, valor) VALUES (?,?) "
+            "INSERT INTO sistema.integracion_valores (campo_id, valor) VALUES (?,?) "
             "ON CONFLICT (campo_id) DO UPDATE SET valor=EXCLUDED.valor",
             (campo["id"], _encrypt_valor(valor)),
         )
@@ -176,27 +176,27 @@ def _seed_integraciones(dbname: str) -> None:
         cur = conn.cursor()
         for codigo, nombre, categoria, icono, activo, orden in PROVEEDORES:
             cur.execute(
-                "INSERT INTO integracion_proveedores (codigo, nombre, categoria, icono, activo, orden) "
+                "INSERT INTO sistema.integracion_proveedores (codigo, nombre, categoria, icono, activo, orden) "
                 "VALUES (%s,%s,%s,%s,%s,%s) ON CONFLICT (codigo) DO NOTHING",
                 (codigo, nombre, categoria, icono, activo, orden),
             )
         for codigo, campos in CAMPOS.items():
-            cur.execute("SELECT id FROM integracion_proveedores WHERE codigo=%s", (codigo,))
+            cur.execute("SELECT id FROM sistema.integracion_proveedores WHERE codigo=%s", (codigo,))
             prov = cur.fetchone()
             if not prov:
                 continue
             for orden, (clave, etiqueta, tipo, requerido) in enumerate(campos, 1):
                 cur.execute(
-                    "INSERT INTO integracion_campos (proveedor_id, clave, etiqueta, tipo, requerido, orden) "
+                    "INSERT INTO sistema.integracion_campos (proveedor_id, clave, etiqueta, tipo, requerido, orden) "
                     "VALUES (%s,%s,%s,%s,%s,%s) ON CONFLICT (proveedor_id, clave) DO NOTHING",
                     (prov[0], clave, etiqueta, tipo, requerido, orden),
                 )
-        cur.execute("SELECT id FROM integracion_proveedores WHERE codigo='trimble'")
+        cur.execute("SELECT id FROM sistema.integracion_proveedores WHERE codigo='trimble'")
         trimble = cur.fetchone()
         if trimble:
             for nombre, referencia in ACTIVIDADES_TRIMBLE:
                 cur.execute(
-                    "INSERT INTO actividades (proveedor_id, nombre, referencia) VALUES (%s,%s,%s) "
+                    "INSERT INTO sistema.actividades (proveedor_id, nombre, referencia) VALUES (%s,%s,%s) "
                     "ON CONFLICT (proveedor_id, nombre) DO NOTHING",
                     (trimble[0], nombre, referencia),
                 )
@@ -206,7 +206,7 @@ def _seed_integraciones(dbname: str) -> None:
 
 
 def _migrar_config_integraciones(dbname: str) -> None:
-    """Migra las claves de integración de `config` a `integracion_valores` (idempotente, no pisa)."""
+    """Migra las claves de integración de `config` a `sistema.integracion_valores` (idempotente, no pisa)."""
     conn = _conn(dbname)
     try:
         cur = conn.cursor()
@@ -215,16 +215,16 @@ def _migrar_config_integraciones(dbname: str) -> None:
             row = cur.fetchone()
             if not row or not row[0]:
                 continue
-            cur.execute("SELECT id FROM integracion_proveedores WHERE codigo=%s", (codigo,))
+            cur.execute("SELECT id FROM sistema.integracion_proveedores WHERE codigo=%s", (codigo,))
             prov = cur.fetchone()
             if not prov:
                 continue
-            cur.execute("SELECT id FROM integracion_campos WHERE proveedor_id=%s AND clave=%s",
+            cur.execute("SELECT id FROM sistema.integracion_campos WHERE proveedor_id=%s AND clave=%s",
                         (prov[0], campo_clave))
             campo = cur.fetchone()
             if campo:
                 cur.execute(
-                    "INSERT INTO integracion_valores (campo_id, valor) VALUES (%s,%s) "
+                    "INSERT INTO sistema.integracion_valores (campo_id, valor) VALUES (%s,%s) "
                     "ON CONFLICT (campo_id) DO NOTHING",
                     (campo[0], _encrypt_valor(row[0])),
                 )

@@ -158,7 +158,7 @@ def list_empresas():
 def set_config(req: dict, conn = Depends(get_conn)):
     for k, v in req.items():
         conn.execute(
-            "INSERT INTO config (key, value) VALUES (?,?) ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value",
+            "INSERT INTO sistema.config (key, value) VALUES (?,?) ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value",
             (k, str(v)),
         )
         # dual-write: si es una clave de integración, replicar a integracion_valores

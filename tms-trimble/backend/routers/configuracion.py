@@ -75,7 +75,7 @@ def guardar_valores(codigo: str, body: dict, conn=Depends(get_conn)):
             if campo["tipo"] == "password" and not v:
                 continue
             conn.execute(
-                "INSERT INTO integracion_valores (campo_id, valor) VALUES (?,?) "
+                "INSERT INTO sistema.integracion_valores (campo_id, valor) VALUES (?,?) "
                 "ON CONFLICT (campo_id) DO UPDATE SET valor=EXCLUDED.valor",
                 (campo["id"], _encrypt_valor(v)),
             )
@@ -105,7 +105,7 @@ def crear_actividad(codigo: str, body: dict, conn=Depends(get_conn)):
     if not nombre or not referencia:
         raise HTTPException(status_code=400, detail={"error": "nombre y referencia son obligatorios"})
     cur = conn.execute(
-        "INSERT INTO actividades (proveedor_id, nombre, referencia) VALUES (?,?,?) "
+        "INSERT INTO sistema.actividades (proveedor_id, nombre, referencia) VALUES (?,?,?) "
         "ON CONFLICT (proveedor_id, nombre) DO UPDATE SET referencia=EXCLUDED.referencia RETURNING id",
         (prov["id"], nombre, referencia),
     )

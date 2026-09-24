@@ -85,7 +85,7 @@ def _seed_tenant_config(db_name, values=None):
                             user=config.DB_USER, password=config.DB_PASSWORD)
     cur = conn.cursor()
     for k, v in (values or {}).items():
-        cur.execute("INSERT INTO config (key, value) VALUES (%s,%s) ON CONFLICT (key) DO NOTHING", (k, v or ""))
+        cur.execute("INSERT INTO sistema.config (key, value) VALUES (%s,%s) ON CONFLICT (key) DO NOTHING", (k, v or ""))
     conn.commit()
     conn.close()
 
@@ -100,9 +100,8 @@ def _seed_rbac(dbname: str) -> None:
                             user=config.DB_USER, password=config.DB_PASSWORD)
     try:
         cur = conn.cursor()
-        cur.execute("ALTER TABLE config.usuarios ADD COLUMN IF NOT EXISTS debe_cambiar_clave BOOLEAN DEFAULT false")
         for nombre, desc in (("admin", "Administrador"), ("dispatcher", "Dispatcher"), ("conductor", "Conductor")):
-            cur.execute("INSERT INTO config.roles (nombre, descripcion) VALUES (%s,%s) ON CONFLICT (nombre) DO NOTHING", (nombre, desc))
+            cur.execute("INSERT INTO sistema.roles (nombre, descripcion) VALUES (%s,%s) ON CONFLICT (nombre) DO NOTHING", (nombre, desc))
         admin_pw = DEFAULT_ADMIN_PASSWORD
         if not admin_pw:
             admin_pw = secrets.token_urlsafe(16)
@@ -110,21 +109,22 @@ def _seed_rbac(dbname: str) -> None:
                   f"'{DEFAULT_ADMIN_USER}': {admin_pw} (cámbiala en el primer login)")
         h = _hash_password(admin_pw)
         cur.execute(
-            "INSERT INTO config.usuarios (usuario, password_hash, rol, nombre, activo, debe_cambiar_clave) "
-            "VALUES (%s,%s,'admin','Administrador',true,true) ON CONFLICT (usuario) DO NOTHING",
+            "INSERT INTO sistema.usuarios (usuario, password_hash, rol_id, nombre, activo, debe_cambiar_clave) "
+            "SELECT %s, %s, id, 'Administrador', true, true FROM sistema.roles WHERE nombre='admin' "
+            "ON CONFLICT (usuario) DO NOTHING",
             (DEFAULT_ADMIN_USER, h),
         )
         if DEFAULT_ADMIN_PASSWORD:
             # .env explícito = contraseña canónica del admin → rota SIEMPRE (break-glass reset).
             cur.execute(
-                "UPDATE config.usuarios SET password_hash=%s, debe_cambiar_clave=true, activo=true "
+                "UPDATE sistema.usuarios SET password_hash=%s, debe_cambiar_clave=true, activo=true "
                 "WHERE usuario=%s",
                 (h, DEFAULT_ADMIN_USER),
             )
         else:
             # Auto-generada → rota solo si aún debe cambiar clave (evita cambiarla en cada boot).
             cur.execute(
-                "UPDATE config.usuarios SET password_hash=%s, debe_cambiar_clave=true, activo=true "
+                "UPDATE sistema.usuarios SET password_hash=%s, debe_cambiar_clave=true, activo=true "
                 "WHERE usuario=%s AND (debe_cambiar_clave IS NULL OR debe_cambiar_clave = true)",
                 (h, DEFAULT_ADMIN_USER),
             )

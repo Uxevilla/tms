@@ -305,7 +305,7 @@ def contabilidad_cierre(req: dict, conn = Depends(get_conn)):
     if not fecha:
         raise HTTPException(status_code=400, detail={"error": "Indica la fecha de cierre."})
     conn.execute(
-        "INSERT INTO config (key, value) VALUES (?,?) ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value",
+        "INSERT INTO sistema.config (key, value) VALUES (?,?) ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value",
         ("cierre_fecha", fecha),
     )
     conn.commit()
