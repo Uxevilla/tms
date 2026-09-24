@@ -57,10 +57,6 @@ class _Conn:
 
 
 _SCHEMA = """
-CREATE TABLE IF NOT EXISTS conductores (
-    id SERIAL PRIMARY KEY, nombre TEXT NOT NULL, dni TEXT, telefono TEXT, email TEXT,
-    activo BOOLEAN DEFAULT true, empleado_id TEXT, did TEXT
-);
 CREATE TABLE IF NOT EXISTS vehiculos (
     id TEXT PRIMARY KEY, categoria TEXT DEFAULT 'tractora', matricula TEXT, marca TEXT, modelo TEXT, anno INTEGER,
     itv TEXT, seguro TEXT, peaje_categoria TEXT, ptv_profile TEXT DEFAULT 'EUR_TRAILER_TRUCK',
@@ -86,7 +82,7 @@ CREATE TABLE IF NOT EXISTS trips (
     peaje_estimado NUMERIC(10,2) DEFAULT 0, peaje_fuente TEXT,
     gastos NUMERIC(12,2) DEFAULT 0, factura TEXT,
     estado_pago TEXT DEFAULT 'pendiente', iva NUMERIC(5,2) DEFAULT 21,
-    cliente_id INTEGER, conductor_id INTEGER REFERENCES conductores(id),
+    cliente_id INTEGER, conductor_id INTEGER,
     payload TEXT, fecha_actualizacion TEXT,
     fecha_esperada_carga TEXT, fecha_esperada_descarga TEXT
 );
@@ -498,6 +494,62 @@ DROP TRIGGER IF EXISTS transportistas_upd ON transportistas;
 CREATE TRIGGER transportistas_upd INSTEAD OF UPDATE ON transportistas FOR EACH ROW EXECUTE FUNCTION maestros.transportistas_upd();
 DROP TRIGGER IF EXISTS transportistas_del ON transportistas;
 CREATE TRIGGER transportistas_del INSTEAD OF DELETE ON transportistas FOR EACH ROW EXECUTE FUNCTION maestros.transportistas_del();
+CREATE SCHEMA IF NOT EXISTS rrhh;
+CREATE TABLE IF NOT EXISTS rrhh.conductores (
+    id SERIAL PRIMARY KEY,
+    empleado_id TEXT NOT NULL UNIQUE REFERENCES empleados(id) ON DELETE CASCADE,
+    tarjeta_tacografo TEXT UNIQUE,
+    tarifa_km NUMERIC(8,4) DEFAULT 0,
+    disponible BOOLEAN NOT NULL DEFAULT true,
+    motivo_no_disponible TEXT
+);
+CREATE OR REPLACE VIEW conductores AS
+SELECT c.id, e.nombre, e.dni, e.telefono, e.email,
+       (COALESCE(e.fecha_baja,'') = '') AS activo,
+       c.empleado_id, c.tarjeta_tacografo AS did, c.tarifa_km
+FROM rrhh.conductores c JOIN empleados e ON e.id = c.empleado_id;
+
+CREATE OR REPLACE FUNCTION rrhh.conductores_ins() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE eid TEXT;
+BEGIN
+  IF NEW.empleado_id IS NOT NULL AND NEW.empleado_id <> '' THEN
+    eid := NEW.empleado_id;
+    UPDATE empleados SET nombre=COALESCE(NULLIF(NEW.nombre,''),nombre), dni=COALESCE(NULLIF(NEW.dni,''),dni),
+      telefono=COALESCE(NULLIF(NEW.telefono,''),telefono), email=COALESCE(NULLIF(NEW.email,''),email)
+    WHERE id = eid;
+  ELSE
+    INSERT INTO empleados (id, nombre, apellidos, dni, telefono, email, categoria)
+    VALUES ('EMP-'||upper(substr(md5(random()::text),1,10)), COALESCE(NEW.nombre,''), '', NEW.dni, NEW.telefono, NEW.email, 'Conductor')
+    RETURNING id INTO eid;
+  END IF;
+  INSERT INTO rrhh.conductores (empleado_id, tarjeta_tacografo, tarifa_km)
+  VALUES (eid, NEW.did, COALESCE(NEW.tarifa_km,0))
+  ON CONFLICT (empleado_id) DO UPDATE SET tarjeta_tacografo=EXCLUDED.tarjeta_tacografo, tarifa_km=EXCLUDED.tarifa_km
+  RETURNING id INTO NEW.id;
+  RETURN NEW;
+END $$;
+CREATE OR REPLACE FUNCTION rrhh.conductores_upd() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  UPDATE empleados SET nombre=COALESCE(NULLIF(NEW.nombre,''),nombre), dni=COALESCE(NULLIF(NEW.dni,''),dni),
+    telefono=COALESCE(NULLIF(NEW.telefono,''),telefono), email=COALESCE(NULLIF(NEW.email,''),email)
+  WHERE id = OLD.empleado_id;
+  UPDATE rrhh.conductores SET tarjeta_tacografo=COALESCE(NEW.did,tarjeta_tacografo),
+    tarifa_km=COALESCE(NEW.tarifa_km,tarifa_km)
+  WHERE id = OLD.id;
+  RETURN NEW;
+END $$;
+CREATE OR REPLACE FUNCTION rrhh.conductores_del() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  DELETE FROM rrhh.conductores WHERE id = OLD.id;
+  RETURN OLD;
+END $$;
+
+DROP TRIGGER IF EXISTS conductores_ins ON conductores;
+CREATE TRIGGER conductores_ins INSTEAD OF INSERT ON conductores FOR EACH ROW EXECUTE FUNCTION rrhh.conductores_ins();
+DROP TRIGGER IF EXISTS conductores_upd ON conductores;
+CREATE TRIGGER conductores_upd INSTEAD OF UPDATE ON conductores FOR EACH ROW EXECUTE FUNCTION rrhh.conductores_upd();
+DROP TRIGGER IF EXISTS conductores_del ON conductores;
+CREATE TRIGGER conductores_del INSTEAD OF DELETE ON conductores FOR EACH ROW EXECUTE FUNCTION rrhh.conductores_del();
 """
 
 
@@ -574,7 +626,6 @@ def _db():
             cur.execute("ALTER TABLE vehiculos ADD COLUMN IF NOT EXISTS cuota_mensual NUMERIC(12,2) DEFAULT 0")
             cur.execute("ALTER TABLE files ADD COLUMN IF NOT EXISTS vehiculo_id TEXT")
             cur.execute("ALTER TABLE asientos ADD COLUMN IF NOT EXISTS origen_id TEXT")
-            cur.execute("ALTER TABLE conductores ADD COLUMN IF NOT EXISTS did TEXT")
             cur.execute("ALTER TABLE mensajes ADD COLUMN IF NOT EXISTS terminal TEXT")
             cur.execute("ALTER TABLE gastos_vehiculos ADD COLUMN IF NOT EXISTS base_imponible NUMERIC(12,2) DEFAULT 0")
             cur.execute("ALTER TABLE gastos_vehiculos ADD COLUMN IF NOT EXISTS iva NUMERIC(6,2) DEFAULT 21")
