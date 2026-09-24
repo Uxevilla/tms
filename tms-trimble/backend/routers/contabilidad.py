@@ -78,7 +78,7 @@ def contabilidad_cuentas(conn = Depends(get_conn)):
 
 def upsert_cuenta(c: CuentaContable, conn = Depends(get_conn)):
     conn.execute(
-        "INSERT INTO cuentas (codigo, nombre, grupo, tipo, orden) VALUES (?,?,?,?,?) "
+        "INSERT INTO finanzas.cuentas (codigo, nombre, grupo, tipo, orden) VALUES (?,?,?,?,?) "
         "ON CONFLICT (codigo) DO UPDATE SET nombre=EXCLUDED.nombre, grupo=EXCLUDED.grupo, "
         "tipo=EXCLUDED.tipo, orden=EXCLUDED.orden",
         (c.codigo.strip(), c.nombre.strip(), c.grupo.strip(), c.tipo.strip(), c.orden),

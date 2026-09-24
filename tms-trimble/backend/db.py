@@ -106,13 +106,13 @@ CREATE TABLE IF NOT EXISTS direcciones (
     ciudad TEXT, cp TEXT, pais TEXT DEFAULT 'ES',
     lat NUMERIC(10,7), lng NUMERIC(10,7), comentario TEXT, creado TEXT
 );
-CREATE TABLE IF NOT EXISTS gastos (
+CREATE TABLE IF NOT EXISTS finanzas.gastos (
     id SERIAL PRIMARY KEY, terminal TEXT, trip_id TEXT, categoria TEXT, fecha TEXT,
     importe NUMERIC(12,2) DEFAULT 0, concepto TEXT, foto TEXT, creado TEXT,
     proveedor_id INTEGER,
     categoria_id INTEGER REFERENCES categorias_gasto(id)
 );
-CREATE TABLE IF NOT EXISTS gastos_vehiculos (
+CREATE TABLE IF NOT EXISTS finanzas.gastos_vehiculos (
     id SERIAL PRIMARY KEY, vehiculo_id TEXT, proveedor_id INTEGER,
     fecha TEXT, tipo TEXT, litros NUMERIC(10,2) DEFAULT 0,
     base_imponible NUMERIC(12,2) DEFAULT 0, iva NUMERIC(6,2) DEFAULT 21,
@@ -120,7 +120,7 @@ CREATE TABLE IF NOT EXISTS gastos_vehiculos (
     cuenta_contable_gasto TEXT, estado_pago TEXT DEFAULT 'Pendiente',
     archivo_base64 TEXT, creado TEXT
 );
-CREATE TABLE IF NOT EXISTS costes_fijos (
+CREATE TABLE IF NOT EXISTS finanzas.costes_fijos (
     id SERIAL PRIMARY KEY, terminal TEXT, concepto TEXT, importe NUMERIC(12,2) DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS tarifas_peaje (
@@ -195,43 +195,43 @@ CREATE TABLE IF NOT EXISTS flota.alertas_mantenimiento (
     estado TEXT DEFAULT 'Pendiente',
     creado_en TIMESTAMPTZ DEFAULT now()
 );
-CREATE TABLE IF NOT EXISTS liquidaciones (
+CREATE TABLE IF NOT EXISTS finanzas.liquidaciones (
     id SERIAL PRIMARY KEY, transportista_id INTEGER,
     fecha TEXT, importe NUMERIC(12,2) DEFAULT 0, concepto TEXT, pagado BOOLEAN DEFAULT false, creado TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_trips_creado ON trips(creado);
 CREATE INDEX IF NOT EXISTS idx_trips_terminal ON trips(terminal);
 CREATE INDEX IF NOT EXISTS idx_trips_cliente ON trips(cliente_id);
-CREATE INDEX IF NOT EXISTS idx_gastos_terminal ON gastos(terminal);
-CREATE INDEX IF NOT EXISTS idx_gastos_fecha ON gastos(fecha);
-CREATE INDEX IF NOT EXISTS idx_gastos_proveedor ON gastos(proveedor_id);
+CREATE INDEX IF NOT EXISTS idx_gastos_terminal ON finanzas.gastos(terminal);
+CREATE INDEX IF NOT EXISTS idx_gastos_fecha ON finanzas.gastos(fecha);
+CREATE INDEX IF NOT EXISTS idx_gastos_proveedor ON finanzas.gastos(proveedor_id);
 CREATE INDEX IF NOT EXISTS idx_paradas_trip ON paradas(trip_id);
-CREATE TABLE IF NOT EXISTS cuentas (
+CREATE TABLE IF NOT EXISTS finanzas.cuentas (
     codigo TEXT PRIMARY KEY, nombre TEXT NOT NULL,
     grupo TEXT NOT NULL, tipo TEXT NOT NULL, orden INTEGER DEFAULT 0
 );
-CREATE TABLE IF NOT EXISTS asientos (
+CREATE TABLE IF NOT EXISTS finanzas.asientos (
     id SERIAL PRIMARY KEY, numero INTEGER NOT NULL, fecha TEXT NOT NULL,
     concepto TEXT NOT NULL, documento TEXT, origen TEXT NOT NULL DEFAULT 'manual',
     origen_id TEXT, trip_id TEXT, gasto_id INTEGER, creado TEXT
 );
-CREATE TABLE IF NOT EXISTS apuntes (
-    id SERIAL PRIMARY KEY, asiento_id INTEGER NOT NULL REFERENCES asientos(id) ON DELETE CASCADE,
-    cuenta TEXT NOT NULL REFERENCES cuentas(codigo),
+CREATE TABLE IF NOT EXISTS finanzas.apuntes (
+    id SERIAL PRIMARY KEY, asiento_id INTEGER NOT NULL REFERENCES finanzas.asientos(id) ON DELETE CASCADE,
+    cuenta TEXT NOT NULL REFERENCES finanzas.cuentas(codigo),
     debe NUMERIC(12,2) DEFAULT 0, haber NUMERIC(12,2) DEFAULT 0, concepto TEXT
 );
-CREATE INDEX IF NOT EXISTS idx_asientos_fecha ON asientos(fecha);
-CREATE INDEX IF NOT EXISTS idx_asientos_numero ON asientos(numero);
-CREATE INDEX IF NOT EXISTS idx_apuntes_asiento ON apuntes(asiento_id);
-CREATE TABLE IF NOT EXISTS facturas (
+CREATE INDEX IF NOT EXISTS idx_asientos_fecha ON finanzas.asientos(fecha);
+CREATE INDEX IF NOT EXISTS idx_asientos_numero ON finanzas.asientos(numero);
+CREATE INDEX IF NOT EXISTS idx_apuntes_asiento ON finanzas.apuntes(asiento_id);
+CREATE TABLE IF NOT EXISTS finanzas.facturas (
     id SERIAL PRIMARY KEY, numero TEXT NOT NULL, fecha TEXT NOT NULL,
     trip_id TEXT, cliente_id INTEGER, cliente_nombre TEXT,
     base NUMERIC(12,2) DEFAULT 0, iva NUMERIC(5,2) DEFAULT 21,
     cuota_iva NUMERIC(12,2) DEFAULT 0, total NUMERIC(12,2) DEFAULT 0,
     estado TEXT DEFAULT 'emitida', asiento_id INTEGER, creado TEXT
 );
-CREATE TABLE IF NOT EXISTS factura_lineas (
-    id SERIAL PRIMARY KEY, factura_id INTEGER NOT NULL REFERENCES facturas(id) ON DELETE CASCADE,
+CREATE TABLE IF NOT EXISTS finanzas.factura_lineas (
+    id SERIAL PRIMARY KEY, factura_id INTEGER NOT NULL REFERENCES finanzas.facturas(id) ON DELETE CASCADE,
     trip_id TEXT, concepto TEXT, base NUMERIC(12,2) DEFAULT 0,
     iva NUMERIC(5,2) DEFAULT 21, cuota_iva NUMERIC(12,2) DEFAULT 0, total NUMERIC(12,2) DEFAULT 0
 );
@@ -321,17 +321,17 @@ CREATE TABLE IF NOT EXISTS lineas_nomina (
 );
 CREATE INDEX IF NOT EXISTS idx_lineas_nomina_nomina ON lineas_nomina(nomina_id);
 CREATE INDEX IF NOT EXISTS idx_ausencias_empleado ON ausencias(empleado_id);
-ALTER TABLE asientos ADD COLUMN IF NOT EXISTS borrado BOOLEAN DEFAULT false;
-ALTER TABLE asientos ADD COLUMN IF NOT EXISTS borrado_por TEXT;
-ALTER TABLE asientos ADD COLUMN IF NOT EXISTS borrado_en TEXT;
-ALTER TABLE facturas ADD COLUMN IF NOT EXISTS borrado BOOLEAN DEFAULT false;
-ALTER TABLE facturas ADD COLUMN IF NOT EXISTS borrado_por TEXT;
-ALTER TABLE facturas ADD COLUMN IF NOT EXISTS borrado_en TEXT;
+ALTER TABLE finanzas.asientos ADD COLUMN IF NOT EXISTS borrado BOOLEAN DEFAULT false;
+ALTER TABLE finanzas.asientos ADD COLUMN IF NOT EXISTS borrado_por TEXT;
+ALTER TABLE finanzas.asientos ADD COLUMN IF NOT EXISTS borrado_en TEXT;
+ALTER TABLE finanzas.facturas ADD COLUMN IF NOT EXISTS borrado BOOLEAN DEFAULT false;
+ALTER TABLE finanzas.facturas ADD COLUMN IF NOT EXISTS borrado_por TEXT;
+ALTER TABLE finanzas.facturas ADD COLUMN IF NOT EXISTS borrado_en TEXT;
 -- Docs: el binario sale de la BD a disco. storage_key + sha256 en la tabla, content_b64 en desuso.
 ALTER TABLE files ADD COLUMN IF NOT EXISTS storage_key TEXT;
 ALTER TABLE files ADD COLUMN IF NOT EXISTS sha256 TEXT;
 ALTER TABLE files ADD COLUMN IF NOT EXISTS bytes INTEGER;
-ALTER TABLE gastos_vehiculos ADD COLUMN IF NOT EXISTS storage_key TEXT;
+ALTER TABLE finanzas.gastos_vehiculos ADD COLUMN IF NOT EXISTS storage_key TEXT;
 CREATE SCHEMA IF NOT EXISTS maestros;
 CREATE TABLE IF NOT EXISTS maestros.terceros (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -586,13 +586,40 @@ CREATE TABLE IF NOT EXISTS finanzas.ejercicios (
 CREATE OR REPLACE FUNCTION public.chk_asiento_cuadra() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE d NUMERIC; h NUMERIC; aid INTEGER := COALESCE(NEW.asiento_id, OLD.asiento_id);
 BEGIN
-    SELECT COALESCE(SUM(debe),0), COALESCE(SUM(haber),0) INTO d, h FROM apuntes WHERE asiento_id = aid;
+    SELECT COALESCE(SUM(debe),0), COALESCE(SUM(haber),0) INTO d, h FROM finanzas.apuntes WHERE asiento_id = aid;
     IF d <> h THEN RAISE EXCEPTION 'Asiento % descuadrado: debe % / haber %', aid, d, h; END IF;
     RETURN NULL;
 END $$;
-DROP TRIGGER IF EXISTS apuntes_cuadre ON apuntes;
-CREATE CONSTRAINT TRIGGER apuntes_cuadre AFTER INSERT OR UPDATE OR DELETE ON apuntes
+DROP TRIGGER IF EXISTS apuntes_cuadre ON finanzas.apuntes;
+CREATE CONSTRAINT TRIGGER apuntes_cuadre AFTER INSERT OR UPDATE OR DELETE ON finanzas.apuntes
     DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.chk_asiento_cuadra();
+CREATE TABLE IF NOT EXISTS finanzas.vencimientos (
+    id SERIAL PRIMARY KEY,
+    factura_emitida_id INTEGER, factura_recibida_id INTEGER, nomina_id INTEGER,
+    fecha TEXT NOT NULL, importe NUMERIC(12,2) NOT NULL, pagado_en TEXT, asiento_id INTEGER
+);
+CREATE TABLE IF NOT EXISTS finanzas.inmovilizado (
+    id SERIAL PRIMARY KEY,
+    vehiculo_id TEXT UNIQUE, fecha_adquisicion TEXT NOT NULL, coste NUMERIC(12,2) NOT NULL,
+    valor_residual NUMERIC(12,2) DEFAULT 0, vida_util_meses INTEGER NOT NULL,
+    cuenta TEXT NOT NULL, factura_recibida_id INTEGER
+);
+CREATE TABLE IF NOT EXISTS finanzas.amortizaciones (
+    id SERIAL PRIMARY KEY,
+    inmovilizado_id INTEGER NOT NULL REFERENCES finanzas.inmovilizado(id),
+    periodo TEXT NOT NULL, importe NUMERIC(12,2) NOT NULL, asiento_id INTEGER,
+    UNIQUE(inmovilizado_id, periodo)
+);
+-- Vistas de compatibilidad (el código sigue usando los nombres viejos).
+CREATE OR REPLACE VIEW cuentas AS SELECT * FROM finanzas.cuentas;
+CREATE OR REPLACE VIEW asientos AS SELECT * FROM finanzas.asientos;
+CREATE OR REPLACE VIEW apuntes AS SELECT * FROM finanzas.apuntes;
+CREATE OR REPLACE VIEW facturas AS SELECT * FROM finanzas.facturas;
+CREATE OR REPLACE VIEW factura_lineas AS SELECT * FROM finanzas.factura_lineas;
+CREATE OR REPLACE VIEW gastos AS SELECT * FROM finanzas.gastos;
+CREATE OR REPLACE VIEW gastos_vehiculos AS SELECT * FROM finanzas.gastos_vehiculos;
+CREATE OR REPLACE VIEW costes_fijos AS SELECT * FROM finanzas.costes_fijos;
+CREATE OR REPLACE VIEW liquidaciones AS SELECT * FROM finanzas.liquidaciones;
 """
 
 
@@ -668,12 +695,12 @@ def _db():
             cur.execute("ALTER TABLE vehiculos ADD COLUMN IF NOT EXISTS fecha_alta TEXT")
             cur.execute("ALTER TABLE vehiculos ADD COLUMN IF NOT EXISTS cuota_mensual NUMERIC(12,2) DEFAULT 0")
             cur.execute("ALTER TABLE files ADD COLUMN IF NOT EXISTS vehiculo_id TEXT")
-            cur.execute("ALTER TABLE asientos ADD COLUMN IF NOT EXISTS origen_id TEXT")
+            cur.execute("ALTER TABLE finanzas.asientos ADD COLUMN IF NOT EXISTS origen_id TEXT")
             cur.execute("ALTER TABLE mensajes ADD COLUMN IF NOT EXISTS terminal TEXT")
-            cur.execute("ALTER TABLE gastos_vehiculos ADD COLUMN IF NOT EXISTS base_imponible NUMERIC(12,2) DEFAULT 0")
-            cur.execute("ALTER TABLE gastos_vehiculos ADD COLUMN IF NOT EXISTS iva NUMERIC(6,2) DEFAULT 21")
-            cur.execute("ALTER TABLE gastos_vehiculos ADD COLUMN IF NOT EXISTS cuenta_contable_gasto TEXT")
-            cur.execute("ALTER TABLE gastos_vehiculos ADD COLUMN IF NOT EXISTS estado_pago TEXT DEFAULT 'Pendiente'")
+            cur.execute("ALTER TABLE finanzas.gastos_vehiculos ADD COLUMN IF NOT EXISTS base_imponible NUMERIC(12,2) DEFAULT 0")
+            cur.execute("ALTER TABLE finanzas.gastos_vehiculos ADD COLUMN IF NOT EXISTS iva NUMERIC(6,2) DEFAULT 21")
+            cur.execute("ALTER TABLE finanzas.gastos_vehiculos ADD COLUMN IF NOT EXISTS cuenta_contable_gasto TEXT")
+            cur.execute("ALTER TABLE finanzas.gastos_vehiculos ADD COLUMN IF NOT EXISTS estado_pago TEXT DEFAULT 'Pendiente'")
             cur.execute("ALTER TABLE mantenimientos ADD COLUMN IF NOT EXISTS fecha_fin TEXT")
             cur.execute("ALTER TABLE empleados ADD COLUMN IF NOT EXISTS caducidad_carnet TEXT")
             cur.execute("ALTER TABLE empleados ADD COLUMN IF NOT EXISTS caducidad_cap TEXT")
@@ -689,14 +716,14 @@ def _db():
             cur.execute("ALTER TABLE trips ADD COLUMN IF NOT EXISTS payload TEXT")
             cur.execute("ALTER TABLE trips ADD COLUMN IF NOT EXISTS referencia TEXT")
             cur.execute("ALTER TABLE trips ADD COLUMN IF NOT EXISTS ecmr_id TEXT")
-            cur.execute("ALTER TABLE facturas ADD COLUMN IF NOT EXISTS coste NUMERIC(12,2) DEFAULT 0")
-            cur.execute("ALTER TABLE facturas ADD COLUMN IF NOT EXISTS margen NUMERIC(12,2) DEFAULT 0")
-            cur.execute("ALTER TABLE liquidaciones ADD COLUMN IF NOT EXISTS conductor_id INTEGER")
-            cur.execute("ALTER TABLE liquidaciones ADD COLUMN IF NOT EXISTS viaje_id TEXT")
-            cur.execute("ALTER TABLE gastos ADD COLUMN IF NOT EXISTS trip_id TEXT")
-            cur.execute("ALTER TABLE gastos ADD COLUMN IF NOT EXISTS iva NUMERIC(5,2) DEFAULT 21")
-            cur.execute("ALTER TABLE gastos ADD COLUMN IF NOT EXISTS retencion NUMERIC(5,2) DEFAULT 0")
-            cur.execute("ALTER TABLE gastos ADD COLUMN IF NOT EXISTS pagado BOOLEAN DEFAULT false")
+            cur.execute("ALTER TABLE finanzas.facturas ADD COLUMN IF NOT EXISTS coste NUMERIC(12,2) DEFAULT 0")
+            cur.execute("ALTER TABLE finanzas.facturas ADD COLUMN IF NOT EXISTS margen NUMERIC(12,2) DEFAULT 0")
+            cur.execute("ALTER TABLE finanzas.liquidaciones ADD COLUMN IF NOT EXISTS conductor_id INTEGER")
+            cur.execute("ALTER TABLE finanzas.liquidaciones ADD COLUMN IF NOT EXISTS viaje_id TEXT")
+            cur.execute("ALTER TABLE finanzas.gastos ADD COLUMN IF NOT EXISTS trip_id TEXT")
+            cur.execute("ALTER TABLE finanzas.gastos ADD COLUMN IF NOT EXISTS iva NUMERIC(5,2) DEFAULT 21")
+            cur.execute("ALTER TABLE finanzas.gastos ADD COLUMN IF NOT EXISTS retencion NUMERIC(5,2) DEFAULT 0")
+            cur.execute("ALTER TABLE finanzas.gastos ADD COLUMN IF NOT EXISTS pagado BOOLEAN DEFAULT false")
             cur.execute("ALTER TABLE trips ADD COLUMN IF NOT EXISTS peaje_km NUMERIC(10,1) DEFAULT 0")
             cur.execute("ALTER TABLE trips ADD COLUMN IF NOT EXISTS peaje_estimado NUMERIC(10,2) DEFAULT 0")
             cur.execute("ALTER TABLE trips ADD COLUMN IF NOT EXISTS peaje_fuente TEXT")
@@ -737,7 +764,7 @@ def _db():
                 despues TEXT,
                 ts TEXT
             )""")
-            for _t in ("asientos", "facturas"):
+            for _t in ("finanzas.asientos", "finanzas.facturas"):
                 cur.execute(f"ALTER TABLE {_t} ADD COLUMN IF NOT EXISTS borrado BOOLEAN DEFAULT false")
                 cur.execute(f"ALTER TABLE {_t} ADD COLUMN IF NOT EXISTS borrado_por TEXT")
                 cur.execute(f"ALTER TABLE {_t} ADD COLUMN IF NOT EXISTS borrado_en TEXT")
@@ -760,7 +787,7 @@ def _db():
                     "ON CONFLICT (nombre) DO NOTHING",
                     (c,),
                 )
-            cur.execute("ALTER TABLE gastos ADD COLUMN IF NOT EXISTS cuenta TEXT")
+            cur.execute("ALTER TABLE finanzas.gastos ADD COLUMN IF NOT EXISTS cuenta TEXT")
             cur.execute("ALTER TABLE categorias_gasto ADD COLUMN IF NOT EXISTS cuenta TEXT")
             for cat, cuenta in _CATEGORIA_CUENTA.items():
                 cur.execute("UPDATE categorias_gasto SET cuenta=%s WHERE nombre=%s AND cuenta IS NULL", (cuenta, cat))
@@ -772,7 +799,7 @@ def _db():
                 )
             for cod, nom, grupo, tipo, orden in _PLAN_CONTABLE:
                 cur.execute(
-                    "INSERT INTO cuentas (codigo, nombre, grupo, tipo, orden) VALUES (%s,%s,%s,%s,%s) "
+                    "INSERT INTO finanzas.cuentas (codigo, nombre, grupo, tipo, orden) VALUES (%s,%s,%s,%s,%s) "
                     "ON CONFLICT (codigo) DO NOTHING",
                     (cod, nom, grupo, tipo, orden),
                 )
