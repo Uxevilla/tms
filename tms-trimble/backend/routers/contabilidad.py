@@ -818,13 +818,18 @@ def _desglose_costes(conn, trip_id):
 
 
 def _factura_numero(conn, fecha):
-    fr = conn.execute("SELECT numero FROM facturas WHERE substr(fecha,1,4)=?", (fecha[:4],)).fetchall()
+    anio = fecha[:4]
+    row = conn.execute("SELECT ultimo FROM finanzas.series WHERE codigo='F'").fetchone()
+    # Máximo ya emitido (por si el contador va por detrás tras una migración).
+    fr = conn.execute("SELECT numero FROM facturas WHERE substr(fecha,1,4)=?", (anio,)).fetchall()
     max_n = 0
     for r in fr:
         m = re.match(r"^F-\d{4}-(\d+)$", r["numero"] or "")
         if m:
             max_n = max(max_n, int(m.group(1)))
-    return f"F-{fecha[:4]}-{max_n + 1:04d}"
+    nxt = max((row["ultimo"] if row else 0), max_n) + 1
+    conn.execute("UPDATE finanzas.series SET ultimo=? WHERE codigo='F'", (nxt,))
+    return f"F-{anio}-{nxt:04d}"
 
 
 

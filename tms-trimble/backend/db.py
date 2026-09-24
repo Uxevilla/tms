@@ -610,6 +610,22 @@ CREATE TABLE IF NOT EXISTS finanzas.amortizaciones (
     periodo TEXT NOT NULL, importe NUMERIC(12,2) NOT NULL, asiento_id INTEGER,
     UNIQUE(inmovilizado_id, periodo)
 );
+CREATE TABLE IF NOT EXISTS finanzas.facturas_recibidas (
+    id SERIAL PRIMARY KEY,
+    proveedor_id INTEGER, numero_proveedor TEXT, fecha TEXT NOT NULL, vencimiento TEXT,
+    base NUMERIC(12,2) DEFAULT 0, cuota_iva NUMERIC(12,2) DEFAULT 0,
+    retencion NUMERIC(12,2) DEFAULT 0, total NUMERIC(12,2) DEFAULT 0,
+    estado TEXT DEFAULT 'pendiente', origen TEXT DEFAULT 'manual',
+    asiento_id INTEGER, creado_en TIMESTAMPTZ DEFAULT now(),
+    UNIQUE(proveedor_id, numero_proveedor)
+);
+CREATE TABLE IF NOT EXISTS finanzas.facturas_recibidas_lineas (
+    id SERIAL PRIMARY KEY,
+    factura_id INTEGER NOT NULL REFERENCES finanzas.facturas_recibidas(id) ON DELETE CASCADE,
+    categoria_id INTEGER, cuenta TEXT, vehiculo_id TEXT, viaje_id TEXT,
+    concepto TEXT, litros NUMERIC(10,2) DEFAULT 0, base NUMERIC(12,2) DEFAULT 0, iva_pct NUMERIC(5,2) DEFAULT 21
+);
+INSERT INTO finanzas.series (codigo, ultimo) VALUES ('F', 0), ('A', 0) ON CONFLICT (codigo) DO NOTHING;
 -- Vistas de compatibilidad (el código sigue usando los nombres viejos).
 CREATE OR REPLACE VIEW cuentas AS SELECT * FROM finanzas.cuentas;
 CREATE OR REPLACE VIEW asientos AS SELECT * FROM finanzas.asientos;
