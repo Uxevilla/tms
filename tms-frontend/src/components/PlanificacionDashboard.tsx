@@ -1,10 +1,21 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { CalendarDays, CalendarRange, ChevronLeft, ChevronRight, Undo2, X, AlertTriangle } from "lucide-react";
+import { useNavigate } from "@tanstack/react-router";
+import {
+  CalendarDays, CalendarRange, ChevronLeft, ChevronRight, X, AlertTriangle,
+  Truck, Loader2, Send, Undo2, UserRound, Container, DoorOpen, Info, CornerUpLeft,
+} from "lucide-react";
 
-import { api } from "@/api";
-import { REST_ASIGNAR, REST_CONDUCTORES, REST_PLANIFICACION, REST_PLANIFICACION_VALIDAR, REST_VEHICULOS_DISPONIBLES } from "@/config";
-import type { ValidacionResultado, VehiculoPlanificacion, ViajePlanificacion } from "@/types";
+import { api, ApiError } from "@/api";
+import {
+  REST_CONDUCTORES, REST_ENVIAR, REST_PLANIFICACION, REST_PLANIFICACION_MOVER,
+  REST_PLANIFICACION_VALIDAR, REST_QUITAR_TERMINAL, REST_VEHICULOS_DISPONIBLES,
+} from "@/config";
+import {
+  ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator,
+  ContextMenuSub, ContextMenuSubContent, ContextMenuSubTrigger, ContextMenuTrigger,
+} from "@/components/ui/context-menu";
+import type { ValidacionMotivo, VehiculoPlanificacion, ViajePlanificacion } from "@/types";
 
 type Vista = "dia" | "semana";
 
@@ -25,17 +36,22 @@ interface Toast {
   texto: string;
   tipo: "error" | "info";
 }
-interface EnvioPendiente {
-  timer: number;
-  v: ViajePlanificacion;
-  tractora: string;
-  semi: string;
-  cond: number | null;
-  conductorNombre: string;
+interface Asignacion {
+  terminal: string;
+  semirremolque_id: string;
+  conductor_id: number | null;
+  inicio: string;
+  fin: string;
+}
+interface Confirmacion {
+  viaje: ViajePlanificacion;
+  destino: Asignacion;
+  enCurso: boolean;
 }
 
 const ROW_H = 56;
 const DIA_NOMBRES = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"];
+const ESTADOS_EN_CURSO = ["Llegada_Origen", "Cargando", "En_Transito", "Llegada_Destino", "Descargando"];
 
 function aTs(iso: string): number {
   if (!iso) return NaN;
@@ -53,9 +69,24 @@ function fmtHora(iso: string): string {
   if (isNaN(d.getTime())) return "—";
   return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 }
+function fmtLocalISO(d: Date): string {
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mm = String(d.getMinutes()).padStart(2, "0");
+  return `${d.getFullYear()}-${m}-${dd}T${hh}:${mm}`;
+}
+
+function enTrimble(v: ViajePlanificacion): boolean {
+  return v.estado === "enviado" || ESTADOS_EN_CURSO.includes(v.estado);
+}
+function enCursoEstado(v: ViajePlanificacion): boolean {
+  return ESTADOS_EN_CURSO.includes(v.estado);
+}
 
 export function PlanificacionDashboard() {
   const qc = useQueryClient();
+  const navigate = useNavigate();
   const [vista, setVista] = useState<Vista>("dia");
   const [pxHora, setPxHora] = useState(48);
   const [anchor, setAnchor] = useState(() => {
@@ -63,19 +94,15 @@ export function PlanificacionDashboard() {
     return new Date(h.getFullYear(), h.getMonth(), h.getDate());
   });
 
-  // Rango visible: día completo o semana (lunes→domingo), según la vista.
   const rango = useMemo(() => {
-    if (vista === "dia") {
-      return { desde: anchor, hasta: new Date(anchor.getTime() + 86400000) };
-    }
-    const dow = (anchor.getDay() + 6) % 7; // lunes = 0
+    if (vista === "dia") return { desde: anchor, hasta: new Date(anchor.getTime() + 86400000) };
+    const dow = (anchor.getDay() + 6) % 7;
     const desde = new Date(anchor.getTime() - dow * 86400000);
     return { desde, hasta: new Date(desde.getTime() + 7 * 86400000) };
   }, [anchor, vista]);
   const desdeISO = fmtDiaLocal(rango.desde);
   const hastaISO = fmtDiaLocal(rango.hasta);
 
-  // UNA sola query para vehículos y viajes (el WS invalida esta misma clave).
   const plan = useQuery({
     queryKey: ["planificacion", desdeISO, hastaISO],
     queryFn: () =>
@@ -87,17 +114,18 @@ export function PlanificacionDashboard() {
   const tractoras = plan.data?.vehiculos ?? [];
   const listaBase = plan.data?.viajes ?? [];
 
-  // Asignaciones pendientes (ventana de deshacer / envío en curso): estado APARTE que se aplica
-  // ENCIMA de plan.data con useMemo. Así un refetch (WS o refetchInterval) no devuelve el viaje
-  // a Pendientes mientras el envío está pendiente (no se toca la caché).
-  const [enCurso, setEnCurso] = useState<Record<string, { terminal: string; semirremolque_id: string; conductor_id: number | null }>>({});
+  // ---- Estado de movimientos en curso: APARTE de la caché (un refetch/WS no lo pisa) ----
+  const [enCurso, setEnCurso] = useState<Record<string, Asignacion>>({});
+  const [avisosViaje, setAvisosViaje] = useState<Record<string, ValidacionMotivo[]>>({});
+  const [erroresViaje, setErroresViaje] = useState<Record<string, string>>({});
+  const [guardando, setGuardando] = useState<Set<string>>(new Set());
+  const [historial, setHistorial] = useState<{ id: string; destino: Asignacion }[]>([]);
 
-  // Aplicar las asignaciones en curso ENCIMA de los datos del servidor (sin tocar la caché).
   const lista = useMemo(() => {
     if (Object.keys(enCurso).length === 0) return listaBase;
     return listaBase.map((v) => {
       const pend = enCurso[v.id];
-      return pend ? { ...v, terminal: pend.terminal, semirremolque_id: pend.semirremolque_id, conductor_id: pend.conductor_id } : v;
+      return pend ? { ...v, terminal: pend.terminal, semirremolque_id: pend.semirremolque_id, conductor_id: pend.conductor_id, inicio: pend.inicio, fin: pend.fin } : v;
     });
   }, [listaBase, enCurso]);
   const pendientes = useMemo(() => lista.filter((v) => !v.terminal), [lista]);
@@ -105,8 +133,7 @@ export function PlanificacionDashboard() {
 
   const semirremolques = useQuery({
     queryKey: ["planificacion-semirremolques"],
-    queryFn: () =>
-      api<{ vehiculos: Semirremolque[] }>(`${REST_VEHICULOS_DISPONIBLES}?categoria=semirremolque`).then((r) => r.vehiculos),
+    queryFn: () => api<{ vehiculos: Semirremolque[] }>(`${REST_VEHICULOS_DISPONIBLES}?categoria=semirremolque`).then((r) => r.vehiculos),
     refetchInterval: 60000,
   });
   const conductores = useQuery({
@@ -115,7 +142,6 @@ export function PlanificacionDashboard() {
     refetchInterval: 60000,
   });
 
-  // ---- Eje de tiempo: posición relativa al inicio del rango visible + recorte ----
   const desdeTs = rango.desde.getTime();
   const hastaTs = rango.hasta.getTime();
   const span = hastaTs - desdeTs;
@@ -125,13 +151,13 @@ export function PlanificacionDashboard() {
     const i = aTs(v.inicio);
     const f = aTs(v.fin);
     if (isNaN(i) || isNaN(f)) return null;
-    if (f <= desdeTs || i >= hastaTs) return null; // fuera de rango: no se pinta
+    if (f <= desdeTs || i >= hastaTs) return null;
     const s = Math.max(i, desdeTs);
     const e = Math.min(f, hastaTs);
     return { left: ((s - desdeTs) / span) * totalWidth, width: Math.max(2, ((e - s) / span) * totalWidth) };
   };
 
-  // ---- Toasts (en lugar de window.alert) ----
+  // ---- Toasts ----
   const toastIdRef = useRef(0);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const toast = useCallback((texto: string, tipo: "error" | "info" = "info") => {
@@ -140,46 +166,156 @@ export function PlanificacionDashboard() {
     window.setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 4500);
   }, []);
 
-  // ---- Arrastre ----
+  // ---- Preselección: último semirremolque/conductor usado con una tractora ----
+  const ultimoUsado = useCallback(
+    (tractora: string): { semi: string; cond: number | null } => {
+      const usados = lista
+        .filter((v) => v.terminal === tractora)
+        .sort((a, b) => (b.inicio || "").localeCompare(a.inicio || ""));
+      return {
+        semi: usados.find((v) => v.semirremolque_id)?.semirremolque_id ?? "",
+        cond: usados.find((v) => v.conductor_id)?.conductor_id ?? null,
+      };
+    },
+    [lista],
+  );
+
+  // ---- x → tiempo (saltos de 15 min) ----
+  const ejeRef = useRef<HTMLDivElement>(null);
+  const xATiempo = useCallback((clientX: number): string => {
+    const eje = ejeRef.current;
+    if (!eje) return "";
+    const rect = eje.getBoundingClientRect();
+    const x = clientX - rect.left + eje.scrollLeft - 160; // - columna de matrícula
+    const ms = desdeTs + (x / pxHora) * 3600000;
+    const snapped = Math.round(ms / 900000) * 900000;
+    return fmtLocalISO(new Date(snapped));
+  }, [desdeTs, pxHora]);
+
+  // ---- mover (optimista + enCurso + avisos + historial + reversión) ----
+  const moverViaje = useCallback(
+    async (v: ViajePlanificacion, destino: Asignacion, force = false) => {
+      const anterior = { terminal: v.terminal, semirremolque_id: v.semirremolque_id, conductor_id: v.conductor_id, inicio: v.inicio, fin: v.fin };
+      setEnCurso((cur) => ({ ...cur, [v.id]: destino }));
+      setGuardando((prev) => new Set(prev).add(v.id));
+      try {
+        const r = await api<{ ok: boolean; avisos: ValidacionMotivo[] }>(REST_PLANIFICACION_MOVER, {
+          method: "POST",
+          body: JSON.stringify({ trip_id: v.id, ...destino, force }),
+        });
+        if (r.avisos && r.avisos.length > 0) setAvisosViaje((cur) => ({ ...cur, [v.id]: r.avisos }));
+        else setAvisosViaje((cur) => { const n = { ...cur }; delete n[v.id]; return n; });
+        // Historial para Ctrl+Z solo si NO tocó Trimble (movimiento local).
+        if (!enTrimble(v)) setHistorial((h) => [...h, { id: v.id, destino: anterior }]);
+      } catch (e) {
+        setEnCurso((cur) => { const n = { ...cur }; delete n[v.id]; return n; });
+        const err = e as ApiError;
+        const inner = (err.detail as { bloqueos?: ValidacionMotivo[]; error?: string; detail?: { error?: string } }) ?? {};
+        const motivo = inner.bloqueos?.map((b) => b.mensaje).join(" · ") || inner.detail?.error || inner.error || err.message;
+        toast(`No se pudo mover: ${motivo}`, "error");
+      } finally {
+        setGuardando((prev) => { const n = new Set(prev); n.delete(v.id); return n; });
+      }
+    },
+    [],
+  );
+
+  // ---- Enviar al terminal (Safe-Dispatching con "Enviar igualmente") ----
+  const [forzarEnvio, setForzarEnvio] = useState<{ viaje: ViajePlanificacion; motivo: string } | null>(null);
+  const enviarViaje = useCallback(
+    async (v: ViajePlanificacion, force = false) => {
+      setGuardando((prev) => new Set(prev).add(v.id));
+      try {
+        await api(REST_ENVIAR(v.id) + (force ? "?force=true" : ""), { method: "POST" });
+        await qc.invalidateQueries({ queryKey: ["planificacion"] });
+        setErroresViaje((cur) => { const n = { ...cur }; delete n[v.id]; return n; });
+        toast("Viaje enviado al terminal.");
+      } catch (e) {
+        const err = e as ApiError;
+        const inner = (err.detail as { error?: string; detail?: { forzar?: boolean; error?: string } }) ?? {};
+        const motivo = inner.detail?.error || inner.error || err.message;
+        if (inner.detail?.forzar) setForzarEnvio({ viaje: v, motivo });
+        else { setErroresViaje((cur) => ({ ...cur, [v.id]: motivo })); toast(motivo, "error"); }
+      } finally {
+        setGuardando((prev) => { const n = new Set(prev); n.delete(v.id); return n; });
+      }
+    },
+    [qc, toast],
+  );
+
+  // ---- Quitar del terminal (conserva la tractora, sin enviar) ----
+  const quitarTerminal = useCallback(
+    async (v: ViajePlanificacion) => {
+      setGuardando((prev) => new Set(prev).add(v.id));
+      try {
+        await api(REST_QUITAR_TERMINAL(v.id), { method: "POST" });
+        await qc.invalidateQueries({ queryKey: ["planificacion"] });
+        toast("Viaje quitado del terminal (queda planificado).");
+      } catch (e) {
+        const err = e as ApiError;
+        toast(err.message, "error");
+      } finally {
+        setGuardando((prev) => { const n = new Set(prev); n.delete(v.id); return n; });
+      }
+    },
+    [qc, toast],
+  );
+
+  // ---- Confirmación de aviso (enviado/en curso) ----
+  const [confirmacion, setConfirmacion] = useState<Confirmacion | null>(null);
+  const confirmarRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (confirmacion) confirmarRef.current?.focus();
+  }, [confirmacion]);
+  useEffect(() => {
+    if (!confirmacion) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Enter") { e.preventDefault(); confirmarRef.current?.click(); }
+      if (e.key === "Escape") { e.preventDefault(); setConfirmacion(null); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [confirmacion]);
+
+  const aceptarConfirmacion = () => {
+    if (!confirmacion) return;
+    const { viaje, destino, enCurso: ec } = confirmacion;
+    setConfirmacion(null);
+    moverViaje(viaje, destino, ec);
+  };
+
+  // ---- Arrastre (soltar = mover al momento; el validar solo colorea) ----
   const [arrastre, setArrastre] = useState<ViajePlanificacion | null>(null);
   const [sobreTractora, setSobreTractora] = useState<string | null>(null);
-  const [validacion, setValidacion] = useState<ValidacionResultado | null>(null);
+  const [validacion, setValidacion] = useState<{ ok: boolean; bloqueos: ValidacionMotivo[]; avisos: ValidacionMotivo[] } | null>(null);
   const [validacionError, setValidacionError] = useState(false);
-  const [popover, setPopover] = useState<{ viaje: ViajePlanificacion; tractora: string; x: number; y: number } | null>(null);
-  const [confirmacion, setConfirmacion] = useState<{ viaje: ViajePlanificacion; tractora: string; x: number; y: number; avisos: ValidacionResultado["avisos"] } | null>(null);
-  const [toastUndo, setToastUndo] = useState<{ viaje: ViajePlanificacion; tractora: string } | null>(null);
-
-  const validacionRef = useRef<ValidacionResultado | null>(null);
+  const arrastreRef = useRef<ViajePlanificacion | null>(null);
+  const sobreTractoraRef = useRef<string | null>(null);
+  const validacionRef = useRef<{ ok: boolean; bloqueos: ValidacionMotivo[]; avisos: ValidacionMotivo[] } | null>(null);
   const validacionErrorRef = useRef(false);
   const validacionGen = useRef(0);
   const abortRef = useRef<AbortController | null>(null);
-  const pendientesEnvioRef = useRef<Map<string, EnvioPendiente>>(new Map());
-  const arrastreRef = useRef<ViajePlanificacion | null>(null);
-  const sobreTractoraRef = useRef<string | null>(null);
 
   const validar = useCallback(
-    async (v: ViajePlanificacion, tractora: string, semi: string, cond: number | null, signal?: AbortSignal): Promise<ValidacionResultado | null> => {
+    async (v: ViajePlanificacion, tractora: string, semi: string, cond: number | null, signal?: AbortSignal) => {
       try {
-        return await api<ValidacionResultado>(REST_PLANIFICACION_VALIDAR, {
+        return await api<{ ok: boolean; bloqueos: ValidacionMotivo[]; avisos: ValidacionMotivo[] }>(REST_PLANIFICACION_VALIDAR, {
           method: "POST",
           body: JSON.stringify({
-            trip_id: v.id, terminal: tractora,
-            semirremolque_id: semi, remolque_id: v.remolque_id,
-            conductor_id: cond, inicio: v.inicio, fin: v.fin,
-            kilos: v.kilos, palets: v.palets,
+            trip_id: v.id, terminal: tractora, semirremolque_id: semi, remolque_id: v.remolque_id,
+            conductor_id: cond, inicio: v.inicio, fin: v.fin, kilos: v.kilos, palets: v.palets,
           }),
           signal,
         });
       } catch (e) {
         if ((e as Error).name === "AbortError") return null;
-        console.error("[planificacion] error validando asignación:", e);
+        console.error("[planificacion] error validando:", e);
         return null;
       }
     },
     [],
   );
 
-  // Validar (debounce + cancelación) cuando el puntero está sobre una tractora.
   useEffect(() => {
     validacionGen.current += 1;
     validacionRef.current = null;
@@ -191,8 +327,11 @@ export function PlanificacionDashboard() {
     const ac = new AbortController();
     abortRef.current?.abort();
     abortRef.current = ac;
+    const semi = ultimoUsado(sobreTractora).semi;
+    const cond = ultimoUsado(sobreTractora).cond;
     const timer = window.setTimeout(() => {
-      validar(arrastre, sobreTractora, arrastre.semirremolque_id, arrastre.conductor_id, ac.signal).then((r) => {
+      validar(arrastre, sobreTractora, semi, cond, ac.signal).then((r) => {
+        if (ac.signal.aborted) return;
         if (gen === validacionGen.current) {
           validacionRef.current = r;
           validacionErrorRef.current = r === null;
@@ -201,126 +340,42 @@ export function PlanificacionDashboard() {
         }
       });
     }, 150);
-    return () => {
-      window.clearTimeout(timer);
-      ac.abort();
-    };
-  }, [arrastre, sobreTractora, validar]);
+    return () => { window.clearTimeout(timer); ac.abort(); };
+  }, [arrastre, sobreTractora, validar, ultimoUsado]);
 
-  // Envío real a Trimble (POST /asignar): se llama al terminar los 10 s de deshacer.
-  const enviar = useCallback(
-    async (p: EnvioPendiente) => {
-      pendientesEnvioRef.current.delete(p.v.id);
-      setToastUndo((t) => (t && t.viaje.id === p.v.id ? null : t));
-      try {
-        await api(REST_ASIGNAR(p.v.id), {
-          method: "POST",
-          body: JSON.stringify({
-            terminal: p.tractora, semirremolque_id: p.semi, remolque_id: "",
-            conductor: p.conductorNombre, conductor_id: p.cond,
-          }),
-        });
-        // Éxito: invalidar (el refetch ya devuelve el viaje asignado) y luego quitar de enCurso.
-        await qc.invalidateQueries({ queryKey: ["planificacion"] });
-        setEnCurso((cur) => {
-          const n = { ...cur };
-          delete n[p.v.id];
-          return n;
-        });
-      } catch (e) {
-        console.error("[planificacion] fallo al asignar:", e);
-        setEnCurso((cur) => {
-          const n = { ...cur };
-          delete n[p.v.id];
-          return n;
-        });
-        toast("No se pudo asignar el viaje a Trimble. Se ha revertido.", "error");
-      }
-    },
-    [qc, toast],
-  );
-
-  // Al salir de la pantalla con un envío pendiente, se envía de inmediato.
-  const enviarRef = useRef(enviar);
-  enviarRef.current = enviar;
-  useEffect(() => {
-    return () => {
-      pendientesEnvioRef.current.forEach((p) => {
-        window.clearTimeout(p.timer);
-        enviarRef.current(p);
-      });
-      pendientesEnvioRef.current.clear();
-    };
-  }, []);
-
-  const confirmarAsignacion = useCallback(
-    (v: ViajePlanificacion, tractora: string, semi: string, cond: number | null) => {
-      // Cancelar un envío pendiente anterior (reasignación).
-      const prev = pendientesEnvioRef.current.get(v.id);
-      if (prev) {
-        window.clearTimeout(prev.timer);
-        pendientesEnvioRef.current.delete(v.id);
-      }
-      const conductorNombre = conductores.data?.find((c) => c.id === cond)?.nombre ?? "";
-      // Optimista en estado aparte (no en la caché): el viaje pasa a la tractora al instante.
-      setEnCurso((cur) => ({ ...cur, [v.id]: { terminal: tractora, semirremolque_id: semi, conductor_id: cond } }));
-      setPopover(null);
-      const pendiente: EnvioPendiente = { timer: 0, v, tractora, semi, cond, conductorNombre };
-      pendiente.timer = window.setTimeout(() => enviar(pendiente), 10000);
-      pendientesEnvioRef.current.set(v.id, pendiente);
-      setToastUndo({ viaje: v, tractora });
-    },
-    [conductores.data, enviar],
-  );
-
-  // Deshacer (o soltar en "Pendientes"): cancelar el temporizador y quitar de enCurso,
-  // SIN llamadas al servidor (el viaje aún no se ha despachado a Trimble).
-  const desasignar = useCallback(
-    (v: ViajePlanificacion) => {
-      const p = pendientesEnvioRef.current.get(v.id);
-      if (p) {
-        window.clearTimeout(p.timer);
-        pendientesEnvioRef.current.delete(v.id);
-      }
-      setEnCurso((cur) => {
-        const n = { ...cur };
-        delete n[v.id];
-        return n;
-      });
-      setToastUndo(null);
-    },
-    [],
-  );
-
-  const decidirSoltar = useCallback(
-    (v: ViajePlanificacion, tractora: string, x: number, y: number) => {
-      if (validacionErrorRef.current) {
-        toast("No se pudo validar la asignación", "error");
-        return;
-      }
-      const r = validacionRef.current;
-      if (!r) {
-        toast("Aún validando la asignación, espera un instante…", "info");
-      } else if (r.bloqueos.length > 0) {
-        toast("No se puede asignar: " + r.bloqueos.map((b) => b.mensaje).join(" · "), "error");
-      } else if (r.avisos.length > 0) {
-        setConfirmacion({ viaje: v, tractora, x, y, avisos: r.avisos });
-      } else {
-        setPopover({ viaje: v, tractora, x, y });
-      }
-    },
-    [toast],
-  );
-
-  // Iniciar arrastre (estado + ref para que los listeners lean siempre el valor vivo).
   const iniciarArrastre = useCallback((v: ViajePlanificacion) => {
     arrastreRef.current = v;
     setArrastre(v);
   }, []);
 
-  // Seguimiento del puntero durante el arrastre. Registrado UNA vez (deps estables);
-  // el estado vive en refs para no perder eventos pointermove al re-registrar el listener
-  // en cada cambio de tractora (causa de la flakiness del arrastre en CI).
+  const soltar = useCallback(
+    (v: ViajePlanificacion, tractora: string | null, clientX: number) => {
+      const inicio = xATiempo(clientX);
+      const dur = (aTs(v.fin) - aTs(v.inicio)) || (v.tiempo_min * 60000);
+      const finMs = aTs(inicio) + (isNaN(dur) ? 0 : dur);
+      const fin = isNaN(aTs(inicio)) ? v.fin : fmtLocalISO(new Date(finMs));
+      const cambia = tractora !== v.terminal;
+      // Reasignación a OTRA tractora → preseleccionar el último semi/conductor; mismo tractora
+      // (mover en horizontal) → conservar el semi/conductor actual.
+      const semi = cambia ? (tractora ? ultimoUsado(tractora).semi : "") : v.semirremolque_id;
+      const cond = cambia ? (tractora ? ultimoUsado(tractora).cond : null) : v.conductor_id;
+      const destino: Asignacion = { terminal: tractora ?? "", semirremolque_id: semi, conductor_id: cond, inicio: inicio || v.inicio, fin };
+
+      // Bloqueos → no soltar + toast (el servidor re-valida, pero el color ya lo anticipa).
+      if (validacionErrorRef.current) { toast("No se pudo validar la asignación", "error"); return; }
+      if (validacionRef.current && validacionRef.current.bloqueos.length > 0) {
+        toast("No se puede asignar: " + validacionRef.current.bloqueos.map((b) => b.mensaje).join(" · "), "error");
+        return;
+      }
+      if (cambia && enTrimble(v)) {
+        setConfirmacion({ viaje: v, destino, enCurso: enCursoEstado(v) });
+      } else {
+        moverViaje(v, destino);
+      }
+    },
+    [xATiempo, ultimoUsado, moverViaje, toast],
+  );
+
   useEffect(() => {
     const onMove = (e: PointerEvent) => {
       const el = document.elementFromPoint(e.clientX, e.clientY)?.closest?.("[data-tractora]") as HTMLElement | null;
@@ -336,8 +391,8 @@ export function PlanificacionDashboard() {
       const el = document.elementFromPoint(e.clientX, e.clientY)?.closest?.("[data-tractora]") as HTMLElement | null;
       const tid = el?.getAttribute("data-tractora") ?? null;
       if (v) {
-        if (enPendientes && v.terminal) desasignar(v);
-        else if (tid) decidirSoltar(v, tid, e.clientX, e.clientY);
+        if (enPendientes) soltar(v, null, e.clientX);
+        else if (tid) soltar(v, tid, e.clientX);
       }
       arrastreRef.current = null;
       sobreTractoraRef.current = null;
@@ -354,10 +409,26 @@ export function PlanificacionDashboard() {
       document.removeEventListener("pointermove", onMove);
       document.removeEventListener("pointerup", onUp);
     };
-  }, [decidirSoltar, desasignar]);
+  }, [soltar]);
 
-  // Zoom con Ctrl+rueda (cambia px/hora); rueda sola = scroll. Necesita listener no pasivo.
-  const ejeRef = useRef<HTMLDivElement>(null);
+  // ---- Ctrl+Z: deshacer el último movimiento que no tocó Trimble ----
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!e.ctrlKey || e.key.toLowerCase() !== "z") return;
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT")) return;
+      e.preventDefault();
+      if (historial.length === 0) return;
+      const ult = historial[historial.length - 1];
+      const viajeActual = lista.find((x) => x.id === ult.id);
+      if (viajeActual) moverViaje(viajeActual, ult.destino);
+      setHistorial((h) => h.slice(0, -1));
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [moverViaje, lista, historial]);
+
+  // ---- Zoom Ctrl+rueda ----
   useEffect(() => {
     const el = ejeRef.current;
     if (!el) return;
@@ -371,8 +442,6 @@ export function PlanificacionDashboard() {
     return () => el.removeEventListener("wheel", onWheel);
   }, []);
 
-  const noEnviado = (v: ViajePlanificacion) => !v.estado || v.estado === "sin_asignar";
-
   const colorValidacion = !sobreTractora
     ? ""
     : validacionError
@@ -385,26 +454,17 @@ export function PlanificacionDashboard() {
             ? "ring-2 ring-inset ring-amber-500/70 bg-amber-500/10"
             : "ring-2 ring-inset ring-green-500/70 bg-green-500/10";
 
-  const tooltipValidacion = validacionError
-    ? "⛔ No se pudo validar"
-    : validacion
-      ? [...validacion.bloqueos.map((b) => `⛔ ${b.mensaje}`), ...validacion.avisos.map((a) => `⚠️ ${a.mensaje}`)].join("\n")
-      : "";
-
   const etiquetaRango = useMemo(() => {
-    if (vista === "dia") {
-      return new Intl.DateTimeFormat("es-ES", { weekday: "long", day: "numeric", month: "long", year: "numeric" }).format(rango.desde);
-    }
+    if (vista === "dia") return new Intl.DateTimeFormat("es-ES", { weekday: "long", day: "numeric", month: "long", year: "numeric" }).format(rango.desde);
     const f = new Intl.DateTimeFormat("es-ES", { day: "numeric", month: "short" });
     return `${f.format(rango.desde)} – ${f.format(new Date(rango.hasta.getTime() - 86400000))}`;
   }, [vista, rango.desde, rango.hasta]);
 
   const dias = useMemo(
-    () =>
-      Array.from({ length: 7 }, (_, i) => {
-        const d = new Date(rango.desde.getTime() + i * 86400000);
-        return { nombre: DIA_NOMBRES[i], num: d.getDate() };
-      }),
+    () => Array.from({ length: 7 }, (_, i) => {
+      const d = new Date(rango.desde.getTime() + i * 86400000);
+      return { nombre: DIA_NOMBRES[i], num: d.getDate() };
+    }),
     [rango.desde],
   );
 
@@ -413,90 +473,123 @@ export function PlanificacionDashboard() {
     setAnchor((a) => new Date(a.getTime() + dir * paso));
   };
 
+  // Enviar todos los viajes planificados (sin enviar) de una tractora.
+  const enviarTodos = async (t: VehiculoPlanificacion) => {
+    const planificados = asignados.filter((v) => v.terminal === t.id && !enTrimble(v));
+    if (planificados.length === 0) { toast("No hay viajes planificados sin enviar en esta tractora."); return; }
+    for (const v of planificados) await enviarViaje(v);
+  };
+
+  const bloqueCls = (v: ViajePlanificacion): string => {
+    const guardandoV = guardando.has(v.id);
+    const error = erroresViaje[v.id];
+    if (guardandoV) return "border-slate-400/50 bg-slate-400/20";
+    if (error) return "border-red-500/60 bg-red-500/20";
+    if (enTrimble(v)) return "border-solid border-slate-500/60 bg-slate-500/25";
+    return "border-dashed border-sky-600/40 bg-sky-500/15";
+  };
+
   return (
     <div className="flex h-full flex-col overflow-hidden">
       <div className="flex items-center gap-3 border-b px-4 py-2">
         <h1 className="text-lg font-semibold">Planificación</h1>
         <div className="flex items-center gap-1 rounded-md border p-0.5">
-          <button onClick={() => setVista("dia")} className={`flex items-center gap-1 rounded px-2 py-1 text-xs ${vista === "dia" ? "bg-primary text-primary-foreground" : "text-muted-foreground"}`}>
-            <CalendarDays size={14} /> Día
-          </button>
-          <button onClick={() => setVista("semana")} className={`flex items-center gap-1 rounded px-2 py-1 text-xs ${vista === "semana" ? "bg-primary text-primary-foreground" : "text-muted-foreground"}`}>
-            <CalendarRange size={14} /> Semana
-          </button>
+          <button onClick={() => setVista("dia")} className={`flex items-center gap-1 rounded px-2 py-1 text-xs ${vista === "dia" ? "bg-primary text-primary-foreground" : "text-muted-foreground"}`}><CalendarDays size={14} /> Día</button>
+          <button onClick={() => setVista("semana")} className={`flex items-center gap-1 rounded px-2 py-1 text-xs ${vista === "semana" ? "bg-primary text-primary-foreground" : "text-muted-foreground"}`}><CalendarRange size={14} /> Semana</button>
         </div>
         <div className="flex items-center gap-1">
           <button onClick={() => mover(-1)} className="rounded border p-1 hover:bg-muted" aria-label="Anterior"><ChevronLeft size={14} /></button>
           <span className="min-w-[180px] text-center text-xs font-medium">{etiquetaRango}</span>
           <button onClick={() => mover(1)} className="rounded border p-1 hover:bg-muted" aria-label="Siguiente"><ChevronRight size={14} /></button>
         </div>
-        <span className="ml-auto text-xs text-muted-foreground">Ctrl + rueda = zoom</span>
+        <span className="ml-auto text-xs text-muted-foreground">Arrastra para planificar · clic derecho = menú · Ctrl+Z deshace</span>
       </div>
 
       <div className="flex min-h-0 flex-1">
-        {/* Columna "Pendientes de asignar" (también zona de soltar para desasignar) */}
         <aside data-zona-pendientes className="flex w-60 shrink-0 flex-col border-r">
           <div className="border-b px-3 py-2 text-xs font-semibold text-muted-foreground">Pendientes de asignar</div>
           <div className="min-h-0 flex-1 overflow-y-auto p-2">
             {pendientes.length === 0 && <div className="px-1 text-xs text-muted-foreground">Sin viajes pendientes.</div>}
             {pendientes.map((v) => (
-              <div
-                key={v.id}
-                data-viaje-pendiente={v.id}
-                onPointerDown={(e) => { e.preventDefault(); iniciarArrastre(v); }}
-                className="mb-1.5 cursor-grab select-none rounded-md border bg-card p-2 shadow-sm active:cursor-grabbing"
-                style={{ pointerEvents: arrastre?.id === v.id ? "none" : undefined }}
-              >
-                <div className="truncate text-xs font-medium">{v.id}</div>
-                <div className="truncate text-[11px] text-muted-foreground">{v.origen} → {v.destino}</div>
-                <div className="mt-0.5 text-[11px] text-muted-foreground">{v.cliente || "—"} · {v.kilos > 0 ? `${v.kilos} kg` : "—"}</div>
-              </div>
+              <ContextMenu key={v.id}>
+                <ContextMenuTrigger asChild>
+                  <div
+                    data-viaje-pendiente={v.id}
+                    onPointerDown={(e) => { e.preventDefault(); iniciarArrastre(v); }}
+                    className={`mb-1.5 cursor-grab select-none rounded-md border bg-card p-2 shadow-sm active:cursor-grabbing ${bloqueCls(v)}`}
+                    style={{ pointerEvents: arrastre?.id === v.id ? "none" : undefined }}
+                  >
+                    <div className="flex items-center gap-1 truncate text-xs font-medium">
+                      {guardando.has(v.id) && <Loader2 size={11} className="animate-spin" />}
+                      {enTrimble(v) && <Truck size={11} className="text-muted-foreground" />}
+                      {(avisosViaje[v.id]?.length ?? 0) > 0 && <AlertTriangle size={11} className="text-amber-500" />}
+                      {v.id}
+                    </div>
+                    <div className="truncate text-[11px] text-muted-foreground">{v.origen} → {v.destino}</div>
+                    <div className="mt-0.5 text-[11px] text-muted-foreground">{v.cliente || "—"} · {v.kilos > 0 ? `${v.kilos} kg` : "—"}</div>
+                  </div>
+                </ContextMenuTrigger>
+                <MenuViaje v={v} enviarViaje={enviarViaje} quitarTerminal={quitarTerminal} moverViaje={moverViaje} ultimoUsado={ultimoUsado} abrirFicha={(id) => navigate({ search: { panel: `viaje:${id}` } as never })} semirremolques={semirremolques.data ?? []} conductores={conductores.data ?? []} />
+              </ContextMenu>
             ))}
           </div>
         </aside>
 
-        {/* Eje de tiempo */}
         <div ref={ejeRef} className="min-w-0 flex-1 overflow-auto">
           <div style={{ width: totalWidth + 160, minWidth: "100%" }}>
-            {/* Cabecera temporal */}
             <div className="sticky top-0 z-10 flex border-b bg-background">
               <div className="w-40 shrink-0" />
               <div className="relative flex-1" style={{ height: 28 }}>
                 {vista === "dia"
-                  ? Array.from({ length: 24 }, (_, h) => (
-                      <span key={h} className="absolute top-0 text-[10px] text-muted-foreground" style={{ left: h * pxHora }}>{String(h).padStart(2, "0")}</span>
-                    ))
-                  : dias.map((d, i) => (
-                      <span key={i} className="absolute top-0 text-[10px] text-muted-foreground" style={{ left: i * pxDia }}>{d.nombre} {d.num}</span>
-                    ))}
+                  ? Array.from({ length: 24 }, (_, h) => <span key={h} className="absolute top-0 text-[10px] text-muted-foreground" style={{ left: h * pxHora }}>{String(h).padStart(2, "0")}</span>)
+                  : dias.map((d, i) => <span key={i} className="absolute top-0 text-[10px] text-muted-foreground" style={{ left: i * pxDia }}>{d.nombre} {d.num}</span>)}
               </div>
             </div>
 
             {tractoras.map((t) => {
               const viajesDeTractora = asignados.filter((v) => v.terminal === t.id);
+              const planificadosSinEnviar = viajesDeTractora.filter((v) => !enTrimble(v));
               return (
-                <div key={t.id} data-tractora={t.id} className={`flex border-b transition-colors ${sobreTractora === t.id ? colorValidacion : ""}`} title={sobreTractora === t.id ? tooltipValidacion : undefined}>
-                  <div className="flex w-40 shrink-0 flex-col justify-center px-3">
-                    <div className="truncate text-xs font-semibold">{t.matricula || t.id}</div>
-                    <div className="text-[10px] text-muted-foreground">{viajesDeTractora.length} viaje(s)</div>
-                  </div>
+                <div key={t.id} data-tractora={t.id} className={`flex border-b transition-colors ${sobreTractora === t.id ? colorValidacion : ""}`}>
+                  <ContextMenu>
+                    <ContextMenuTrigger asChild>
+                      <div className="flex w-40 shrink-0 flex-col justify-center px-3">
+                        <div className="truncate text-xs font-semibold">{t.matricula || t.id}</div>
+                        <div className="text-[10px] text-muted-foreground">{viajesDeTractora.length} viaje(s)</div>
+                      </div>
+                    </ContextMenuTrigger>
+                    <ContextMenuContent>
+                      <ContextMenuItem onSelect={() => enviarTodos(t)} disabled={planificadosSinEnviar.length === 0}>
+                        <Send size={13} /> Enviar todos los del día ({planificadosSinEnviar.length})
+                      </ContextMenuItem>
+                    </ContextMenuContent>
+                  </ContextMenu>
                   <div className="relative flex-1" style={{ height: ROW_H }}>
                     {viajesDeTractora.map((v) => {
                       const pos = posBloque(v);
                       if (!pos) return null;
-                      const enviado = !noEnviado(v);
+                      const enviado = enTrimble(v);
                       return (
-                        <div
-                          key={v.id}
-                          data-viaje-bloque={v.id}
-                          onPointerDown={enviado ? undefined : (e) => { e.preventDefault(); iniciarArrastre(v); }}
-                          className={`absolute top-1 overflow-hidden rounded border px-1.5 py-0.5 text-[10px] ${enviado ? "cursor-not-allowed border-slate-500/40 bg-slate-500/15" : "cursor-grab border-sky-600/40 bg-sky-500/20 active:cursor-grabbing"}`}
-                          style={{ left: pos.left, width: pos.width, height: ROW_H - 8, pointerEvents: arrastre?.id === v.id ? "none" : undefined }}
-                          title={enviado ? "Enviado a Trimble: cancélalo desde Viajes" : `${v.id} · ${v.origen} → ${v.destino} · ${fmtHora(v.inicio)}–${fmtHora(v.fin)}`}
-                        >
-                          <div className="truncate font-medium">{v.id}</div>
-                          <div className="truncate text-muted-foreground">{fmtHora(v.inicio)}–{fmtHora(v.fin)}</div>
-                        </div>
+                        <ContextMenu key={v.id}>
+                          <ContextMenuTrigger asChild>
+                            <div
+                              data-viaje-bloque={v.id}
+                              onPointerDown={(e) => { e.preventDefault(); iniciarArrastre(v); }}
+                              className={`absolute top-1 overflow-hidden rounded border px-1.5 py-0.5 text-[10px] cursor-grab active:cursor-grabbing ${bloqueCls(v)}`}
+                              style={{ left: pos.left, width: pos.width, height: ROW_H - 8, pointerEvents: arrastre?.id === v.id ? "none" : undefined }}
+                              title={`${v.id} · ${v.origen} → ${v.destino} · ${fmtHora(v.inicio)}–${fmtHora(v.fin)}${enviado ? " · Enviado" : ""}${avisosViaje[v.id]?.map((a) => " · ⚠️ " + a.mensaje).join("") ?? ""}`}
+                            >
+                              <div className="flex items-center gap-1 truncate font-medium">
+                                {guardando.has(v.id) && <Loader2 size={10} className="animate-spin" />}
+                                {enviado && <Truck size={10} className="text-muted-foreground" />}
+                                {(avisosViaje[v.id]?.length ?? 0) > 0 && <AlertTriangle size={10} className="text-amber-500" />}
+                                {v.id}
+                              </div>
+                              <div className="truncate text-muted-foreground">{fmtHora(v.inicio)}–{fmtHora(v.fin)}</div>
+                            </div>
+                          </ContextMenuTrigger>
+                          <MenuViaje v={v} enviarViaje={enviarViaje} quitarTerminal={quitarTerminal} moverViaje={moverViaje} ultimoUsado={ultimoUsado} abrirFicha={(id) => navigate({ search: { panel: `viaje:${id}` } as never })} semirremolques={semirremolques.data ?? []} conductores={conductores.data ?? []} />
+                        </ContextMenu>
                       );
                     })}
                   </div>
@@ -507,146 +600,96 @@ export function PlanificacionDashboard() {
         </div>
       </div>
 
-      {/* Confirmación de avisos (dentro de la página) */}
+      {/* Confirmación de aviso (enviado/en curso) */}
       {confirmacion && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => setConfirmacion(null)}>
-          <div className="w-96 rounded-lg border bg-card p-4 shadow-xl" onClick={(e) => e.stopPropagation()}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="w-96 rounded-lg border bg-card p-4 shadow-xl">
             <div className="mb-2 flex items-center gap-2 text-sm font-semibold">
-              <AlertTriangle size={16} className="text-amber-500" /> Asignar con avisos
+              <AlertTriangle size={16} className="text-amber-500" />
+              {confirmacion.enCurso ? "El conductor ya ha empezado" : "El viaje está en el terminal"}
             </div>
-            <div className="mb-3 space-y-1 text-xs text-muted-foreground">
-              {confirmacion.avisos.map((a, i) => <div key={i}>• {a.mensaje}</div>)}
+            <div className="mb-3 text-xs text-muted-foreground">
+              El viaje será eliminado de la pantalla del terminal.
+              {confirmacion.enCurso && <div className="mt-1 font-medium text-amber-600 dark:text-amber-400">El conductor ya ha empezado este viaje ({confirmacion.viaje.estado}).</div>}
             </div>
             <div className="flex justify-end gap-2">
-              <button onClick={() => setConfirmacion(null)} className="rounded border px-2 py-1 text-xs hover:bg-muted">Cancelar</button>
-              <button
-                onClick={() => { setPopover({ viaje: confirmacion.viaje, tractora: confirmacion.tractora, x: confirmacion.x, y: confirmacion.y }); setConfirmacion(null); }}
-                className="rounded bg-primary px-3 py-1 text-xs text-primary-foreground hover:opacity-90"
-              >
-                Continuar
-              </button>
+              <button onClick={() => setConfirmacion(null)} className="rounded border px-3 py-1 text-xs hover:bg-muted">Cancelar</button>
+              <button ref={confirmarRef} onClick={aceptarConfirmacion} className="rounded bg-primary px-3 py-1 text-xs text-primary-foreground hover:opacity-90">Aceptar</button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Popover de asignación (semirremolque + conductor, re-valida y desactiva Asignar si hay bloqueos) */}
-      {popover && (
-        <PopoverAsignacion
-          popover={popover}
-          semirremolques={semirremolques.data ?? []}
-          conductores={conductores.data ?? []}
-          viajes={lista}
-          validar={validar}
-          onCancelar={() => setPopover(null)}
-          onConfirmar={(semi, cond) => confirmarAsignacion(popover.viaje, popover.tractora, semi, cond)}
-        />
-      )}
-
-      {/* Toast de deshacer (se cierra solo a los 10 s) */}
-      {toastUndo && (
-        <div className="fixed bottom-4 left-1/2 z-50 flex -translate-x-1/2 items-center gap-3 rounded-lg border bg-card px-4 py-2 text-sm shadow-lg">
-          <span>Asignado a {toastUndo.tractora}</span>
-          <button onClick={() => desasignar(toastUndo.viaje)} className="flex items-center gap-1 rounded border px-2 py-1 text-xs font-medium hover:bg-muted">
-            <Undo2 size={14} /> Deshacer
-          </button>
-          <button onClick={() => setToastUndo(null)} className="text-muted-foreground hover:text-foreground" aria-label="Cerrar"><X size={14} /></button>
+      {/* "Enviar igualmente" (Safe-Dispatching) */}
+      {forzarEnvio && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="w-96 rounded-lg border bg-card p-4 shadow-xl">
+            <div className="mb-2 flex items-center gap-2 text-sm font-semibold"><AlertTriangle size={16} className="text-amber-500" /> Conducción legal</div>
+            <div className="mb-3 text-xs text-muted-foreground">{forzarEnvio.motivo}</div>
+            <div className="flex justify-end gap-2">
+              <button onClick={() => setForzarEnvio(null)} className="rounded border px-3 py-1 text-xs hover:bg-muted">Cancelar</button>
+              <button onClick={() => { const v = forzarEnvio.viaje; setForzarEnvio(null); enviarViaje(v, true); }} className="rounded bg-primary px-3 py-1 text-xs text-primary-foreground hover:opacity-90">Enviar igualmente</button>
+            </div>
+          </div>
         </div>
       )}
 
-      {/* Toasts genéricos (errores/aviso) */}
+      {/* Toasts */}
       <div className="fixed bottom-4 right-4 z-[60] flex flex-col gap-2">
         {toasts.map((t) => (
-          <div key={t.id} className={`max-w-sm rounded-lg border px-3 py-2 text-xs shadow-lg ${t.tipo === "error" ? "border-red-500/40 bg-red-500/10 text-red-600 dark:text-red-400" : "border-sky-500/40 bg-sky-500/10"}`}>
-            {t.texto}
-          </div>
+          <div key={t.id} className={`max-w-sm rounded-lg border px-3 py-2 text-xs shadow-lg ${t.tipo === "error" ? "border-red-500/40 bg-red-500/10 text-red-600 dark:text-red-400" : "border-sky-500/40 bg-sky-500/10"}`}>{t.texto}</div>
         ))}
       </div>
     </div>
   );
 }
 
-function PopoverAsignacion({ popover, semirremolques, conductores, viajes, validar, onCancelar, onConfirmar }: {
-  popover: { viaje: ViajePlanificacion; tractora: string; x: number; y: number };
+function MenuViaje({ v, enviarViaje, quitarTerminal, moverViaje, ultimoUsado, abrirFicha, semirremolques, conductores }: {
+  v: ViajePlanificacion;
+  enviarViaje: (v: ViajePlanificacion, force?: boolean) => void;
+  quitarTerminal: (v: ViajePlanificacion) => void;
+  moverViaje: (v: ViajePlanificacion, destino: Asignacion, force?: boolean) => void;
+  ultimoUsado: (t: string) => { semi: string; cond: number | null };
+  abrirFicha: (id: string) => void;
   semirremolques: Semirremolque[];
   conductores: ConductorOpcion[];
-  viajes: ViajePlanificacion[];
-  validar: (v: ViajePlanificacion, tractora: string, semi: string, cond: number | null, signal?: AbortSignal) => Promise<ValidacionResultado | null>;
-  onCancelar: () => void;
-  onConfirmar: (semi: string, cond: number | null) => void;
 }) {
-  // Preseleccionar el último semirremolque/conductor usado con esa tractora.
-  const ultimo = useMemo(() => {
-    const usados = viajes
-      .filter((v) => v.terminal === popover.tractora)
-      .sort((a, b) => (b.inicio || "").localeCompare(a.inicio || ""));
-    return { semi: usados.find((v) => v.semirremolque_id)?.semirremolque_id ?? "", cond: usados.find((v) => v.conductor_id)?.conductor_id ?? null };
-  }, [viajes, popover.tractora]);
-
-  const [semi, setSemi] = useState(ultimo.semi);
-  const [cond, setCond] = useState<number | null>(ultimo.cond);
-  const [res, setRes] = useState<ValidacionResultado | null>(null);
-  const [validando, setValidando] = useState(true);
-
-  // Re-valida con el semi y el conductor elegidos (debounce + cancelación).
-  useEffect(() => {
-    setValidando(true);
-    setRes(null);
-    const ac = new AbortController();
-    const timer = window.setTimeout(() => {
-      validar(popover.viaje, popover.tractora, semi, cond, ac.signal).then((r) => {
-        if (ac.signal.aborted) return;
-        setRes(r);
-        setValidando(false);
-      });
-    }, 200);
-    return () => {
-      window.clearTimeout(timer);
-      ac.abort();
-    };
-  }, [semi, cond, popover, validar]);
-
-  // null tras validar = el validar no respondió (error); Asignar queda desactivado.
-  const fallo = !validando && res === null;
-  const bloqueado = fallo || (!!res && res.bloqueos.length > 0);
+  const enviado = enTrimble(v);
+  const cambiaSemi = (semi: string) => moverViaje(v, { terminal: v.terminal, semirremolque_id: semi, conductor_id: v.conductor_id, inicio: v.inicio, fin: v.fin });
+  const cambiaConductor = (cond: number | null) => moverViaje(v, { terminal: v.terminal, semirremolque_id: v.semirremolque_id, conductor_id: cond, inicio: v.inicio, fin: v.fin });
 
   return (
-    <div className="fixed z-50 w-80 rounded-lg border bg-card p-3 shadow-xl" style={{ left: Math.min(popover.x, window.innerWidth - 320), top: Math.min(popover.y, window.innerHeight - 320) }}>
-      <div className="mb-2 text-sm font-semibold">Asignar {popover.viaje.id} a {popover.tractora}</div>
-      <label className="mb-1 block text-xs text-muted-foreground">Semirremolque</label>
-      <select value={semi} onChange={(e) => setSemi(e.target.value)} className="mb-2 w-full rounded border bg-background px-2 py-1 text-sm">
-        <option value="">— Sin semirremolque —</option>
-        {semirremolques.map((s) => (
-          <option key={s.id} value={s.id} disabled={s.disponible === false}>{s.matricula}{s.disponible === false ? ` (⛔ ${s.motivo_bloqueo})` : ""}</option>
-        ))}
-      </select>
-      <label className="mb-1 block text-xs text-muted-foreground">Conductor</label>
-      <select value={cond ?? ""} onChange={(e) => setCond(e.target.value ? Number(e.target.value) : null)} className="mb-3 w-full rounded border bg-background px-2 py-1 text-sm">
-        <option value="">— Sin conductor —</option>
-        {conductores.map((c) => (
-          <option key={c.id} value={c.id} disabled={c.disponible === false}>{c.nombre}{c.disponible === false ? ` (⛔ ${c.motivo_ausencia})` : ""}</option>
-        ))}
-      </select>
-
-      {validando && <div className="mb-2 text-[11px] text-muted-foreground">Validando…</div>}
-      {fallo && <div className="mb-2 text-[11px] text-red-600 dark:text-red-400">⛔ No se pudo validar</div>}
-      {res && !validando && (
-        <div className="mb-2 space-y-1 text-[11px]">
-          {res.bloqueos.map((b, i) => <div key={i} className="text-red-600 dark:text-red-400">⛔ {b.mensaje}</div>)}
-          {res.avisos.map((a, i) => <div key={i} className="text-amber-600 dark:text-amber-400">⚠️ {a.mensaje}</div>)}
-        </div>
-      )}
-
-      <div className="flex justify-end gap-2">
-        <button onClick={onCancelar} className="rounded border px-2 py-1 text-xs hover:bg-muted">Cancelar</button>
-        <button
-          onClick={() => onConfirmar(semi, cond)}
-          disabled={bloqueado || validando}
-          className="rounded bg-primary px-3 py-1 text-xs text-primary-foreground hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          Asignar
-        </button>
-      </div>
-    </div>
+    <ContextMenuContent>
+      {!enviado
+        ? <ContextMenuItem onSelect={() => enviarViaje(v)}><Send size={13} /> Enviar viaje al terminal</ContextMenuItem>
+        : <ContextMenuItem onSelect={() => enviarViaje(v)}><Send size={13} /> Reenviar al terminal</ContextMenuItem>}
+      {enviado && <ContextMenuItem onSelect={() => quitarTerminal(v)}><DoorOpen size={13} /> Quitar del terminal</ContextMenuItem>}
+      <ContextMenuSeparator />
+      <ContextMenuSub>
+        <ContextMenuSubTrigger><Container size={13} /> Cambiar semirremolque…</ContextMenuSubTrigger>
+        <ContextMenuSubContent>
+          {semirremolques.map((s) => (
+            <ContextMenuItem key={s.id} disabled={s.disponible === false} onSelect={() => cambiaSemi(s.id)}>
+              {s.matricula}{s.disponible === false ? ` (⛔ ${s.motivo_bloqueo})` : ""}
+            </ContextMenuItem>
+          ))}
+        </ContextMenuSubContent>
+      </ContextMenuSub>
+      <ContextMenuSub>
+        <ContextMenuSubTrigger><UserRound size={13} /> Cambiar conductor…</ContextMenuSubTrigger>
+        <ContextMenuSubContent>
+          {conductores.map((c) => (
+            <ContextMenuItem key={c.id} disabled={c.disponible === false} onSelect={() => cambiaConductor(c.id)}>
+              {c.nombre}{c.disponible === false ? ` (⛔ ${c.motivo_ausencia})` : ""}
+            </ContextMenuItem>
+          ))}
+        </ContextMenuSubContent>
+      </ContextMenuSub>
+      <ContextMenuItem onSelect={() => moverViaje(v, { terminal: "", semirremolque_id: "", conductor_id: null, inicio: v.inicio, fin: v.fin })}>
+        <CornerUpLeft size={13} /> Devolver a Pendientes
+      </ContextMenuItem>
+      <ContextMenuSeparator />
+      <ContextMenuItem onSelect={() => abrirFicha(v.id)}><Info size={13} /> Abrir ficha</ContextMenuItem>
+    </ContextMenuContent>
   );
 }
