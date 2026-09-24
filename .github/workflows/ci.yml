@@ -1,0 +1,129 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  backend:
+    name: Backend (pytest)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: timescale/timescaledb:latest-pg15
+        env:
+          POSTGRES_USER: tms
+          POSTGRES_PASSWORD: tms
+          POSTGRES_DB: tms
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U tms -d tms"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Instalar dependencias
+        working-directory: tms-trimble/backend
+        run: pip install -r requirements.txt pytest
+      - name: Tests unitarios
+        working-directory: tms-trimble/backend
+        run: pytest tests/ -m "not integration" -q
+      - name: Tests de integración (Postgres)
+        working-directory: tms-trimble/backend
+        env:
+          DB_HOST: localhost
+          DB_PORT: "5432"
+          DB_USER: tms
+          DB_PASSWORD: tms
+          DB_NAME: tms
+        run: pytest tests/ -m integration -q
+
+  frontend:
+    name: Frontend (build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Instalar + build
+        working-directory: tms-frontend
+        run: |
+          npm ci
+          npm run build
+
+  e2e:
+    name: E2E (Playwright)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: timescale/timescaledb:latest-pg15
+        env:
+          POSTGRES_USER: tms
+          POSTGRES_PASSWORD: tms
+          POSTGRES_DB: tms
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U tms -d tms"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Instalar backend
+        working-directory: tms-trimble/backend
+        run: pip install -r requirements.txt
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Instalar frontend
+        working-directory: tms-frontend
+        run: npm ci
+      - name: Arrancar stack y correr smoke test
+        working-directory: tms-trimble/backend
+        env:
+          DB_HOST: localhost
+          DB_PORT: "5432"
+          DB_USER: tms
+          DB_PASSWORD: tms
+          DB_NAME: tms
+          TMS_SECRET_KEY: "e2e-secret-key-0123456789abcdef0123456789abcdef"
+          DEFAULT_ADMIN_USER: admin
+          DEFAULT_ADMIN_PASSWORD: e2e-admin-1
+          E2E_BASE_URL: http://localhost:8080
+          E2E_ADMIN_USER: admin
+          E2E_ADMIN_PASSWORD: e2e-admin-1
+        run: |
+          set -e
+          # 1. Backend (uvicorn) en segundo plano; _bootstrap siembra esquema + admin.
+          uvicorn main:app --host 0.0.0.0 --port 8750 > /tmp/backend.log 2>&1 &
+          BACK_PID=$!
+          for i in $(seq 1 90); do
+            curl -sf http://localhost:8750/api/health > /dev/null && break
+            sleep 2
+          done
+          curl -sf http://localhost:8750/api/health
+
+          # 2. Frontend: build + preview (con proxy /api y /ws al backend).
+          cd ../../tms-frontend
+          npm run build
+          npm run preview > /tmp/frontend.log 2>&1 &
+          FRONT_PID=$!
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:8080/ > /dev/null && break
+            sleep 2
+          done
+
+          # 3. Smoke test.
+          npx playwright install --with-deps chromium
+          npx playwright test
+
+          kill $BACK_PID $FRONT_PID 2>/dev/null || true

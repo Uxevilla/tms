@@ -7,6 +7,7 @@
 
 # ...salvo el .gitignore y los directorios del proyecto
 !.gitignore
+!.github/
 !/tms-trimble/
 !/tms-frontend/
 !/tms-stack/
@@ -30,3 +31,8 @@
 **/*.token
 **/data/
 **/history.db
+
+# Playwright
+**/test-results/
+**/playwright-report/
+**/.auth/
