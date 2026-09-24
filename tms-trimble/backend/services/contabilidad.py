@@ -199,12 +199,39 @@ def _gasto_subcontrata(conn, trip, fecha):
          datetime.datetime.utcnow().isoformat() + "Z", trip["proveedor_id"], iva_pct, 0, "624"),
     )
     gasto_id = cur.fetchone()["id"]
+    _sync_factura_recibida(conn, origen="subcontrata", proveedor_id=trip["proveedor_id"],
+                           fecha=fecha, base=base, cuota_iva=cuota, total=coste, cuenta="624",
+                           viaje_id=trip["id"], concepto=concepto, iva_pct=iva_pct)
     lineas = [("624", base, 0, concepto)]
     if cuota > 0:
         lineas.append(("472", cuota, 0, "IVA soportado"))
     lineas.append(("410", 0, coste, concepto))
     _post_asiento(fecha[:10], concepto, lineas, origen="gasto", gasto_id=gasto_id, conn=conn)
     return gasto_id
+
+
+def _sync_factura_recibida(conn, *, origen, proveedor_id=None, numero_proveedor=None,
+                           fecha=None, base=0.0, cuota_iva=0.0, retencion=0.0, total=0.0,
+                           categoria_id=None, cuenta=None, vehiculo_id=None, viaje_id=None,
+                           concepto=None, litros=0.0, iva_pct=21.0):
+    """Dual-write (merge Fase 5 2b): registra el gasto unificado en
+    finanzas.facturas_recibidas(_lineas), con imputación por vehículo/viaje.
+    Se llama en la MISMA transacción que el INSERT en gastos/gastos_vehiculos."""
+    cur = conn.execute(
+        "INSERT INTO finanzas.facturas_recibidas "
+        "(proveedor_id, numero_proveedor, fecha, base, cuota_iva, retencion, total, estado, origen) "
+        "VALUES (?,?,?,?,?,?,?,?,?) RETURNING id",
+        (proveedor_id, numero_proveedor, (fecha or "")[:10] or None,
+         base, cuota_iva, retencion, total, "pendiente", origen),
+    )
+    fr_id = cur.fetchone()["id"]
+    conn.execute(
+        "INSERT INTO finanzas.facturas_recibidas_lineas "
+        "(factura_id, categoria_id, cuenta, vehiculo_id, viaje_id, concepto, litros, base, iva_pct) "
+        "VALUES (?,?,?,?,?,?,?,?,?)",
+        (fr_id, categoria_id, cuenta, vehiculo_id, viaje_id, concepto, litros, base, iva_pct),
+    )
+    return fr_id
 
 
 def _facturar_viaje(trip_id):

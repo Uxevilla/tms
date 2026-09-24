@@ -20,7 +20,7 @@ from clients.trimble import get_client, _client_cache
 from clients.transfollow import get_transfollow_client, _tf_cache
 from clients.ptv import _ptv_route, _calc_ruta, _haversine_km
 from clients.geocoding import _buscar_photon, reverse_geocode
-from services.contabilidad import _categoria_cuenta, _next_referencia, _auditar, _post_asiento, _registrar_asiento, _gasto_subcontrata, _facturar_viaje, _norm_fecha, _norm_total
+from services.contabilidad import _categoria_cuenta, _next_referencia, _auditar, _post_asiento, _registrar_asiento, _gasto_subcontrata, _facturar_viaje, _norm_fecha, _norm_total, _sync_factura_recibida
 from services.viajes import _save_trip, _save_tramos, _save_paradas, _upsert_direccion, _peaje_rate, _vehiculo_peaje_categoria, _vehiculos_en_curso, _puntos_del_viaje, _build_trip, _calcular_ruta, _viaje_payload, _guardar_documentos_pedido, _valorar_viaje, _crear_pedido, _enviar_viaje
 from services.telemetria import _get_redis, _set_viaje_activo, _del_viaje_activo, _json_safe, _viajes_snapshot
 from services.sync import _query_terminal_states, _sync_status, _get_sync_state, _set_sync_state, _parse_props, _save_file, _extraer_reporte_xml, _extraer_documento_ecmr, _guardar_documento_entrega, _publicar_estado, _odometro_vehiculo, _aplicar_estado_viaje, _cerrar_viaje, _cerrar_viaje_por_ecmr, _entrega_confirmada, _sync_files, _sync_mensajes
@@ -58,6 +58,10 @@ def add_mantenimiento(m: Mantenimiento, conn = Depends(get_conn)):
              "", "622", "Pendiente", datetime.datetime.utcnow().isoformat() + "Z"),
         )
         gid = gcur.fetchone()["id"]
+        _sync_factura_recibida(conn, origen="mantenimiento", proveedor_id=m.proveedor_id,
+                               fecha=m.fecha, base=float(m.base_imponible), cuota_iva=cuota,
+                               total=importe, cuenta="622", vehiculo_id=m.vehiculo_id,
+                               concepto=concepto, iva_pct=iva_pct)
         lineas = [("622", float(m.base_imponible), 0, concepto)]
         if cuota > 0:
             lineas.append(("472", cuota, 0, "IVA soportado"))

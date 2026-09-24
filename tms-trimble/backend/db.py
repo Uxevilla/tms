@@ -626,6 +626,20 @@ CREATE TABLE IF NOT EXISTS finanzas.facturas_recibidas_lineas (
     concepto TEXT, litros NUMERIC(10,2) DEFAULT 0, base NUMERIC(12,2) DEFAULT 0, iva_pct NUMERIC(5,2) DEFAULT 21
 );
 INSERT INTO finanzas.series (codigo, ultimo) VALUES ('F', 0), ('A', 0) ON CONFLICT (codigo) DO NOTHING;
+CREATE OR REPLACE VIEW finanzas.rentabilidad_viaje AS
+SELECT t.id AS viaje_id, t.referencia AS codigo, t.estado,
+       COALESCE(t.precio, 0) AS ingresos,
+       COALESCE((
+           SELECT SUM(fr.total) FROM finanzas.facturas_recibidas fr
+           JOIN finanzas.facturas_recibidas_lineas frl ON frl.factura_id = fr.id
+           WHERE frl.viaje_id = t.id
+       ), 0) AS costes,
+       COALESCE(t.precio, 0) - COALESCE((
+           SELECT SUM(fr.total) FROM finanzas.facturas_recibidas fr
+           JOIN finanzas.facturas_recibidas_lineas frl ON frl.factura_id = fr.id
+           WHERE frl.viaje_id = t.id
+       ), 0) AS margen
+FROM operaciones.trips t;
 -- Vistas de compatibilidad (el código sigue usando los nombres viejos).
 CREATE OR REPLACE VIEW cuentas AS SELECT * FROM finanzas.cuentas;
 CREATE OR REPLACE VIEW asientos AS SELECT * FROM finanzas.asientos;
