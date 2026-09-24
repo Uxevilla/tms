@@ -7,10 +7,12 @@ async function abrirViajes(page: Page) {
   await expect(page.getByRole("button", { name: /Nuevo viaje/i })).toBeVisible();
 }
 
-// Abre el Sheet de creación (force: true evita el cuelgue del click por re-render del Radix).
+// Abre el Sheet de creación con reintento (el dashboard puede re-renderizar y perder el clic).
 async function abrirSheet(page: Page) {
-  await page.getByRole("button", { name: /Nuevo viaje/i }).click({ force: true });
-  await expect(page.getByPlaceholder("Buscar cliente…")).toBeVisible({ timeout: 15_000 });
+  await expect(async () => {
+    await page.getByRole("button", { name: /Nuevo viaje/i }).click({ force: true });
+    await expect(page.getByPlaceholder("Buscar cliente…")).toBeVisible({ timeout: 3000 });
+  }).toPass({ timeout: 20_000 });
 }
 
 test.describe("Viajes (Fase 4)", () => {
