@@ -37,6 +37,7 @@ MASTER_DB_NAME = os.environ.get("MASTER_DB_NAME", "tms_master")
 
 # Firma HMAC de los tokens de sesión y credenciales del super-admin
 SECRET_KEY = os.environ.get("TMS_SECRET_KEY", "")
+ENCRYPTION_KEY = os.environ.get("TMS_ENCRYPTION_KEY", "")
 SUPERADMIN_USER = os.environ.get("SUPERADMIN_USER", "admin")
 SUPERADMIN_PASSWORD = os.environ.get("SUPERADMIN_PASSWORD", "")
 

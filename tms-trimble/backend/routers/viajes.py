@@ -164,7 +164,7 @@ def asignar_trip(trip_id: str, req: AsignarRequest, conn = Depends(get_conn)):
     viaje.iva = float(row["iva"] or 0)
     viaje.factura = row["factura"] or viaje.factura
     viaje.conductor = req.conductor or row["conductor"] or viaje.conductor or ""
-    viaje.conductor_id = req.conductor_id if req.conductor else row["conductor_id"]
+    viaje.conductor_id = req.conductor_id if req.conductor_id is not None else row["conductor_id"]
 
     viaje.terminal = terminal
     viaje.semirremolque_id = (req.semirremolque_id or row["semirremolque_id"] or "").strip()

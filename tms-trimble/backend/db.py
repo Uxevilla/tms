@@ -367,9 +367,15 @@ SELECT id, razon_social AS nombre, nif AS cif, telefono, email, tarifa_km AS tar
 FROM maestros.terceros WHERE es_transportista;
 
 CREATE OR REPLACE FUNCTION maestros.clientes_ins() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE v_nif TEXT := NULLIF(upper(regexp_replace(COALESCE(NEW.cif, ''), '[^A-Za-z0-9]', '', 'g')), '');
 BEGIN
+  IF v_nif IS NOT NULL THEN
+    UPDATE maestros.terceros SET es_cliente = true, borrado_en = NULL
+     WHERE nif = v_nif RETURNING id INTO NEW.id;
+    IF FOUND THEN RETURN NEW; END IF;
+  END IF;
   INSERT INTO maestros.terceros (razon_social, nif, direccion, poblacion, cp, telefono, email, cuenta_cliente, es_cliente, activo)
-  VALUES (NEW.nombre, NEW.cif, NEW.direccion, NEW.poblacion, NEW.cp, NEW.telefono, NEW.email, COALESCE(NEW.cuenta_contable_defecto,'430'), true, COALESCE(NEW.activo, true))
+  VALUES (NEW.nombre, v_nif, NEW.direccion, NEW.poblacion, NEW.cp, NEW.telefono, NEW.email, COALESCE(NEW.cuenta_contable_defecto,'430'), true, COALESCE(NEW.activo, true))
   RETURNING id INTO NEW.id;
   RETURN NEW;
 END $$;
@@ -384,9 +390,15 @@ BEGIN
   RETURN NEW;
 END $$;
 CREATE OR REPLACE FUNCTION maestros.proveedores_ins() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE v_nif TEXT := NULLIF(upper(regexp_replace(COALESCE(NEW.cif, ''), '[^A-Za-z0-9]', '', 'g')), '');
 BEGIN
+  IF v_nif IS NOT NULL THEN
+    UPDATE maestros.terceros SET es_proveedor = true, borrado_en = NULL
+     WHERE nif = v_nif RETURNING id INTO NEW.id;
+    IF FOUND THEN RETURN NEW; END IF;
+  END IF;
   INSERT INTO maestros.terceros (razon_social, nif, direccion, poblacion, cp, telefono, email, cuenta_proveedor, es_proveedor)
-  VALUES (NEW.nombre, NEW.cif, NEW.direccion, NEW.poblacion, NEW.cp, NEW.telefono, NEW.email, COALESCE(NEW.cuenta_contable_defecto,'400'), true)
+  VALUES (NEW.nombre, v_nif, NEW.direccion, NEW.poblacion, NEW.cp, NEW.telefono, NEW.email, COALESCE(NEW.cuenta_contable_defecto,'400'), true)
   RETURNING id INTO NEW.id;
   RETURN NEW;
 END $$;
@@ -401,9 +413,15 @@ BEGIN
   RETURN NEW;
 END $$;
 CREATE OR REPLACE FUNCTION maestros.transportistas_ins() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE v_nif TEXT := NULLIF(upper(regexp_replace(COALESCE(NEW.cif, ''), '[^A-Za-z0-9]', '', 'g')), '');
 BEGIN
+  IF v_nif IS NOT NULL THEN
+    UPDATE maestros.terceros SET es_transportista = true, borrado_en = NULL
+     WHERE nif = v_nif RETURNING id INTO NEW.id;
+    IF FOUND THEN RETURN NEW; END IF;
+  END IF;
   INSERT INTO maestros.terceros (razon_social, nif, telefono, email, tarifa_km, es_transportista)
-  VALUES (NEW.nombre, NEW.cif, NEW.telefono, NEW.email, COALESCE(NEW.tarifa,0), true)
+  VALUES (NEW.nombre, v_nif, NEW.telefono, NEW.email, COALESCE(NEW.tarifa,0), true)
   RETURNING id INTO NEW.id;
   RETURN NEW;
 END $$;
@@ -853,6 +871,8 @@ def _db():
                     "ON CONFLICT (codigo) DO NOTHING",
                     (cod, nom, grupo, tipo, orden),
                 )
+            # Normalizar NIFs existentes (una sola vez): mayúsculas, sin separadores, '' -> NULL.
+            cur.execute("UPDATE maestros.terceros SET nif = NULLIF(upper(regexp_replace(nif, '[^A-Za-z0-9]', '', 'g')), '')")
             # Vistas de compatibilidad: se recrean DESPUÉS de los ALTER, para que
             # vean las columnas añadidas por migración (device, origen_id, coste, kilos…).
             cur.execute(_SCHEMA_VIEWS)

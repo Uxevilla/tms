@@ -43,6 +43,18 @@ def _decodificar(b64: str):
     return raw, mime
 
 
+def _tenant_dir() -> str:
+    """Subdirectorio por tenant, para que borrar un documento no afecte a otra empresa
+    que comparta el mismo contenido (deduplicación SHA-256)."""
+    try:
+        from db import _tenant_ctx
+        t = _tenant_ctx.get()
+        name = (t or {}).get("db_name") or config.DB_NAME or "default"
+    except Exception:
+        name = config.DB_NAME or "default"
+    return name
+
+
 def _guardar_archivo(nombre: str, b64: str):
     """Escribe el base64 a disco. Devuelve (storage_key, sha256, bytes, mime) o None si vacío."""
     raw, mime = _decodificar(b64)
@@ -51,7 +63,7 @@ def _guardar_archivo(nombre: str, b64: str):
     sha = hashlib.sha256(raw).hexdigest()
     ext = _EXT.get(mime, "") or (os.path.splitext(nombre or "")[1] or ".bin")
     storage_key = f"{sha[:2]}/{sha}{ext}"
-    ruta = os.path.join(DOCS_DIR, storage_key)
+    ruta = os.path.join(DOCS_DIR, _tenant_dir(), storage_key)
     if not os.path.exists(ruta):
         os.makedirs(os.path.dirname(ruta), exist_ok=True)
         with open(ruta, "wb") as f:
@@ -63,9 +75,13 @@ def _leer_archivo(storage_key: str) -> str:
     """Lee un fichero de disco y devuelve su base64 (o '' si no existe)."""
     if not storage_key:
         return ""
-    ruta = os.path.join(DOCS_DIR, storage_key)
+    ruta = os.path.join(DOCS_DIR, _tenant_dir(), storage_key)
     if not os.path.exists(ruta):
-        return ""
+        # Retrocompatibilidad: ficheros antiguos en la raíz (sin subdir por tenant).
+        ruta_legacy = os.path.join(DOCS_DIR, storage_key)
+        if not os.path.exists(ruta_legacy):
+            return ""
+        ruta = ruta_legacy
     with open(ruta, "rb") as f:
         return base64.b64encode(f.read()).decode()
 
@@ -74,9 +90,9 @@ def _borrar_archivo(storage_key: str) -> None:
     """Borra un fichero de disco si existe (no falla si no está)."""
     if not storage_key:
         return
-    ruta = os.path.join(DOCS_DIR, storage_key)
-    try:
-        if os.path.exists(ruta):
-            os.remove(ruta)
-    except OSError:
-        pass
+    for ruta in (os.path.join(DOCS_DIR, _tenant_dir(), storage_key), os.path.join(DOCS_DIR, storage_key)):
+        try:
+            if os.path.exists(ruta):
+                os.remove(ruta)
+        except OSError:
+            pass
