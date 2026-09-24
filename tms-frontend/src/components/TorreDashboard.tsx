@@ -65,7 +65,8 @@ export function TorreDashboard() {
 
   const abrirAtencion = (item: AtencionItem) => {
     const t = item.entidad.tipo;
-    const id = item.entidad.codigo || item.entidad.id;
+    // IMPORTANTE: usar entidad.id (nunca codigo, que para el conductor es el NOMBRE).
+    const id = String(item.entidad.id ?? "");
     if (t === "vehiculo" || t === "viaje" || t === "conductor") {
       navigate({ search: { panel: `${t}:${id}` } as never });
     } else if (t === "factura") {

@@ -107,7 +107,7 @@ export interface AtencionItem {
   severidad: Severidad;
   titulo: string;
   detalle: string;
-  entidad: { tipo: "vehiculo" | "viaje" | "conductor" | "factura" | "gasto"; id: string; codigo?: string };
+  entidad: { tipo: "vehiculo" | "viaje" | "conductor" | "factura" | "gasto"; id: string | number; codigo?: string };
   acciones: { id: string; label: string }[];
   ts: string;
 }

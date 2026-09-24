@@ -207,11 +207,16 @@ def atencion(user: dict = Depends(require_role(["admin", "dispatcher"])), conn: 
             _MAX_CONDUCCION_CONTINUA_MIN - float(r["driving_coupure_min"] or 0),
             _MAX_DIA_CONDUCCION_MIN - float(r["day_driving_min"] or 0),
         )
+        if r["conductor_id"]:
+            entidad = {"tipo": "conductor", "id": r["conductor_id"], "codigo": r["nombre"] or r["did"]}
+        else:
+            # DID sin conductor mapeado: apunta al vehículo (el panel siempre abre algo válido).
+            entidad = {"tipo": "vehiculo", "id": r["vehiculo_id"], "codigo": r["vehiculo_id"]}
         items.append(_item(
             "conduccion_limite", "critico",
             f"Conducción al límite — {r['nombre'] or r['did']}",
             f"Quedan {max(0, round(restante))} min de conducción legal",
-            {"tipo": "conductor", "id": r["conductor_id"] or r["did"], "codigo": r["nombre"] or r["did"]},
+            entidad,
         ))
 
     # 3. caducidad: ITV/seguro (vehículos) + carné/CAP/médico (conductores).
