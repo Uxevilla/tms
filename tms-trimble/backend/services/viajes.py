@@ -52,7 +52,7 @@ def _save_trip(trip_id, nombre, matricula, conductor, tipo_carga,
     if not referencia:
         referencia = _next_referencia(conn)
     conn.execute(
-        "INSERT INTO trips "
+        "INSERT INTO operaciones.trips "
         "(id, nombre, matricula, conductor, tipo_carga, origen, destino, "
         "tareas, estado, error, creado, terminal, semirremolque_id, remolque_id, "
         "cliente, cliente_id, conductor_id, "

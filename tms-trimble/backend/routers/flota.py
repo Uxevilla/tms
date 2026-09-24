@@ -81,7 +81,7 @@ def add_vehiculo(v: Vehiculo, conn = Depends(get_conn)):
     if (v.tipo_tenencia in ("Renting", "Leasing") or coste > 0) and not v.proveedor_id:
         raise HTTPException(status_code=400, detail={"error": "Indica el proveedor (proveedor_id) para este vehículo."})
     conn.execute(
-        "INSERT INTO vehiculos (id, categoria, matricula, marca, modelo, anno, itv, seguro, peaje_categoria, "
+        "INSERT INTO flota.vehiculos (id, categoria, matricula, marca, modelo, anno, itv, seguro, peaje_categoria, "
         "ptv_profile, ejes, mma, clase_euro, capacidad_peso, capacidad_palets, "
         "coste_adquisicion, fecha_adquisicion, vida_util, valor_residual, "
         "fecha_caducidad_itv, seguro_compania, fecha_caducidad_seguro, tipo_tenencia, proveedor_id, fecha_alta, cuota_mensual) "

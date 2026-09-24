@@ -279,7 +279,7 @@ def _seed_demo(conn):
     ]
     for i, (mat, marca, modelo, palets) in enumerate(semis):
         conn.execute(
-            "INSERT INTO vehiculos (id, categoria, matricula, marca, modelo, anno, ejes, mma, clase_euro, "
+            "INSERT INTO flota.vehiculos (id, categoria, matricula, marca, modelo, anno, ejes, mma, clase_euro, "
             "capacidad_peso, capacidad_palets, fecha_caducidad_itv, seguro_compania, fecha_caducidad_seguro, "
             "tipo_tenencia, fecha_alta, cuota_mensual, km_actuales, fecha_proxima_revision) "
             "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
@@ -295,7 +295,7 @@ def _seed_demo(conn):
     ]
     for i, (mat, marca, modelo, km) in enumerate(turismos):
         conn.execute(
-            "INSERT INTO vehiculos (id, categoria, matricula, marca, modelo, anno, ejes, mma, clase_euro, "
+            "INSERT INTO flota.vehiculos (id, categoria, matricula, marca, modelo, anno, ejes, mma, clase_euro, "
             "capacidad_peso, capacidad_palets, fecha_caducidad_itv, seguro_compania, fecha_caducidad_seguro, "
             "tipo_tenencia, fecha_alta, cuota_mensual, km_actuales, fecha_proxima_revision) "
             "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
@@ -311,7 +311,7 @@ def _seed_demo(conn):
     ]
     for i, (mat, marca, modelo, km) in enumerate(ligeros):
         conn.execute(
-            "INSERT INTO vehiculos (id, categoria, matricula, marca, modelo, anno, ejes, mma, clase_euro, "
+            "INSERT INTO flota.vehiculos (id, categoria, matricula, marca, modelo, anno, ejes, mma, clase_euro, "
             "capacidad_peso, capacidad_palets, fecha_caducidad_itv, seguro_compania, fecha_caducidad_seguro, "
             "tipo_tenencia, fecha_alta, cuota_mensual, km_actuales, fecha_proxima_revision) "
             "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "

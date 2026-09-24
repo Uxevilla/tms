@@ -57,7 +57,7 @@ class _Conn:
 
 
 _SCHEMA = """
-CREATE TABLE IF NOT EXISTS vehiculos (
+CREATE TABLE IF NOT EXISTS flota.vehiculos (
     id TEXT PRIMARY KEY, categoria TEXT DEFAULT 'tractora', matricula TEXT, marca TEXT, modelo TEXT, anno INTEGER,
     itv TEXT, seguro TEXT, peaje_categoria TEXT, ptv_profile TEXT DEFAULT 'EUR_TRAILER_TRUCK',
     ejes INTEGER, mma INTEGER, clase_euro TEXT, activo BOOLEAN DEFAULT true,
@@ -71,7 +71,7 @@ CREATE TABLE IF NOT EXISTS vehiculos (
 CREATE TABLE IF NOT EXISTS categorias_gasto (
     id SERIAL PRIMARY KEY, nombre TEXT NOT NULL UNIQUE
 );
-CREATE TABLE IF NOT EXISTS trips (
+CREATE TABLE IF NOT EXISTS operaciones.trips (
     id TEXT PRIMARY KEY, nombre TEXT, matricula TEXT, conductor TEXT, tipo_carga TEXT,
     origen TEXT, destino TEXT, tareas INTEGER, estado TEXT, error TEXT, creado TEXT,
     terminal TEXT, ecmr_id TEXT, semirremolque_id TEXT, remolque_id TEXT, tareas_estado TEXT, cliente TEXT, precio NUMERIC(12,2) DEFAULT 0,
@@ -86,13 +86,13 @@ CREATE TABLE IF NOT EXISTS trips (
     payload TEXT, fecha_actualizacion TEXT,
     fecha_esperada_carga TEXT, fecha_esperada_descarga TEXT
 );
-CREATE TABLE IF NOT EXISTS paradas (
-    id SERIAL PRIMARY KEY, trip_id TEXT REFERENCES trips(id) ON DELETE CASCADE,
+CREATE TABLE IF NOT EXISTS operaciones.paradas (
+    id SERIAL PRIMARY KEY, trip_id TEXT REFERENCES operaciones.trips(id) ON DELETE CASCADE,
     orden INTEGER, nombre TEXT, ciudad TEXT, lat NUMERIC(10,7), lng NUMERIC(10,7),
     actividad TEXT, comentario TEXT
 );
-CREATE TABLE IF NOT EXISTS tramos (
-    id SERIAL PRIMARY KEY, trip_id TEXT REFERENCES trips(id) ON DELETE CASCADE,
+CREATE TABLE IF NOT EXISTS operaciones.tramos (
+    id SERIAL PRIMARY KEY, trip_id TEXT REFERENCES operaciones.trips(id) ON DELETE CASCADE,
     orden INTEGER DEFAULT 1,
     origen_nombre TEXT DEFAULT '', origen_ciudad TEXT DEFAULT '', origen_lat NUMERIC(10,7), origen_lng NUMERIC(10,7),
     destino_nombre TEXT DEFAULT '', destino_ciudad TEXT DEFAULT '', destino_lat NUMERIC(10,7), destino_lng NUMERIC(10,7),
@@ -145,7 +145,7 @@ CREATE TABLE IF NOT EXISTS telemetria (
     heading DOUBLE PRECISION,
     mileage DOUBLE PRECISION
 );
-CREATE TABLE IF NOT EXISTS mantenimientos (
+CREATE TABLE IF NOT EXISTS flota.mantenimientos (
     id SERIAL PRIMARY KEY, vehiculo_id TEXT, tipo TEXT, fecha TEXT, km INTEGER,
     coste NUMERIC(10,2) DEFAULT 0, notas TEXT, hecho BOOLEAN DEFAULT false, fecha_fin TEXT, creado TEXT
 );
@@ -199,13 +199,13 @@ CREATE TABLE IF NOT EXISTS finanzas.liquidaciones (
     id SERIAL PRIMARY KEY, transportista_id INTEGER,
     fecha TEXT, importe NUMERIC(12,2) DEFAULT 0, concepto TEXT, pagado BOOLEAN DEFAULT false, creado TEXT
 );
-CREATE INDEX IF NOT EXISTS idx_trips_creado ON trips(creado);
-CREATE INDEX IF NOT EXISTS idx_trips_terminal ON trips(terminal);
-CREATE INDEX IF NOT EXISTS idx_trips_cliente ON trips(cliente_id);
+CREATE INDEX IF NOT EXISTS idx_trips_creado ON operaciones.trips(creado);
+CREATE INDEX IF NOT EXISTS idx_trips_terminal ON operaciones.trips(terminal);
+CREATE INDEX IF NOT EXISTS idx_trips_cliente ON operaciones.trips(cliente_id);
 CREATE INDEX IF NOT EXISTS idx_gastos_terminal ON finanzas.gastos(terminal);
 CREATE INDEX IF NOT EXISTS idx_gastos_fecha ON finanzas.gastos(fecha);
 CREATE INDEX IF NOT EXISTS idx_gastos_proveedor ON finanzas.gastos(proveedor_id);
-CREATE INDEX IF NOT EXISTS idx_paradas_trip ON paradas(trip_id);
+CREATE INDEX IF NOT EXISTS idx_paradas_trip ON operaciones.paradas(trip_id);
 CREATE TABLE IF NOT EXISTS finanzas.cuentas (
     codigo TEXT PRIMARY KEY, nombre TEXT NOT NULL,
     grupo TEXT NOT NULL, tipo TEXT NOT NULL, orden INTEGER DEFAULT 0
@@ -636,6 +636,11 @@ CREATE OR REPLACE VIEW gastos AS SELECT * FROM finanzas.gastos;
 CREATE OR REPLACE VIEW gastos_vehiculos AS SELECT * FROM finanzas.gastos_vehiculos;
 CREATE OR REPLACE VIEW costes_fijos AS SELECT * FROM finanzas.costes_fijos;
 CREATE OR REPLACE VIEW liquidaciones AS SELECT * FROM finanzas.liquidaciones;
+CREATE OR REPLACE VIEW vehiculos AS SELECT * FROM flota.vehiculos;
+CREATE OR REPLACE VIEW mantenimientos AS SELECT * FROM flota.mantenimientos;
+CREATE OR REPLACE VIEW trips AS SELECT * FROM operaciones.trips;
+CREATE OR REPLACE VIEW paradas AS SELECT * FROM operaciones.paradas;
+CREATE OR REPLACE VIEW tramos AS SELECT * FROM operaciones.tramos;
 """
 
 
@@ -684,32 +689,32 @@ def _db():
                 pass
             cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_posiciones_vehiculo_time ON telemetria.posiciones_gps (vehiculo_id, time)")
             cur.execute("INSERT INTO empresa (id, nombre, pais, iva) VALUES (1, '', 'ES', 21) ON CONFLICT (id) DO NOTHING")
-            cur.execute("ALTER TABLE vehiculos ADD COLUMN IF NOT EXISTS itv TEXT")
-            cur.execute("ALTER TABLE vehiculos ADD COLUMN IF NOT EXISTS seguro TEXT")
-            cur.execute("ALTER TABLE vehiculos ADD COLUMN IF NOT EXISTS peaje_categoria TEXT")
-            cur.execute("ALTER TABLE vehiculos ADD COLUMN IF NOT EXISTS ptv_profile TEXT")
-            cur.execute("ALTER TABLE vehiculos ADD COLUMN IF NOT EXISTS ejes INTEGER")
-            cur.execute("ALTER TABLE vehiculos ADD COLUMN IF NOT EXISTS mma INTEGER")
-            cur.execute("ALTER TABLE vehiculos ADD COLUMN IF NOT EXISTS clase_euro TEXT")
-            cur.execute("ALTER TABLE vehiculos ADD COLUMN IF NOT EXISTS categoria TEXT")
-            cur.execute("ALTER TABLE vehiculos ADD COLUMN IF NOT EXISTS last_lat NUMERIC(10,7)")
-            cur.execute("ALTER TABLE vehiculos ADD COLUMN IF NOT EXISTS last_lng NUMERIC(10,7)")
-            cur.execute("ALTER TABLE vehiculos ADD COLUMN IF NOT EXISTS last_position_time TEXT")
-            cur.execute("ALTER TABLE vehiculos ADD COLUMN IF NOT EXISTS device TEXT")
-            cur.execute("ALTER TABLE vehiculos ADD COLUMN IF NOT EXISTS app_terminal TEXT")
-            cur.execute("ALTER TABLE vehiculos ADD COLUMN IF NOT EXISTS capacidad_peso NUMERIC(10,1) DEFAULT 0")
-            cur.execute("ALTER TABLE vehiculos ADD COLUMN IF NOT EXISTS capacidad_palets INTEGER DEFAULT 0")
-            cur.execute("ALTER TABLE vehiculos ADD COLUMN IF NOT EXISTS coste_adquisicion NUMERIC(12,2) DEFAULT 0")
-            cur.execute("ALTER TABLE vehiculos ADD COLUMN IF NOT EXISTS fecha_adquisicion TEXT")
-            cur.execute("ALTER TABLE vehiculos ADD COLUMN IF NOT EXISTS vida_util INTEGER DEFAULT 5")
-            cur.execute("ALTER TABLE vehiculos ADD COLUMN IF NOT EXISTS valor_residual NUMERIC(12,2) DEFAULT 0")
-            cur.execute("ALTER TABLE vehiculos ADD COLUMN IF NOT EXISTS fecha_caducidad_itv TEXT")
-            cur.execute("ALTER TABLE vehiculos ADD COLUMN IF NOT EXISTS seguro_compania TEXT")
-            cur.execute("ALTER TABLE vehiculos ADD COLUMN IF NOT EXISTS fecha_caducidad_seguro TEXT")
-            cur.execute("ALTER TABLE vehiculos ADD COLUMN IF NOT EXISTS tipo_tenencia TEXT DEFAULT 'Propiedad'")
-            cur.execute("ALTER TABLE vehiculos ADD COLUMN IF NOT EXISTS proveedor_id INTEGER")
-            cur.execute("ALTER TABLE vehiculos ADD COLUMN IF NOT EXISTS fecha_alta TEXT")
-            cur.execute("ALTER TABLE vehiculos ADD COLUMN IF NOT EXISTS cuota_mensual NUMERIC(12,2) DEFAULT 0")
+            cur.execute("ALTER TABLE flota.vehiculos ADD COLUMN IF NOT EXISTS itv TEXT")
+            cur.execute("ALTER TABLE flota.vehiculos ADD COLUMN IF NOT EXISTS seguro TEXT")
+            cur.execute("ALTER TABLE flota.vehiculos ADD COLUMN IF NOT EXISTS peaje_categoria TEXT")
+            cur.execute("ALTER TABLE flota.vehiculos ADD COLUMN IF NOT EXISTS ptv_profile TEXT")
+            cur.execute("ALTER TABLE flota.vehiculos ADD COLUMN IF NOT EXISTS ejes INTEGER")
+            cur.execute("ALTER TABLE flota.vehiculos ADD COLUMN IF NOT EXISTS mma INTEGER")
+            cur.execute("ALTER TABLE flota.vehiculos ADD COLUMN IF NOT EXISTS clase_euro TEXT")
+            cur.execute("ALTER TABLE flota.vehiculos ADD COLUMN IF NOT EXISTS categoria TEXT")
+            cur.execute("ALTER TABLE flota.vehiculos ADD COLUMN IF NOT EXISTS last_lat NUMERIC(10,7)")
+            cur.execute("ALTER TABLE flota.vehiculos ADD COLUMN IF NOT EXISTS last_lng NUMERIC(10,7)")
+            cur.execute("ALTER TABLE flota.vehiculos ADD COLUMN IF NOT EXISTS last_position_time TEXT")
+            cur.execute("ALTER TABLE flota.vehiculos ADD COLUMN IF NOT EXISTS device TEXT")
+            cur.execute("ALTER TABLE flota.vehiculos ADD COLUMN IF NOT EXISTS app_terminal TEXT")
+            cur.execute("ALTER TABLE flota.vehiculos ADD COLUMN IF NOT EXISTS capacidad_peso NUMERIC(10,1) DEFAULT 0")
+            cur.execute("ALTER TABLE flota.vehiculos ADD COLUMN IF NOT EXISTS capacidad_palets INTEGER DEFAULT 0")
+            cur.execute("ALTER TABLE flota.vehiculos ADD COLUMN IF NOT EXISTS coste_adquisicion NUMERIC(12,2) DEFAULT 0")
+            cur.execute("ALTER TABLE flota.vehiculos ADD COLUMN IF NOT EXISTS fecha_adquisicion TEXT")
+            cur.execute("ALTER TABLE flota.vehiculos ADD COLUMN IF NOT EXISTS vida_util INTEGER DEFAULT 5")
+            cur.execute("ALTER TABLE flota.vehiculos ADD COLUMN IF NOT EXISTS valor_residual NUMERIC(12,2) DEFAULT 0")
+            cur.execute("ALTER TABLE flota.vehiculos ADD COLUMN IF NOT EXISTS fecha_caducidad_itv TEXT")
+            cur.execute("ALTER TABLE flota.vehiculos ADD COLUMN IF NOT EXISTS seguro_compania TEXT")
+            cur.execute("ALTER TABLE flota.vehiculos ADD COLUMN IF NOT EXISTS fecha_caducidad_seguro TEXT")
+            cur.execute("ALTER TABLE flota.vehiculos ADD COLUMN IF NOT EXISTS tipo_tenencia TEXT DEFAULT 'Propiedad'")
+            cur.execute("ALTER TABLE flota.vehiculos ADD COLUMN IF NOT EXISTS proveedor_id INTEGER")
+            cur.execute("ALTER TABLE flota.vehiculos ADD COLUMN IF NOT EXISTS fecha_alta TEXT")
+            cur.execute("ALTER TABLE flota.vehiculos ADD COLUMN IF NOT EXISTS cuota_mensual NUMERIC(12,2) DEFAULT 0")
             cur.execute("ALTER TABLE files ADD COLUMN IF NOT EXISTS vehiculo_id TEXT")
             cur.execute("ALTER TABLE finanzas.asientos ADD COLUMN IF NOT EXISTS origen_id TEXT")
             cur.execute("ALTER TABLE mensajes ADD COLUMN IF NOT EXISTS terminal TEXT")
@@ -717,21 +722,21 @@ def _db():
             cur.execute("ALTER TABLE finanzas.gastos_vehiculos ADD COLUMN IF NOT EXISTS iva NUMERIC(6,2) DEFAULT 21")
             cur.execute("ALTER TABLE finanzas.gastos_vehiculos ADD COLUMN IF NOT EXISTS cuenta_contable_gasto TEXT")
             cur.execute("ALTER TABLE finanzas.gastos_vehiculos ADD COLUMN IF NOT EXISTS estado_pago TEXT DEFAULT 'Pendiente'")
-            cur.execute("ALTER TABLE mantenimientos ADD COLUMN IF NOT EXISTS fecha_fin TEXT")
+            cur.execute("ALTER TABLE flota.mantenimientos ADD COLUMN IF NOT EXISTS fecha_fin TEXT")
             cur.execute("ALTER TABLE empleados ADD COLUMN IF NOT EXISTS caducidad_carnet TEXT")
             cur.execute("ALTER TABLE empleados ADD COLUMN IF NOT EXISTS caducidad_cap TEXT")
             cur.execute("ALTER TABLE empleados ADD COLUMN IF NOT EXISTS caducidad_medica TEXT")
-            cur.execute("ALTER TABLE vehiculos ADD COLUMN IF NOT EXISTS km_actuales NUMERIC(12,1) DEFAULT 0")
-            cur.execute("ALTER TABLE vehiculos ADD COLUMN IF NOT EXISTS fecha_proxima_revision TEXT")
-            cur.execute("ALTER TABLE trips ADD COLUMN IF NOT EXISTS fecha_actualizacion TEXT")
-            cur.execute("ALTER TABLE trips ADD COLUMN IF NOT EXISTS fecha_esperada_carga TEXT")
-            cur.execute("ALTER TABLE trips ADD COLUMN IF NOT EXISTS fecha_esperada_descarga TEXT")
-            cur.execute("ALTER TABLE trips ADD COLUMN IF NOT EXISTS km_vacio NUMERIC(10,1) DEFAULT 0")
-            cur.execute("ALTER TABLE trips ADD COLUMN IF NOT EXISTS semirremolque_id TEXT")
-            cur.execute("ALTER TABLE trips ADD COLUMN IF NOT EXISTS remolque_id TEXT")
-            cur.execute("ALTER TABLE trips ADD COLUMN IF NOT EXISTS payload TEXT")
-            cur.execute("ALTER TABLE trips ADD COLUMN IF NOT EXISTS referencia TEXT")
-            cur.execute("ALTER TABLE trips ADD COLUMN IF NOT EXISTS ecmr_id TEXT")
+            cur.execute("ALTER TABLE flota.vehiculos ADD COLUMN IF NOT EXISTS km_actuales NUMERIC(12,1) DEFAULT 0")
+            cur.execute("ALTER TABLE flota.vehiculos ADD COLUMN IF NOT EXISTS fecha_proxima_revision TEXT")
+            cur.execute("ALTER TABLE operaciones.trips ADD COLUMN IF NOT EXISTS fecha_actualizacion TEXT")
+            cur.execute("ALTER TABLE operaciones.trips ADD COLUMN IF NOT EXISTS fecha_esperada_carga TEXT")
+            cur.execute("ALTER TABLE operaciones.trips ADD COLUMN IF NOT EXISTS fecha_esperada_descarga TEXT")
+            cur.execute("ALTER TABLE operaciones.trips ADD COLUMN IF NOT EXISTS km_vacio NUMERIC(10,1) DEFAULT 0")
+            cur.execute("ALTER TABLE operaciones.trips ADD COLUMN IF NOT EXISTS semirremolque_id TEXT")
+            cur.execute("ALTER TABLE operaciones.trips ADD COLUMN IF NOT EXISTS remolque_id TEXT")
+            cur.execute("ALTER TABLE operaciones.trips ADD COLUMN IF NOT EXISTS payload TEXT")
+            cur.execute("ALTER TABLE operaciones.trips ADD COLUMN IF NOT EXISTS referencia TEXT")
+            cur.execute("ALTER TABLE operaciones.trips ADD COLUMN IF NOT EXISTS ecmr_id TEXT")
             cur.execute("ALTER TABLE finanzas.facturas ADD COLUMN IF NOT EXISTS coste NUMERIC(12,2) DEFAULT 0")
             cur.execute("ALTER TABLE finanzas.facturas ADD COLUMN IF NOT EXISTS margen NUMERIC(12,2) DEFAULT 0")
             cur.execute("ALTER TABLE finanzas.liquidaciones ADD COLUMN IF NOT EXISTS conductor_id INTEGER")
@@ -740,26 +745,26 @@ def _db():
             cur.execute("ALTER TABLE finanzas.gastos ADD COLUMN IF NOT EXISTS iva NUMERIC(5,2) DEFAULT 21")
             cur.execute("ALTER TABLE finanzas.gastos ADD COLUMN IF NOT EXISTS retencion NUMERIC(5,2) DEFAULT 0")
             cur.execute("ALTER TABLE finanzas.gastos ADD COLUMN IF NOT EXISTS pagado BOOLEAN DEFAULT false")
-            cur.execute("ALTER TABLE trips ADD COLUMN IF NOT EXISTS peaje_km NUMERIC(10,1) DEFAULT 0")
-            cur.execute("ALTER TABLE trips ADD COLUMN IF NOT EXISTS peaje_estimado NUMERIC(10,2) DEFAULT 0")
-            cur.execute("ALTER TABLE trips ADD COLUMN IF NOT EXISTS peaje_fuente TEXT")
-            cur.execute("ALTER TABLE trips ADD COLUMN IF NOT EXISTS tiempo_min NUMERIC(8,1) DEFAULT 0")
-            cur.execute("ALTER TABLE trips ADD COLUMN IF NOT EXISTS pausas_min NUMERIC(8,1) DEFAULT 0")
-            cur.execute("ALTER TABLE trips ADD COLUMN IF NOT EXISTS trafico_min NUMERIC(8,1) DEFAULT 0")
-            cur.execute("ALTER TABLE trips ADD COLUMN IF NOT EXISTS origen_id INTEGER")
-            cur.execute("ALTER TABLE trips ADD COLUMN IF NOT EXISTS destino_id INTEGER")
-            cur.execute("ALTER TABLE trips ADD COLUMN IF NOT EXISTS km_inicio NUMERIC(12,1)")
-            cur.execute("ALTER TABLE trips ADD COLUMN IF NOT EXISTS km_fin NUMERIC(12,1)")
-            cur.execute("ALTER TABLE trips ADD COLUMN IF NOT EXISTS km_real NUMERIC(10,1)")
-            cur.execute("ALTER TABLE trips ADD COLUMN IF NOT EXISTS km_fuente TEXT DEFAULT 'planificado'")
+            cur.execute("ALTER TABLE operaciones.trips ADD COLUMN IF NOT EXISTS peaje_km NUMERIC(10,1) DEFAULT 0")
+            cur.execute("ALTER TABLE operaciones.trips ADD COLUMN IF NOT EXISTS peaje_estimado NUMERIC(10,2) DEFAULT 0")
+            cur.execute("ALTER TABLE operaciones.trips ADD COLUMN IF NOT EXISTS peaje_fuente TEXT")
+            cur.execute("ALTER TABLE operaciones.trips ADD COLUMN IF NOT EXISTS tiempo_min NUMERIC(8,1) DEFAULT 0")
+            cur.execute("ALTER TABLE operaciones.trips ADD COLUMN IF NOT EXISTS pausas_min NUMERIC(8,1) DEFAULT 0")
+            cur.execute("ALTER TABLE operaciones.trips ADD COLUMN IF NOT EXISTS trafico_min NUMERIC(8,1) DEFAULT 0")
+            cur.execute("ALTER TABLE operaciones.trips ADD COLUMN IF NOT EXISTS origen_id INTEGER")
+            cur.execute("ALTER TABLE operaciones.trips ADD COLUMN IF NOT EXISTS destino_id INTEGER")
+            cur.execute("ALTER TABLE operaciones.trips ADD COLUMN IF NOT EXISTS km_inicio NUMERIC(12,1)")
+            cur.execute("ALTER TABLE operaciones.trips ADD COLUMN IF NOT EXISTS km_fin NUMERIC(12,1)")
+            cur.execute("ALTER TABLE operaciones.trips ADD COLUMN IF NOT EXISTS km_real NUMERIC(10,1)")
+            cur.execute("ALTER TABLE operaciones.trips ADD COLUMN IF NOT EXISTS km_fuente TEXT DEFAULT 'planificado'")
             # Tarifas + valoración del viaje (km/viaje/kilos) y subcontratación.
-            cur.execute("ALTER TABLE trips ADD COLUMN IF NOT EXISTS modo_tarifa TEXT DEFAULT 'viaje'")
-            cur.execute("ALTER TABLE trips ADD COLUMN IF NOT EXISTS tarifa_id INTEGER")
-            cur.execute("ALTER TABLE trips ADD COLUMN IF NOT EXISTS precio_unitario NUMERIC(12,3)")
-            cur.execute("ALTER TABLE trips ADD COLUMN IF NOT EXISTS kilos NUMERIC(12,1) DEFAULT 0")
-            cur.execute("ALTER TABLE trips ADD COLUMN IF NOT EXISTS subcontratado BOOLEAN DEFAULT false")
-            cur.execute("ALTER TABLE trips ADD COLUMN IF NOT EXISTS proveedor_id INTEGER")
-            cur.execute("ALTER TABLE trips ADD COLUMN IF NOT EXISTS coste NUMERIC(12,2) DEFAULT 0")
+            cur.execute("ALTER TABLE operaciones.trips ADD COLUMN IF NOT EXISTS modo_tarifa TEXT DEFAULT 'viaje'")
+            cur.execute("ALTER TABLE operaciones.trips ADD COLUMN IF NOT EXISTS tarifa_id INTEGER")
+            cur.execute("ALTER TABLE operaciones.trips ADD COLUMN IF NOT EXISTS precio_unitario NUMERIC(12,3)")
+            cur.execute("ALTER TABLE operaciones.trips ADD COLUMN IF NOT EXISTS kilos NUMERIC(12,1) DEFAULT 0")
+            cur.execute("ALTER TABLE operaciones.trips ADD COLUMN IF NOT EXISTS subcontratado BOOLEAN DEFAULT false")
+            cur.execute("ALTER TABLE operaciones.trips ADD COLUMN IF NOT EXISTS proveedor_id INTEGER")
+            cur.execute("ALTER TABLE operaciones.trips ADD COLUMN IF NOT EXISTS coste NUMERIC(12,2) DEFAULT 0")
             cur.execute("""CREATE TABLE IF NOT EXISTS tarifas (
                 id SERIAL PRIMARY KEY,
                 nombre TEXT NOT NULL,
@@ -785,18 +790,18 @@ def _db():
                 cur.execute(f"ALTER TABLE {_t} ADD COLUMN IF NOT EXISTS borrado_por TEXT")
                 cur.execute(f"ALTER TABLE {_t} ADD COLUMN IF NOT EXISTS borrado_en TEXT")
             # Backfill: asignar referencia interna a viajes existentes (por orden de creación)
-            cur.execute("SELECT id FROM trips WHERE referencia IS NULL OR referencia = '' ORDER BY creado ASC")
+            cur.execute("SELECT id FROM operaciones.trips WHERE referencia IS NULL OR referencia = '' ORDER BY creado ASC")
             _pend = [r[0] for r in cur.fetchall()]
             if _pend:
                 _n = 0
-                cur.execute("SELECT referencia FROM trips WHERE referencia IS NOT NULL AND referencia != ''")
+                cur.execute("SELECT referencia FROM operaciones.trips WHERE referencia IS NOT NULL AND referencia != ''")
                 for _r in cur.fetchall():
                     _m = re.match(r"^V-(\d+)$", (_r[0] or "").strip())
                     if _m:
                         _n = max(_n, int(_m.group(1)))
                 for _tid in _pend:
                     _n += 1
-                    cur.execute("UPDATE trips SET referencia=%s WHERE id=%s", (f"V-{_n:04d}", _tid))
+                    cur.execute("UPDATE operaciones.trips SET referencia=%s WHERE id=%s", (f"V-{_n:04d}", _tid))
             for c in _CATEGORIAS:
                 cur.execute(
                     "INSERT INTO categorias_gasto (nombre) VALUES (%s) "
