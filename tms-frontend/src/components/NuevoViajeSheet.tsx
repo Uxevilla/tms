@@ -53,6 +53,18 @@ interface Cliente { id: number; nombre: string; }
 interface Direccion { id: string; nombre?: string; empresa?: string; ciudad?: string; lat: number | null; lng: number | null; }
 interface Tarifa { id: number; nombre: string; tipo: string; precio: number; cliente_id: number | null; activo: boolean; }
 
+interface RespuestaRuta {
+  ptv?: { polyline?: string; distance_km?: number; travel_time_min?: number; toll?: number | null };
+  total_km?: number;
+}
+
+interface ParadaPayload { nombre?: string; ciudad?: string; lat?: number | null; lng?: number | null; actividad?: string; comentario?: string; }
+interface PayloadTrip {
+  origen?: { nombre?: string; ciudad?: string; lat?: number | null; lng?: number | null };
+  destino?: { nombre?: string; ciudad?: string; lat?: number | null; lng?: number | null };
+  paradas?: ParadaPayload[];
+}
+
 // Convierte la Sugerencia del BuscadorDireccion a la Direccion que manejamos (id string).
 const aDireccion = (d: Sugerencia & { id: number }): Direccion => ({
   id: String(d.id), nombre: d.nombre, empresa: d.empresa, ciudad: d.ciudad, lat: d.lat, lng: d.lng,
@@ -129,23 +141,24 @@ export function NuevoViajeSheet({ onClose, onCreado }: { onClose: () => void; on
   };
 
   // Carga de opciones (clientes, direcciones, tarifas, conductores, vehículos).
+  // Cada opción es independiente: un fallo puntual (p. ej. pool de BD) no vacía el resto.
   useEffect(() => {
     (async () => {
-      try {
-        const [cli, dir, tar, con, veh] = await Promise.all([
-          api<{ clientes: Cliente[] }>(REST_CLIENTES),
-          api<{ direcciones: Direccion[] }>(REST_DIRECCIONES),
-          api<{ tarifas: Tarifa[] }>(REST_TARIFAS),
-          api<{ conductores: { id: number; nombre: string }[] }>(REST_CONDUCTORES),
-          api<{ vehiculos: { id: string; matricula: string; categoria: string }[] }>(REST_VEHICULOS_DISPONIBLES),
-        ]);
-        setClientes(cli.clientes);
-        setDirecciones(dir.direcciones);
-        setTarifas(tar.tarifas.filter((t) => t.activo !== false));
-        setConductores(con.conductores);
-        setVehiculos(veh.vehiculos);
-      } catch (e) {
-        console.error("[viajes] error cargando opciones del formulario:", e);
+      const [cli, dir, tar, con, veh] = await Promise.allSettled([
+        api<{ clientes: Cliente[] }>(REST_CLIENTES),
+        api<{ direcciones: Direccion[] }>(REST_DIRECCIONES),
+        api<{ tarifas: Tarifa[] }>(REST_TARIFAS),
+        api<{ conductores: { id: number; nombre: string }[] }>(REST_CONDUCTORES),
+        api<{ vehiculos: { id: string; matricula: string; categoria: string }[] }>(REST_VEHICULOS_DISPONIBLES),
+      ]);
+      if (cli.status === "fulfilled") setClientes(cli.value.clientes);
+      if (dir.status === "fulfilled") setDirecciones(dir.value.direcciones);
+      if (tar.status === "fulfilled") setTarifas(tar.value.tarifas.filter((t) => t.activo !== false));
+      if (con.status === "fulfilled") setConductores(con.value.conductores);
+      if (veh.status === "fulfilled") setVehiculos(veh.value.vehiculos);
+      const fallos = [["clientes", cli], ["direcciones", dir], ["tarifas", tar], ["conductores", con], ["vehiculos", veh]] as const;
+      for (const [nombre, r] of fallos) {
+        if (r.status === "rejected") console.error(`[viajes] error cargando ${nombre}:`, r.reason);
       }
     })();
   }, []);
@@ -180,7 +193,7 @@ export function NuevoViajeSheet({ onClose, onCreado }: { onClose: () => void; on
     let cancel = false;
     setRuta((p) => ({ ...p, calculando: true }));
     const t = window.setTimeout(() => {
-      api<any>(RUTA, { method: "POST", body: JSON.stringify({ puntos: puntosRuta, terminal: watch("terminal") || "" }) })
+      api<RespuestaRuta>(RUTA, { method: "POST", body: JSON.stringify({ puntos: puntosRuta, terminal: watch("terminal") || "" }) })
         .then((d) => {
           if (cancel) return;
           const ptv = d.ptv;
@@ -222,20 +235,20 @@ export function NuevoViajeSheet({ onClose, onCreado }: { onClose: () => void; on
       const viajes = await api<{ viajes: { id: string; cliente: string }[] }>(`/api/viajes`);
       const ultimo = viajes.viajes.find((v) => v.cliente === getValues("cliente_nombre"));
       if (!ultimo) return;
-      const t = await api<{ payload?: Record<string, any> }>(`/api/trips/${encodeURIComponent(ultimo.id)}`);
+      const t = await api<{ payload?: PayloadTrip }>(`/api/trips/${encodeURIComponent(ultimo.id)}`);
       const p = t.payload ?? {};
       const synth = (nombre: string, lat: number | null, lng: number | null, ciudad = "") => {
         const id = `_dup_${Math.random().toString(36).slice(2, 8)}`;
         setDirecciones((prev) => [...prev, { id, nombre, ciudad, lat, lng }]);
         return id;
       };
-      if (p.origen?.nombre) setValue("origen_id", synth(p.origen.nombre, p.origen.lat, p.origen.lng, p.origen.ciudad || ""));
-      if (p.destino?.nombre) setValue("destino_id", synth(p.destino.nombre, p.destino.lat, p.destino.lng, p.destino.ciudad || ""));
+      if (p.origen?.nombre) setValue("origen_id", synth(p.origen.nombre, p.origen.lat ?? null, p.origen.lng ?? null, p.origen.ciudad || ""));
+      if (p.destino?.nombre) setValue("destino_id", synth(p.destino.nombre, p.destino.lat ?? null, p.destino.lng ?? null, p.destino.ciudad || ""));
       reset((f) => ({
         ...f,
-        paradas: (p.paradas ?? []).map((par: any) => ({
+        paradas: (p.paradas ?? []).map((par: ParadaPayload) => ({
           id: `_dup_p_${Math.random().toString(36).slice(2, 8)}`,
-          dirId: par.nombre ? synth(par.nombre, par.lat, par.lng, par.ciudad || "") : "",
+          dirId: par.nombre ? synth(par.nombre, par.lat ?? null, par.lng ?? null, par.ciudad || "") : "",
           actividad: par.actividad || "DESCARGA",
           comentario: par.comentario || "",
         })),
