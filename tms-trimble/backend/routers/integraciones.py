@@ -130,7 +130,7 @@ def export_xlsx(tipo: str = "trips", conn = Depends(get_conn)):
     elif tipo == "gastos":
         rows = conn.execute(
             "SELECT g.fecha, g.terminal, g.categoria, p.nombre AS proveedor, p.cif AS proveedor_cif, "
-            "g.concepto, g.importe, g.pagado FROM gastos g "
+            "g.concepto, g.importe, g.pagado FROM finanzas.gastos g "
             "LEFT JOIN proveedores p ON p.id = g.proveedor_id ORDER BY g.fecha DESC"
         ).fetchall()
         data = [[r["fecha"], r["terminal"], r["categoria"],
@@ -171,12 +171,12 @@ def export_xlsx(tipo: str = "trips", conn = Depends(get_conn)):
         rows = conn.execute("SELECT categoria, eur_km FROM tarifas_peaje ORDER BY categoria").fetchall()
         _write(["Categoría", "€/km"], [[r["categoria"], float(r["eur_km"] or 0)] for r in rows])
     elif tipo == "costes_fijos":
-        rows = conn.execute("SELECT terminal, concepto, importe FROM costes_fijos ORDER BY terminal").fetchall()
+        rows = conn.execute("SELECT terminal, concepto, importe FROM finanzas.costes_fijos ORDER BY terminal").fetchall()
         _write(["Vehículo", "Concepto", "€/mes"], [[r["terminal"], r["concepto"], float(r["importe"] or 0)] for r in rows])
     elif tipo == "mantenimientos":
         rows = conn.execute(
             "SELECT m.fecha, v.matricula, m.tipo, m.km, m.coste, m.notas, m.hecho "
-            "FROM mantenimientos m LEFT JOIN vehiculos v ON v.id=m.vehiculo_id ORDER BY m.fecha DESC"
+            "FROM flota.mantenimientos m LEFT JOIN vehiculos v ON v.id=m.vehiculo_id ORDER BY m.fecha DESC"
         ).fetchall()
         _write(["Fecha", "Vehículo", "Tipo", "Km", "Coste (€)", "Notas", "Hecho"],
                [[r["fecha"], r["matricula"], r["tipo"], r["km"], float(r["coste"] or 0), r["notas"],
@@ -192,20 +192,20 @@ def export_xlsx(tipo: str = "trips", conn = Depends(get_conn)):
     elif tipo == "liquidaciones":
         rows = conn.execute(
             "SELECT l.fecha, t.nombre AS transportista, l.concepto, l.importe, l.pagado "
-            "FROM liquidaciones l LEFT JOIN transportistas t ON t.id=l.transportista_id ORDER BY l.fecha DESC"
+            "FROM finanzas.liquidaciones l LEFT JOIN transportistas t ON t.id=l.transportista_id ORDER BY l.fecha DESC"
         ).fetchall()
         _write(["Fecha", "Transportista", "Concepto", "Importe (€)", "Pagado"],
                [[r["fecha"], r["transportista"], r["concepto"], float(r["importe"] or 0),
                  "Sí" if r["pagado"] else "No"] for r in rows])
     elif tipo == "facturas":
-        rows = conn.execute("SELECT numero, fecha, cliente_nombre, base, iva, cuota_iva, total, estado FROM facturas ORDER BY fecha DESC").fetchall()
+        rows = conn.execute("SELECT numero, fecha, cliente_nombre, base, iva, cuota_iva, total, estado FROM finanzas.facturas ORDER BY fecha DESC").fetchall()
         _write(["Nº", "Fecha", "Cliente", "Base", "IVA %", "Cuota IVA", "Total", "Estado"],
                [[r["numero"], r["fecha"], r["cliente_nombre"], float(r["base"] or 0), float(r["iva"] or 0),
                  float(r["cuota_iva"] or 0), float(r["total"] or 0), r["estado"]] for r in rows])
     elif tipo == "asientos":
         rows = conn.execute(
             "SELECT a.numero, a.fecha, a.concepto, a.origen, a.documento, p.cuenta, c.nombre AS cuenta_nombre, p.debe, p.haber "
-            "FROM asientos a JOIN apuntes p ON p.asiento_id=a.id JOIN cuentas c ON c.codigo=p.cuenta "
+            "FROM finanzas.asientos a JOIN finanzas.apuntes p ON p.asiento_id=a.id JOIN finanzas.cuentas c ON c.codigo=p.cuenta "
             "ORDER BY a.fecha DESC, a.numero DESC, p.id"
         ).fetchall()
         _write(["Nº", "Fecha", "Concepto", "Origen", "Documento", "Cuenta", "Descripción", "Debe", "Haber"],
@@ -214,7 +214,7 @@ def export_xlsx(tipo: str = "trips", conn = Depends(get_conn)):
     elif tipo == "balance":
         rows = conn.execute(
             "SELECT p.cuenta, c.nombre, SUM(p.debe) AS debe, SUM(p.haber) AS haber "
-            "FROM apuntes p JOIN asientos a ON a.id=p.asiento_id JOIN cuentas c ON c.codigo=p.cuenta "
+            "FROM finanzas.apuntes p JOIN finanzas.asientos a ON a.id=p.asiento_id JOIN finanzas.cuentas c ON c.codigo=p.cuenta "
             "GROUP BY p.cuenta, c.nombre, c.orden ORDER BY c.orden, p.cuenta"
         ).fetchall()
         _write(["Cuenta", "Nombre", "Debe", "Haber", "Saldo"],
@@ -223,12 +223,12 @@ def export_xlsx(tipo: str = "trips", conn = Depends(get_conn)):
     elif tipo == "pyg":
         gastos = conn.execute(
             "SELECT p.cuenta, c.nombre, SUM(p.debe)-SUM(p.haber) AS importe "
-            "FROM apuntes p JOIN asientos a ON a.id=p.asiento_id JOIN cuentas c ON c.codigo=p.cuenta "
+            "FROM finanzas.apuntes p JOIN finanzas.asientos a ON a.id=p.asiento_id JOIN finanzas.cuentas c ON c.codigo=p.cuenta "
             "WHERE c.tipo='gasto' GROUP BY p.cuenta, c.nombre, c.orden ORDER BY c.orden"
         ).fetchall()
         ingresos = conn.execute(
             "SELECT p.cuenta, c.nombre, SUM(p.haber)-SUM(p.debe) AS importe "
-            "FROM apuntes p JOIN asientos a ON a.id=p.asiento_id JOIN cuentas c ON c.codigo=p.cuenta "
+            "FROM finanzas.apuntes p JOIN finanzas.asientos a ON a.id=p.asiento_id JOIN finanzas.cuentas c ON c.codigo=p.cuenta "
             "WHERE c.tipo='ingreso' GROUP BY p.cuenta, c.nombre, c.orden ORDER BY c.orden"
         ).fetchall()
         data = [["GASTOS", "", ""]]

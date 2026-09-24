@@ -97,7 +97,7 @@ def _sync_status():
         # Al finalizar: la última posición conocida del vehículo pasa a ser el destino del viaje
         if estado == "finalizado" and row["terminal"]:
             dest = conn.execute(
-                "SELECT lat, lng FROM paradas WHERE trip_id=? ORDER BY orden DESC LIMIT 1", (trip_id,)
+                "SELECT lat, lng FROM operaciones.paradas WHERE trip_id=? ORDER BY orden DESC LIMIT 1", (trip_id,)
             ).fetchone()
             if dest and dest["lat"] is not None and dest["lng"] is not None:
                 conn.execute(
@@ -110,7 +110,7 @@ def _sync_status():
 
 def _get_sync_state(key):
     with _db() as conn:
-        row = conn.execute("SELECT value FROM sync_state WHERE key=?", (key,)).fetchone()
+        row = conn.execute("SELECT value FROM sistema.sync_state WHERE key=?", (key,)).fetchone()
     return row["value"] if row else None
 
 

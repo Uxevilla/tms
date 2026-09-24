@@ -50,7 +50,7 @@ def setup():
     # Sembrar el plan contable (apuntes tiene FK a cuentas.codigo).
     for cod, nom, grupo, tipo, orden in main._PLAN_CONTABLE:
         cur.execute(
-            "INSERT INTO cuentas (codigo, nombre, grupo, tipo, orden) VALUES (%s,%s,%s,%s,%s) "
+            "INSERT INTO finanzas.cuentas (codigo, nombre, grupo, tipo, orden) VALUES (%s,%s,%s,%s,%s) "
             "ON CONFLICT (codigo) DO NOTHING",
             (cod, nom, grupo, tipo, orden),
         )
@@ -80,8 +80,8 @@ def main_tests():
             [("600", 100, 0, "compra"), ("400", 0, 100, "proveedor")],
             "it_manual",
         )
-        a = conn.execute("SELECT numero, concepto FROM asientos WHERE id=?", (aid,)).fetchone()
-        n_apuntes = conn.execute("SELECT COUNT(*) c FROM apuntes WHERE asiento_id=?", (aid,)).fetchone()["c"]
+        a = conn.execute("SELECT numero, concepto FROM finanzas.asientos WHERE id=?", (aid,)).fetchone()
+        n_apuntes = conn.execute("SELECT COUNT(*) c FROM finanzas.apuntes WHERE asiento_id=?", (aid,)).fetchone()["c"]
         check("asiento balanceado se crea", a is not None and a["numero"] == 1, f"num={a and a['numero']}")
         check("asiento genera 2 apuntes", n_apuntes == 2, f"apuntes={n_apuntes}")
 
@@ -91,11 +91,11 @@ def main_tests():
             [("430", 200, 0, "cliente"), ("705", 0, 200, "venta")],
             "it_manual",
         )
-        num2 = conn.execute("SELECT numero FROM asientos WHERE id=?", (aid2,)).fetchone()["numero"]
+        num2 = conn.execute("SELECT numero FROM finanzas.asientos WHERE id=?", (aid2,)).fetchone()["numero"]
         check("numeración secuencial (2º asiento = 2)", num2 == 2, f"num2={num2}")
 
         # T3: descuadre -> ValueError + sin asiento parcial (rollback)
-        antes = conn.execute("SELECT COUNT(*) c FROM asientos").fetchone()["c"]
+        antes = conn.execute("SELECT COUNT(*) c FROM finanzas.asientos").fetchone()["c"]
         try:
             main._registrar_asiento(
                 "2026-03-01", "Descuadrado",
@@ -105,12 +105,12 @@ def main_tests():
             check("descuadre lanza ValueError", False)
         except ValueError:
             check("descuadre lanza ValueError", True)
-            despues = conn.execute("SELECT COUNT(*) c FROM asientos").fetchone()["c"]
+            despues = conn.execute("SELECT COUNT(*) c FROM finanzas.asientos").fetchone()["c"]
             check("descuadre no deja asiento parcial", antes == despues, f"{antes}->{despues}")
 
         # T4: pista de auditoría
         audit = conn.execute(
-            "SELECT accion, usuario FROM audit_log WHERE tabla='asientos' AND registro_id=?",
+            "SELECT accion, usuario FROM sistema.audit_log WHERE tabla='asientos' AND registro_id=?",
             (str(aid),),
         ).fetchone()
         check("audit_log registra 'crear' del asiento", audit is not None and audit["accion"] == "crear",
@@ -119,7 +119,7 @@ def main_tests():
         # T5: periodo cerrado -> rechaza fecha anterior al cierre
         print("[T5] periodo cerrado...")
         conn.execute(
-            "INSERT INTO config (key, value) VALUES ('cierre_fecha', '2026-01-31') "
+            "INSERT INTO sistema.config (key, value) VALUES ('cierre_fecha', '2026-01-31') "
             "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
         )
         conn.commit()  # visible para la conexión nueva de _registrar_asiento
@@ -132,7 +132,7 @@ def main_tests():
             check("periodo cerrado rechaza fecha anterior", False)
         except ValueError:
             check("periodo cerrado rechaza fecha anterior", True)
-        conn.execute("DELETE FROM config WHERE key='cierre_fecha'")
+        conn.execute("DELETE FROM sistema.config WHERE key='cierre_fecha'")
         conn.commit()
 
         # T6: soft-delete columnas presentes en tablas contables

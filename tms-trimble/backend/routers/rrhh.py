@@ -156,7 +156,7 @@ def upd_nomina(nomina_id: int, n: Nomina, conn = Depends(get_conn)):
 
 @router.delete("/api/nominas/{nomina_id}")
 def del_nomina(nomina_id: int, conn = Depends(get_conn)):
-    conn.execute("DELETE FROM asientos WHERE id IN (SELECT asiento_id FROM nominas WHERE id=?)", (nomina_id,))
+    conn.execute("DELETE FROM finanzas.asientos WHERE id IN (SELECT asiento_id FROM nominas WHERE id=?)", (nomina_id,))
     conn.execute("DELETE FROM nominas WHERE id=?", (nomina_id,))
     conn.commit()
     return {"ok": True}
@@ -397,7 +397,7 @@ def _seed_demo(conn):
         fecha = d(-(i * 11) % 350)
         hecho = (i % 3 != 0)
         conn.execute(
-            "INSERT INTO mantenimientos (vehiculo_id, tipo, fecha, km, coste, notas, hecho, fecha_fin, creado) "
+            "INSERT INTO flota.mantenimientos (vehiculo_id, tipo, fecha, km, coste, notas, hecho, fecha_fin, creado) "
             "VALUES (?,?,?,?,?,?,?,?,?)",
             (veh, tipo, fecha, (i * 9500) % 320000, round(120 + (i * 47) % 1400, 2),
              f"Mantenimiento {tipo.lower()} ({i+1})", hecho, (d((i * 11) % 350 + 2) if not hecho else None), creado),

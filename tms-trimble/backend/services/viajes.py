@@ -89,10 +89,10 @@ def _save_trip(trip_id, nombre, matricula, conductor, tipo_carga,
 
 def _save_tramos(conn, trip_id, tramos):
     """Persiste los tramos (segmentos) de un viaje; cada tramo con su vehículo/conductor."""
-    conn.execute("DELETE FROM tramos WHERE trip_id=?", (trip_id,))
+    conn.execute("DELETE FROM operaciones.tramos WHERE trip_id=?", (trip_id,))
     for t in tramos:
         conn.execute(
-            "INSERT INTO tramos (trip_id, orden, origen_nombre, origen_ciudad, origen_lat, origen_lng, "
+            "INSERT INTO operaciones.tramos (trip_id, orden, origen_nombre, origen_ciudad, origen_lat, origen_lng, "
             "destino_nombre, destino_ciudad, destino_lat, destino_lng, terminal, conductor, fecha_carga, fecha_descarga, creado) "
             "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (trip_id, t.orden, t.origen_nombre, t.origen_ciudad, t.origen_lat, t.origen_lng,
@@ -104,11 +104,11 @@ def _save_tramos(conn, trip_id, tramos):
 
 def _save_paradas(trip_id, viaje):
     with _db() as conn:
-        conn.execute("DELETE FROM paradas WHERE trip_id=?", (trip_id,))
+        conn.execute("DELETE FROM operaciones.paradas WHERE trip_id=?", (trip_id,))
 
         def insert(i, d, actividad):
             conn.execute(
-                "INSERT INTO paradas (trip_id, orden, nombre, ciudad, lat, lng, actividad, comentario) "
+                "INSERT INTO operaciones.paradas (trip_id, orden, nombre, ciudad, lat, lng, actividad, comentario) "
                 "VALUES (?,?,?,?,?,?,?,?)",
                 (trip_id, i, d.nombre or "", d.ciudad or "", d.lat, d.lng, actividad, d.comentario or ""),
             )

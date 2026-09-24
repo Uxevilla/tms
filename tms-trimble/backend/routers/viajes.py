@@ -251,7 +251,7 @@ def delete_trip(trip_id: str, user: dict = Depends(require_role(["admin", "dispa
     # Limpiar tablas hijas sin ON DELETE CASCADE.
     conn.execute("DELETE FROM files WHERE trip_id=?", (trip_id,))
     conn.execute("DELETE FROM mensajes WHERE trip_id=?", (trip_id,))
-    conn.execute("DELETE FROM gastos WHERE trip_id=?", (trip_id,))
+    conn.execute("DELETE FROM finanzas.gastos WHERE trip_id=?", (trip_id,))
     conn.execute("UPDATE telemetria.posiciones_gps SET viaje_id=NULL WHERE viaje_id=?", (trip_id,))
     # paradas y tramos se borran por ON DELETE CASCADE.
     conn.execute("DELETE FROM trips WHERE id=?", (trip_id,))
@@ -358,7 +358,7 @@ def get_trip(trip_id: str, conn = Depends(get_conn)):
     row = conn.execute("SELECT * FROM trips WHERE id=?", (trip_id,)).fetchone()
     if not row:
         raise HTTPException(status_code=404, detail={"error": f"Viaje {trip_id} no encontrado"})
-    paradas = conn.execute("SELECT * FROM paradas WHERE trip_id=? ORDER BY orden", (trip_id,)).fetchall()
+    paradas = conn.execute("SELECT * FROM operaciones.paradas WHERE trip_id=? ORDER BY orden", (trip_id,)).fetchall()
     payload = {}
     try:
         payload = json.loads(row["payload"] or "{}")
@@ -427,7 +427,7 @@ def trip_files(trip_id: str, conn = Depends(get_conn)):
 
 @router.get("/api/trips/{trip_id}/paradas")
 def trip_paradas(trip_id: str, conn = Depends(get_conn)):
-    rows = conn.execute("SELECT * FROM paradas WHERE trip_id=? ORDER BY orden", (trip_id,)).fetchall()
+    rows = conn.execute("SELECT * FROM operaciones.paradas WHERE trip_id=? ORDER BY orden", (trip_id,)).fetchall()
     return {"paradas": [dict(r) for r in rows]}
 
 
@@ -445,7 +445,7 @@ def trip_tramos(trip_id: str, conn = Depends(get_conn)):
         "SELECT id, orden, origen_nombre, origen_ciudad, origen_lat, origen_lng, "
         "destino_nombre, destino_ciudad, destino_lat, destino_lng, terminal, conductor, "
         "km_total, km_real, km_fuente, estado, fecha_carga, fecha_descarga "
-        "FROM tramos WHERE trip_id=? ORDER BY orden", (trip_id,)
+        "FROM operaciones.tramos WHERE trip_id=? ORDER BY orden", (trip_id,)
     ).fetchall()
     return {"tramos": [dict(r) for r in rows]}
 

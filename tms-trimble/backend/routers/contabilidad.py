@@ -37,7 +37,7 @@ def _sumas_por_tipo(conn, desde="", hasta=""):
     where = (" WHERE " + " AND ".join(conds)) if conds else ""
     rows = conn.execute(
         f"SELECT c.tipo, SUM(p.debe) AS debe, SUM(p.haber) AS haber "
-        f"FROM apuntes p JOIN asientos a ON a.id=p.asiento_id JOIN cuentas c ON c.codigo=p.cuenta "
+        f"FROM finanzas.apuntes p JOIN finanzas.asientos a ON a.id=p.asiento_id JOIN finanzas.cuentas c ON c.codigo=p.cuenta "
         f"{where} GROUP BY c.tipo", params,
     ).fetchall()
     sums = {}
@@ -56,7 +56,7 @@ def _suma_cuenta(conn, cuenta, desde="", hasta=""):
         conds.append("a.fecha <= ?"); params.append(hasta)
     row = conn.execute(
         f"SELECT SUM(p.debe) AS debe, SUM(p.haber) AS haber "
-        f"FROM apuntes p JOIN asientos a ON a.id=p.asiento_id WHERE {' AND '.join(conds)}", params,
+        f"FROM finanzas.apuntes p JOIN finanzas.asientos a ON a.id=p.asiento_id WHERE {' AND '.join(conds)}", params,
     ).fetchone()
     return float(row["debe"] or 0), float(row["haber"] or 0)
 
@@ -67,7 +67,7 @@ def _suma_cuenta(conn, cuenta, desde="", hasta=""):
 
 
 def contabilidad_cuentas(conn = Depends(get_conn)):
-    rows = conn.execute("SELECT * FROM cuentas ORDER BY orden, codigo").fetchall()
+    rows = conn.execute("SELECT * FROM finanzas.cuentas ORDER BY orden, codigo").fetchall()
     return {"cuentas": [dict(r) for r in rows]}
 
 
@@ -93,10 +93,10 @@ def upsert_cuenta(c: CuentaContable, conn = Depends(get_conn)):
 
 
 def del_cuenta(codigo: str, conn = Depends(get_conn)):
-    n = conn.execute("SELECT COUNT(*) AS n FROM apuntes WHERE cuenta=?", (codigo,)).fetchone()["n"]
+    n = conn.execute("SELECT COUNT(*) AS n FROM finanzas.apuntes WHERE cuenta=?", (codigo,)).fetchone()["n"]
     if n:
         raise HTTPException(status_code=409, detail={"error": "La cuenta tiene apuntes; no se puede borrar."})
-    conn.execute("DELETE FROM cuentas WHERE codigo=?", (codigo,))
+    conn.execute("DELETE FROM finanzas.cuentas WHERE codigo=?", (codigo,))
     conn.commit()
     return {"ok": True}
 
@@ -114,14 +114,14 @@ def contabilidad_asientos(desde: str = "", hasta: str = "", conn = Depends(get_c
         conds.append("fecha <= ?"); params.append(hasta)
     where = (" WHERE " + " AND ".join(conds)) if conds else ""
     rows = conn.execute(
-        f"SELECT * FROM asientos{where} ORDER BY fecha DESC, numero DESC, id DESC LIMIT 500", params,
+        f"SELECT * FROM finanzas.asientos{where} ORDER BY fecha DESC, numero DESC, id DESC LIMIT 500", params,
     ).fetchall()
     apuntes = {}
     if rows:
         ids = [r["id"] for r in rows]
         ph = ",".join("?" for _ in ids)
         arows = conn.execute(
-            f"SELECT ap.*, c.nombre AS cuenta_nombre FROM apuntes ap JOIN cuentas c ON c.codigo=ap.cuenta "
+            f"SELECT ap.*, c.nombre AS cuenta_nombre FROM finanzas.apuntes ap JOIN finanzas.cuentas c ON c.codigo=ap.cuenta "
             f"WHERE ap.asiento_id IN ({ph}) ORDER BY ap.id", ids,
         ).fetchall()
         for r in arows:
@@ -151,12 +151,12 @@ def contabilidad_crear_asiento(a: AsientoManual):
 
 
 def contabilidad_del_asiento(asiento_id: int, conn = Depends(get_conn)):
-    row = conn.execute("SELECT origen FROM asientos WHERE id=?", (asiento_id,)).fetchone()
+    row = conn.execute("SELECT origen FROM finanzas.asientos WHERE id=?", (asiento_id,)).fetchone()
     if not row:
         raise HTTPException(status_code=404, detail={"error": "Asiento no encontrado."})
     if row["origen"] != "manual":
         raise HTTPException(status_code=409, detail={"error": "Es un asiento automático; borra la factura o el gasto asociado."})
-    conn.execute("DELETE FROM asientos WHERE id=?", (asiento_id,))
+    conn.execute("DELETE FROM finanzas.asientos WHERE id=?", (asiento_id,))
     conn.commit()
     return {"ok": True}
 
@@ -175,7 +175,7 @@ def contabilidad_balance(desde: str = "", hasta: str = "", conn = Depends(get_co
     where = (" WHERE " + " AND ".join(conds)) if conds else ""
     rows = conn.execute(
         f"SELECT p.cuenta, c.nombre, c.grupo, c.tipo, SUM(p.debe) AS debe, SUM(p.haber) AS haber "
-        f"FROM apuntes p JOIN asientos a ON a.id=p.asiento_id JOIN cuentas c ON c.codigo=p.cuenta "
+        f"FROM finanzas.apuntes p JOIN finanzas.asientos a ON a.id=p.asiento_id JOIN finanzas.cuentas c ON c.codigo=p.cuenta "
         f"{where} GROUP BY p.cuenta, c.nombre, c.grupo, c.tipo, c.orden ORDER BY c.orden, p.cuenta", params,
     ).fetchall()
     total_debe = total_haber = 0.0
@@ -200,7 +200,7 @@ def contabilidad_pyg(desde: str = "", hasta: str = "", conn = Depends(get_conn))
         conds.append("a.fecha >= ?"); params.append(desde)
     if hasta:
         conds.append("a.fecha <= ?"); params.append(hasta)
-    base = ("FROM apuntes p JOIN asientos a ON a.id=p.asiento_id JOIN cuentas c ON c.codigo=p.cuenta ")
+    base = ("FROM finanzas.apuntes p JOIN finanzas.asientos a ON a.id=p.asiento_id JOIN finanzas.cuentas c ON c.codigo=p.cuenta ")
     gastos = conn.execute(
         f"SELECT p.cuenta, c.nombre, SUM(p.debe)-SUM(p.haber) AS importe {base} "
         f"WHERE {' AND '.join(conds + ['c.tipo=?'])} GROUP BY p.cuenta, c.nombre, c.orden ORDER BY c.orden",
@@ -260,16 +260,16 @@ def contabilidad_dashboard(desde: str = "", hasta: str = "", conn = Depends(get_
     ingresos = -saldo("ingreso")
     gastos = saldo("gasto")
     iva_rep = conn.execute(
-        "SELECT SUM(haber)-SUM(debe) AS v FROM apuntes WHERE cuenta='477'"
+        "SELECT SUM(haber)-SUM(debe) AS v FROM finanzas.apuntes WHERE cuenta='477'"
     ).fetchone()["v"] or 0
     iva_sop = conn.execute(
-        "SELECT SUM(debe)-SUM(haber) AS v FROM apuntes WHERE cuenta='472'"
+        "SELECT SUM(debe)-SUM(haber) AS v FROM finanzas.apuntes WHERE cuenta='472'"
     ).fetchone()["v"] or 0
     bancos = conn.execute(
-        "SELECT SUM(debe)-SUM(haber) AS v FROM apuntes WHERE cuenta IN ('570','572')"
+        "SELECT SUM(debe)-SUM(haber) AS v FROM finanzas.apuntes WHERE cuenta IN ('570','572')"
     ).fetchone()["v"] or 0
     frows = conn.execute(
-        "SELECT estado, COUNT(*) AS n, COALESCE(SUM(total),0) AS total FROM facturas GROUP BY estado"
+        "SELECT estado, COUNT(*) AS n, COALESCE(SUM(total),0) AS total FROM finanzas.facturas GROUP BY estado"
     ).fetchall()
     fact = {"emitida": 0, "cobrada": 0}
     for r in frows:
@@ -318,9 +318,9 @@ def contabilidad_cierre(req: dict, conn = Depends(get_conn)):
 
 
 def contabilidad_tesoreria_prevision(conn = Depends(get_conn)):
-    saldo = conn.execute("SELECT SUM(debe)-SUM(haber) AS v FROM apuntes WHERE cuenta IN ('570','572')").fetchone()["v"] or 0
-    fact = conn.execute("SELECT fecha, COALESCE(SUM(total),0) AS t FROM facturas WHERE estado != 'cobrada' GROUP BY fecha").fetchall()
-    gast = conn.execute("SELECT fecha, COALESCE(SUM(importe),0) AS t FROM gastos WHERE COALESCE(pagado,false)=false AND COALESCE(importe,0)>0 GROUP BY fecha").fetchall()
+    saldo = conn.execute("SELECT SUM(debe)-SUM(haber) AS v FROM finanzas.apuntes WHERE cuenta IN ('570','572')").fetchone()["v"] or 0
+    fact = conn.execute("SELECT fecha, COALESCE(SUM(total),0) AS t FROM finanzas.facturas WHERE estado != 'cobrada' GROUP BY fecha").fetchall()
+    gast = conn.execute("SELECT fecha, COALESCE(SUM(importe),0) AS t FROM finanzas.gastos WHERE COALESCE(pagado,false)=false AND COALESCE(importe,0)>0 GROUP BY fecha").fetchall()
     hoy = datetime.date.today()
     months = []
     for i in range(3):
@@ -362,11 +362,11 @@ def contabilidad_modelo347(anio: str = "", conn = Depends(get_conn)):
         anio = str(datetime.date.today().year)
     cli = conn.execute(
         "SELECT COALESCE(NULLIF(cliente_nombre,''),'Sin nombre') AS tercero, SUM(total) AS total "
-        "FROM facturas WHERE substr(fecha,1,4)=? GROUP BY 1 ORDER BY total DESC", (anio,)
+        "FROM finanzas.facturas WHERE substr(fecha,1,4)=? GROUP BY 1 ORDER BY total DESC", (anio,)
     ).fetchall()
     prov = conn.execute(
         "SELECT COALESCE(NULLIF(p.nombre,''),'Sin nombre') AS tercero, SUM(g.importe) AS total "
-        "FROM gastos g LEFT JOIN proveedores p ON g.proveedor_id=p.id "
+        "FROM finanzas.gastos g LEFT JOIN proveedores p ON g.proveedor_id=p.id "
         "WHERE substr(g.fecha,1,4)=? AND COALESCE(g.proveedor_id,0) > 0 GROUP BY 1 ORDER BY total DESC", (anio,)
     ).fetchall()
     LIMITE = 3005.06
@@ -384,21 +384,21 @@ def contabilidad_modelo347(anio: str = "", conn = Depends(get_conn)):
 
 def contabilidad_tesoreria(conn = Depends(get_conn)):
     saldo = conn.execute(
-        "SELECT SUM(debe)-SUM(haber) AS v FROM apuntes WHERE cuenta IN ('570','572')"
+        "SELECT SUM(debe)-SUM(haber) AS v FROM finanzas.apuntes WHERE cuenta IN ('570','572')"
     ).fetchone()["v"] or 0
     gpend = conn.execute(
         "SELECT g.id, g.fecha, g.categoria, g.concepto, g.importe, g.iva, g.retencion, p.nombre AS proveedor "
-        "FROM gastos g LEFT JOIN proveedores p ON g.proveedor_id=p.id "
+        "FROM finanzas.gastos g LEFT JOIN proveedores p ON g.proveedor_id=p.id "
         "WHERE COALESCE(g.pagado, false) = false AND COALESCE(g.importe,0) > 0 "
         "ORDER BY g.fecha DESC LIMIT 100"
     ).fetchall()
     fpend = conn.execute(
-        "SELECT id, numero, fecha, cliente_nombre, total FROM facturas WHERE estado != 'cobrada' ORDER BY fecha DESC"
+        "SELECT id, numero, fecha, cliente_nombre, total FROM finanzas.facturas WHERE estado != 'cobrada' ORDER BY fecha DESC"
     ).fetchall()
     movs = conn.execute(
         "SELECT a.id, a.fecha, a.concepto, a.origen, "
         "COALESCE(SUM(CASE WHEN p.cuenta IN ('570','572') THEN p.debe - p.haber ELSE 0 END),0) AS importe "
-        "FROM asientos a JOIN apuntes p ON p.asiento_id=a.id "
+        "FROM finanzas.asientos a JOIN finanzas.apuntes p ON p.asiento_id=a.id "
         "WHERE a.origen IN ('cobro','pago') "
         "GROUP BY a.id, a.fecha, a.concepto, a.origen "
         "ORDER BY a.fecha DESC, a.id DESC LIMIT 100"
@@ -426,7 +426,7 @@ def contabilidad_impuestos(desde: str = "", hasta: str = "", conn = Depends(get_
     where = " WHERE " + " AND ".join(conds)
     rows = conn.execute(
         f"SELECT substr(a.fecha,1,7) AS mes, p.cuenta, SUM(p.debe) AS debe, SUM(p.haber) AS haber "
-        f"FROM apuntes p JOIN asientos a ON a.id=p.asiento_id {where} "
+        f"FROM finanzas.apuntes p JOIN finanzas.asientos a ON a.id=p.asiento_id {where} "
         f"GROUP BY substr(a.fecha,1,7), p.cuenta ORDER BY mes",
         params,
     ).fetchall()
@@ -450,7 +450,7 @@ def contabilidad_impuestos(desde: str = "", hasta: str = "", conn = Depends(get_
             "a_ingresar": round(d["repercutido"] - d["soportado"], 2),
         })
     ret = conn.execute(
-        "SELECT SUM(haber)-SUM(debe) AS v FROM apuntes WHERE cuenta='4751'"
+        "SELECT SUM(haber)-SUM(debe) AS v FROM finanzas.apuntes WHERE cuenta='4751'"
     ).fetchone()["v"] or 0
     tot_rep = sum(t["repercutido"] for t in trimestres)
     tot_sop = sum(t["soportado"] for t in trimestres)
@@ -476,10 +476,10 @@ def contabilidad_inmovilizado(conn = Depends(get_conn)):
         "FROM vehiculos WHERE COALESCE(coste_adquisicion,0) > 0 ORDER BY matricula"
     ).fetchall()
     acumulado = conn.execute(
-        "SELECT SUM(debe)-SUM(haber) AS v FROM apuntes WHERE cuenta='281'"
+        "SELECT SUM(debe)-SUM(haber) AS v FROM finanzas.apuntes WHERE cuenta='281'"
     ).fetchone()["v"] or 0
     adq_docs = {r["documento"] for r in conn.execute(
-        "SELECT documento FROM asientos WHERE origen='adquisicion'"
+        "SELECT documento FROM finanzas.asientos WHERE origen='adquisicion'"
     ).fetchall()}
     hoy = datetime.date.today()
     items = []
@@ -534,7 +534,7 @@ def registrar_adquisicion(veh_id: str, conn = Depends(get_conn)):
     if coste <= 0:
         raise HTTPException(status_code=400, detail={"error": "El vehículo no tiene coste de adquisición."})
     exist = conn.execute(
-        "SELECT id FROM asientos WHERE origen='adquisicion' AND documento=?", (f"adquisicion-{veh_id}",)
+        "SELECT id FROM finanzas.asientos WHERE origen='adquisicion' AND documento=?", (f"adquisicion-{veh_id}",)
     ).fetchone()
     if exist:
         raise HTTPException(status_code=409, detail={"error": "Este vehículo ya tiene asiento de adquisición."})
@@ -570,7 +570,7 @@ def contabilidad_amortizar(periodo: str = "", conn = Depends(get_conn)):
             last = 29
         fecha = f"{y:04d}-{m:02d}-{last:02d}"
     exist = conn.execute(
-        "SELECT id FROM asientos WHERE origen='amortizacion' AND documento=?", (f"amortizacion-{periodo}",)
+        "SELECT id FROM finanzas.asientos WHERE origen='amortizacion' AND documento=?", (f"amortizacion-{periodo}",)
     ).fetchone()
     if exist:
         raise HTTPException(status_code=409, detail={"error": f"Ya hay amortización para {periodo}."})
@@ -613,7 +613,7 @@ def contabilidad_explotacion(desde: str = "", hasta: str = "", conn = Depends(ge
     where = " WHERE " + " AND ".join(conds)
     rows = conn.execute(
         f"SELECT substr(a.fecha,1,7) AS mes, c.tipo, SUM(p.debe) AS debe, SUM(p.haber) AS haber "
-        f"FROM apuntes p JOIN asientos a ON a.id=p.asiento_id JOIN cuentas c ON c.codigo=p.cuenta "
+        f"FROM finanzas.apuntes p JOIN finanzas.asientos a ON a.id=p.asiento_id JOIN finanzas.cuentas c ON c.codigo=p.cuenta "
         f"{where} GROUP BY substr(a.fecha,1,7), c.tipo ORDER BY mes", params,
     ).fetchall()
     by_mes = {}
@@ -645,7 +645,7 @@ def contabilidad_explotacion_vehiculos(conn = Depends(get_conn)):
         "COALESCE(SUM(COALESCE(km_real, km_total)),0) AS km, COALESCE(SUM(km_vacio),0) AS km_vacio FROM trips GROUP BY 1"
     ).fetchall()
     gastos = conn.execute(
-        "SELECT COALESCE(NULLIF(terminal,''),'General') AS veh, COALESCE(SUM(importe),0) AS gastos FROM gastos GROUP BY 1"
+        "SELECT COALESCE(NULLIF(terminal,''),'General') AS veh, COALESCE(SUM(importe),0) AS gastos FROM finanzas.gastos GROUP BY 1"
     ).fetchall()
     by = {}
     for r in trips:
@@ -753,7 +753,7 @@ def contabilidad_auditoria(limite: int = 200, user: dict = Depends(require_role(
     limite = max(1, min(int(limite), 1000))
     rows = conn.execute(
         "SELECT id, tabla, registro_id, accion, usuario, antes, despues, ts "
-        "FROM audit_log ORDER BY id DESC LIMIT ?", (limite,)
+        "FROM sistema.audit_log ORDER BY id DESC LIMIT ?", (limite,)
     ).fetchall()
     return {"auditoria": [dict(r) for r in rows]}
 
@@ -764,7 +764,7 @@ def contabilidad_auditoria(limite: int = 200, user: dict = Depends(require_role(
 
 
 def contabilidad_facturas(conn = Depends(get_conn)):
-    rows = conn.execute("SELECT * FROM facturas ORDER BY fecha DESC, id DESC").fetchall()
+    rows = conn.execute("SELECT * FROM finanzas.facturas ORDER BY fecha DESC, id DESC").fetchall()
     return {"facturas": [dict(r) for r in rows]}
 
 
@@ -777,8 +777,8 @@ def contabilidad_facturables(conn = Depends(get_conn)):
     rows = conn.execute(
         "SELECT t.id, t.referencia, t.cliente, t.precio, t.iva, t.origen, t.destino, t.creado, t.estado "
         "FROM trips t "
-        "WHERE NOT EXISTS (SELECT 1 FROM facturas f WHERE f.trip_id=t.id) "
-        "AND NOT EXISTS (SELECT 1 FROM factura_lineas fl WHERE fl.trip_id=t.id) "
+        "WHERE NOT EXISTS (SELECT 1 FROM finanzas.facturas f WHERE f.trip_id=t.id) "
+        "AND NOT EXISTS (SELECT 1 FROM finanzas.factura_lineas fl WHERE fl.trip_id=t.id) "
         "AND COALESCE(t.precio,0) > 0 "
         "AND LOWER(COALESCE(t.estado,'')) NOT IN ('sin_asignar','cancelado','canceled','rechazado','refused','error') "
         "ORDER BY t.creado DESC LIMIT 200"
@@ -804,7 +804,7 @@ def _desglose_costes(conn, trip_id):
         desglose.append({"concepto": "Peajes PTV", "importe": peaje})
     if trip_id:
         for g in conn.execute(
-            "SELECT categoria, COALESCE(SUM(importe), 0) AS total FROM gastos "
+            "SELECT categoria, COALESCE(SUM(importe), 0) AS total FROM finanzas.gastos "
             "WHERE trip_id=? GROUP BY categoria ORDER BY total DESC",
             (trip_id,),
         ).fetchall():
@@ -821,7 +821,7 @@ def _factura_numero(conn, fecha):
     anio = fecha[:4]
     row = conn.execute("SELECT ultimo FROM finanzas.series WHERE codigo='F'").fetchone()
     # Máximo ya emitido (por si el contador va por detrás tras una migración).
-    fr = conn.execute("SELECT numero FROM facturas WHERE substr(fecha,1,4)=?", (anio,)).fetchall()
+    fr = conn.execute("SELECT numero FROM finanzas.facturas WHERE substr(fecha,1,4)=?", (anio,)).fetchall()
     max_n = 0
     for r in fr:
         m = re.match(r"^F-\d{4}-(\d+)$", r["numero"] or "")
@@ -850,7 +850,7 @@ def _crear_factura(conn, trips, cliente_id, cliente_nombre, fecha):
         origen="viaje", documento=numero, conn=conn,
     )
     cur = conn.execute(
-        "INSERT INTO facturas (numero, fecha, trip_id, cliente_id, cliente_nombre, base, iva, cuota_iva, total, estado, asiento_id, creado) "
+        "INSERT INTO finanzas.facturas (numero, fecha, trip_id, cliente_id, cliente_nombre, base, iva, cuota_iva, total, estado, asiento_id, creado) "
         "VALUES (?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id",
         (numero, fecha, trips[0]["id"] if len(trips) == 1 else None, cliente_id, cliente_nombre,
          base, iva, cuota, total, "emitida", asiento_id, datetime.datetime.utcnow().isoformat() + "Z"),
@@ -862,7 +862,7 @@ def _crear_factura(conn, trips, cliente_id, cliente_nombre, fecha):
         ttotal = round(tbase + tcuota, 2)
         concepto = f"{t['origen'] or ''} → {t['destino'] or ''}".strip().strip("→").strip() or t["id"]
         conn.execute(
-            "INSERT INTO factura_lineas (factura_id, trip_id, concepto, base, iva, cuota_iva, total) VALUES (?,?,?,?,?,?,?)",
+            "INSERT INTO finanzas.factura_lineas (factura_id, trip_id, concepto, base, iva, cuota_iva, total) VALUES (?,?,?,?,?,?,?)",
             (factura_id, t["id"], concepto, tbase, iva, tcuota, ttotal),
         )
         conn.execute("UPDATE trips SET factura=? WHERE id=?", (numero, t["id"]))
@@ -886,8 +886,8 @@ def contabilidad_factura_agrupada(req: dict, conn = Depends(get_conn)):
     if len(clientes) > 1:
         raise HTTPException(status_code=409, detail={"error": "Todos los viajes deben ser del mismo cliente para agruparlos."})
     for t in trips:
-        if conn.execute("SELECT 1 FROM facturas WHERE trip_id=?", (t["id"],)).fetchone() or \
-           conn.execute("SELECT 1 FROM factura_lineas WHERE trip_id=?", (t["id"],)).fetchone():
+        if conn.execute("SELECT 1 FROM finanzas.facturas WHERE trip_id=?", (t["id"],)).fetchone() or \
+           conn.execute("SELECT 1 FROM finanzas.factura_lineas WHERE trip_id=?", (t["id"],)).fetchone():
             raise HTTPException(status_code=409, detail={"error": f"El viaje {t['id']} ya tiene factura."})
         if float(t["precio"] or 0) <= 0:
             raise HTTPException(status_code=400, detail={"error": f"El viaje {t['id']} no tiene precio."})
@@ -912,8 +912,8 @@ def contabilidad_generar_factura(trip_id: str, conn = Depends(get_conn)):
     trip = conn.execute("SELECT * FROM trips WHERE id=?", (trip_id,)).fetchone()
     if not trip:
         raise HTTPException(status_code=404, detail={"error": "Viaje no encontrado."})
-    if conn.execute("SELECT 1 FROM facturas WHERE trip_id=?", (trip_id,)).fetchone() or \
-       conn.execute("SELECT 1 FROM factura_lineas WHERE trip_id=?", (trip_id,)).fetchone():
+    if conn.execute("SELECT 1 FROM finanzas.facturas WHERE trip_id=?", (trip_id,)).fetchone() or \
+       conn.execute("SELECT 1 FROM finanzas.factura_lineas WHERE trip_id=?", (trip_id,)).fetchone():
         raise HTTPException(status_code=409, detail={"error": "Este viaje ya tiene factura."})
     if float(trip["precio"] or 0) <= 0:
         raise HTTPException(status_code=400, detail={"error": "El viaje no tiene precio."})
@@ -941,7 +941,7 @@ def contabilidad_borradores(user: dict = Depends(require_role(["admin"])), conn 
     rows = conn.execute(
         "SELECT f.id, f.numero, f.fecha, f.trip_id, f.cliente_nombre, f.base, f.iva, "
         "f.cuota_iva, f.total, f.coste, f.margen, f.creado, t.origen, t.destino "
-        "FROM facturas f LEFT JOIN trips t ON t.id = f.trip_id "
+        "FROM finanzas.facturas f LEFT JOIN trips t ON t.id = f.trip_id "
         "WHERE f.estado='Borrador' ORDER BY f.creado DESC"
     ).fetchall()
     salida = []
@@ -963,7 +963,7 @@ def contabilidad_liquidaciones(user: dict = Depends(require_role(["admin"])), co
         "SELECT l.id, c.nombre AS conductor, l.viaje_id, l.fecha, "
         "COALESCE(t.km_total, 0) AS km_total, COALESCE(c.tarifa_km, 0) AS tarifa, "
         "l.importe, (CASE WHEN l.pagado THEN 'Pagada' ELSE 'Pendiente' END) AS estado "
-        "FROM liquidaciones l "
+        "FROM finanzas.liquidaciones l "
         "LEFT JOIN conductores c ON l.conductor_id = c.id "
         "LEFT JOIN trips t ON l.viaje_id = t.id "
         "WHERE l.conductor_id IS NOT NULL "
@@ -981,7 +981,7 @@ def contabilidad_emitir_borrador(factura_id: int,
                                  user: dict = Depends(require_role(["admin"]))):
     """Valida y emite un borrador: asigna número, publica el asiento y marca 'emitida'."""
     conn = _db()
-    f = conn.execute("SELECT * FROM facturas WHERE id=?", (factura_id,)).fetchone()
+    f = conn.execute("SELECT * FROM finanzas.facturas WHERE id=?", (factura_id,)).fetchone()
     if not f:
         conn.close()
         raise HTTPException(status_code=404, detail={"error": "Borrador no encontrado"})
@@ -1001,7 +1001,7 @@ def contabilidad_emitir_borrador(factura_id: int,
         origen="viaje", documento=numero, conn=conn,
     )
     conn.execute(
-        "UPDATE facturas SET estado='emitida', numero=?, asiento_id=? WHERE id=?",
+        "UPDATE finanzas.facturas SET estado='emitida', numero=?, asiento_id=? WHERE id=?",
         (numero, asiento_id, factura_id),
     )
     if f["trip_id"]:
@@ -1077,7 +1077,7 @@ def factura_enviar(factura_id: int, req: dict, conn = Depends(get_conn)):
     email_to = (req.get("email") or "").strip()
     if not email_to:
         raise HTTPException(status_code=400, detail={"error": "Indica el email del destinatario."})
-    f = conn.execute("SELECT * FROM facturas WHERE id=?", (factura_id,)).fetchone()
+    f = conn.execute("SELECT * FROM finanzas.facturas WHERE id=?", (factura_id,)).fetchone()
     if not f:
         raise HTTPException(status_code=404, detail={"error": "Factura no encontrada."})
     pdf = _generar_factura_pdf(factura_id)
@@ -1096,7 +1096,7 @@ def factura_enviar(factura_id: int, req: dict, conn = Depends(get_conn)):
 
 
 def contabilidad_cobrar_factura(factura_id: int, conn = Depends(get_conn)):
-    f = conn.execute("SELECT * FROM facturas WHERE id=?", (factura_id,)).fetchone()
+    f = conn.execute("SELECT * FROM finanzas.facturas WHERE id=?", (factura_id,)).fetchone()
     if not f:
         raise HTTPException(status_code=404, detail={"error": "Factura no encontrada."})
     if f["estado"] == "cobrada":
@@ -1109,7 +1109,7 @@ def contabilidad_cobrar_factura(factura_id: int, conn = Depends(get_conn)):
          ("430", 0, total, f"Cobro {f['numero']}")],
         origen="cobro", documento=f["numero"], conn=conn,
     )
-    conn.execute("UPDATE facturas SET estado='cobrada' WHERE id=?", (factura_id,))
+    conn.execute("UPDATE finanzas.facturas SET estado='cobrada' WHERE id=?", (factura_id,))
     conn.commit()
     return {"ok": True, "asiento_id": asiento_id}
 

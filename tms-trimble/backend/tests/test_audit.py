@@ -19,7 +19,7 @@ def test_auditar_registra_insert():
     main._auditar(conn, "asientos", 5, "crear", "admin", despues={"numero": 1})
     assert len(conn.calls) == 1
     sql, params = conn.calls[0]
-    assert "INSERT INTO audit_log" in sql
+    assert "INSERT INTO sistema.audit_log" in sql
     assert params[0] == "asientos"
     assert params[1] == "5"          # registro_id serializado a str
     assert params[2] == "crear"

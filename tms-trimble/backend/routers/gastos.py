@@ -37,7 +37,7 @@ router = APIRouter(dependencies=[Depends(require_role(["admin", "dispatcher"]))]
 
 @router.post("/api/costes-fijos")
 def add_coste(c: CosteFijo, conn = Depends(get_conn)):
-    conn.execute("INSERT INTO costes_fijos (terminal, concepto, importe) VALUES (?,?,?)",
+    conn.execute("INSERT INTO finanzas.costes_fijos (terminal, concepto, importe) VALUES (?,?,?)",
                  (c.terminal, c.concepto, c.importe))
     conn.commit()
     return {"ok": True}
@@ -60,7 +60,7 @@ def add_gasto(g: Gasto, conn = Depends(get_conn)):
     a_pagar = round(total - retencion, 2)
     cuenta = (g.cuenta or "").strip() or _categoria_cuenta(conn, g.categoria)
     cur = conn.execute(
-        "INSERT INTO gastos (terminal, trip_id, categoria, fecha, importe, concepto, foto, creado, proveedor_id, iva, retencion, cuenta) "
+        "INSERT INTO finanzas.gastos (terminal, trip_id, categoria, fecha, importe, concepto, foto, creado, proveedor_id, iva, retencion, cuenta) "
         "VALUES (?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id",
         (g.terminal, g.trip_id, g.categoria, g.fecha, g.importe, g.concepto, g.foto,
          datetime.datetime.utcnow().isoformat() + "Z", g.proveedor_id, iva_pct, ret_pct, cuenta),
@@ -109,7 +109,7 @@ def add_gasto_vehiculo(g: GastoVehiculo, conn = Depends(get_conn)):
         if g2:
             storage_key = g2[0]
     cur = conn.execute(
-        "INSERT INTO gastos_vehiculos (vehiculo_id, proveedor_id, fecha, tipo, litros, base_imponible, iva, "
+        "INSERT INTO finanzas.gastos_vehiculos (vehiculo_id, proveedor_id, fecha, tipo, litros, base_imponible, iva, "
         "importe_total, factura_ref, cuenta_contable_gasto, estado_pago, archivo_base64, storage_key, creado) "
         "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id",
         (g.vehiculo_id, g.proveedor_id, g.fecha, tipo, litros, base, iva_pct, importe,
@@ -139,7 +139,7 @@ def add_gasto_vehiculo(g: GastoVehiculo, conn = Depends(get_conn)):
 
 @router.delete("/api/costes-fijos/{coste_id}")
 def del_coste(coste_id: int, conn = Depends(get_conn)):
-    conn.execute("DELETE FROM costes_fijos WHERE id=?", (coste_id,))
+    conn.execute("DELETE FROM finanzas.costes_fijos WHERE id=?", (coste_id,))
     conn.commit()
     return {"ok": True}
 
@@ -148,8 +148,8 @@ def del_coste(coste_id: int, conn = Depends(get_conn)):
 
 @router.delete("/api/gastos/{gasto_id}")
 def del_gasto(gasto_id: int, conn = Depends(get_conn)):
-    conn.execute("DELETE FROM asientos WHERE gasto_id=?", (gasto_id,))
-    conn.execute("DELETE FROM gastos WHERE id=?", (gasto_id,))
+    conn.execute("DELETE FROM finanzas.asientos WHERE gasto_id=?", (gasto_id,))
+    conn.execute("DELETE FROM finanzas.gastos WHERE id=?", (gasto_id,))
     conn.commit()
     return {"ok": True}
 
@@ -185,7 +185,7 @@ def gastos_ocr(req: dict):
 
 @router.get("/api/gastos/vehiculos/{gasto_id}")
 def get_gasto_vehiculo(gasto_id: int, conn = Depends(get_conn)):
-    row = conn.execute("SELECT * FROM gastos_vehiculos WHERE id=?", (gasto_id,)).fetchone()
+    row = conn.execute("SELECT * FROM finanzas.gastos_vehiculos WHERE id=?", (gasto_id,)).fetchone()
     if not row:
         raise HTTPException(status_code=404, detail={"error": "Gasto no encontrado."})
     return dict(row)
@@ -195,7 +195,7 @@ def get_gasto_vehiculo(gasto_id: int, conn = Depends(get_conn)):
 
 @router.get("/api/costes-fijos")
 def list_costes(conn = Depends(get_conn)):
-    rows = conn.execute("SELECT * FROM costes_fijos ORDER BY terminal, concepto").fetchall()
+    rows = conn.execute("SELECT * FROM finanzas.costes_fijos ORDER BY terminal, concepto").fetchall()
     return {"costes": [dict(r) for r in rows]}
 
 
@@ -206,7 +206,7 @@ def list_costes(conn = Depends(get_conn)):
 @router.get("/api/gastos")
 def list_gastos(terminal: str = "", categoria: str = "", desde: str = "", hasta: str = "", conn = Depends(get_conn)):
     query = ("SELECT g.*, p.nombre AS proveedor, p.cif AS proveedor_cif "
-             "FROM gastos g LEFT JOIN proveedores p ON g.proveedor_id = p.id")
+             "FROM finanzas.gastos g LEFT JOIN proveedores p ON g.proveedor_id = p.id")
     conds, params = [], []
     if terminal:
         conds.append("g.terminal = ?")
@@ -235,7 +235,7 @@ def list_gastos_vehiculos(conn = Depends(get_conn)):
         "SELECT g.id, g.vehiculo_id, g.proveedor_id, g.fecha, g.tipo, g.litros, "
         "g.importe_total, g.factura_ref, g.creado, "
         "COALESCE(v.matricula,'') AS matricula, COALESCE(p.nombre,'') AS proveedor "
-        "FROM gastos_vehiculos g "
+        "FROM finanzas.gastos_vehiculos g "
         "LEFT JOIN vehiculos v ON v.id = g.vehiculo_id "
         "LEFT JOIN proveedores p ON p.id = g.proveedor_id "
         "ORDER BY g.fecha DESC, g.id DESC LIMIT 500"
@@ -281,7 +281,7 @@ def ocr_ticket(req: OcrRequest):
 @router.post("/api/gastos/{gasto_id}/pagar")
 def pagar_gasto(gasto_id: int, conn = Depends(get_conn)):
     """Marca un gasto como pagado: Debe 410 / Haber 572 por el importe a pagar."""
-    g = conn.execute("SELECT * FROM gastos WHERE id=?", (gasto_id,)).fetchone()
+    g = conn.execute("SELECT * FROM finanzas.gastos WHERE id=?", (gasto_id,)).fetchone()
     if not g:
         raise HTTPException(status_code=404, detail={"error": "Gasto no encontrado."})
     if g["pagado"]:
@@ -303,7 +303,7 @@ def pagar_gasto(gasto_id: int, conn = Depends(get_conn)):
              ("572", 0, a_pagar, "Pago gasto")],
             origen="pago", gasto_id=gasto_id, conn=conn,
         )
-    conn.execute("UPDATE gastos SET pagado=true WHERE id=?", (gasto_id,))
+    conn.execute("UPDATE finanzas.gastos SET pagado=true WHERE id=?", (gasto_id,))
     conn.commit()
     return {"ok": True, "a_pagar": a_pagar}
 
@@ -333,7 +333,7 @@ def rentabilidad_flota(desde: str = "", hasta: str = "", conn = Depends(get_conn
         "  GROUP BY terminal"
         "), gastos AS ("
         "  SELECT vehiculo_id, COALESCE(SUM(importe_total),0) AS gas "
-        "  FROM gastos_vehiculos "
+        "  FROM finanzas.gastos_vehiculos "
         "  WHERE substr(COALESCE(fecha,''),1,10) >= ? AND substr(COALESCE(fecha,''),1,10) <= ? "
         "  GROUP BY vehiculo_id"
         ") "
@@ -377,12 +377,12 @@ def resumen_gastos(desde: str = "", hasta: str = "", conn = Depends(get_conn)):
     if conds:
         where = " WHERE " + " AND ".join(conds)
     cat_rows = conn.execute(
-        f"SELECT categoria, SUM(importe) AS total, COUNT(*) AS n FROM gastos{where} GROUP BY categoria ORDER BY total DESC",
+        f"SELECT categoria, SUM(importe) AS total, COUNT(*) AS n FROM finanzas.gastos{where} GROUP BY categoria ORDER BY total DESC",
         params,
     ).fetchall()
     prov_rows = conn.execute(
         f"SELECT p.id, p.nombre, p.cif, SUM(g.importe) AS total, COUNT(*) AS n "
-        f"FROM gastos g LEFT JOIN proveedores p ON g.proveedor_id = p.id{where} "
+        f"FROM finanzas.gastos g LEFT JOIN proveedores p ON g.proveedor_id = p.id{where} "
         f"GROUP BY p.id ORDER BY total DESC",
         params,
     ).fetchall()
@@ -403,7 +403,7 @@ def resumen_gastos(desde: str = "", hasta: str = "", conn = Depends(get_conn)):
 
 @router.patch("/api/gastos/{gasto_id}")
 def upd_gasto(gasto_id: int, g: Gasto, conn = Depends(get_conn)):
-    existing = conn.execute("SELECT * FROM gastos WHERE id=?", (gasto_id,)).fetchone()
+    existing = conn.execute("SELECT * FROM finanzas.gastos WHERE id=?", (gasto_id,)).fetchone()
     if not existing:
         raise HTTPException(status_code=404, detail={"error": "Gasto no encontrado."})
     total = round(float(g.importe or 0), 2)
@@ -418,10 +418,10 @@ def upd_gasto(gasto_id: int, g: Gasto, conn = Depends(get_conn)):
     a_pagar = round(total - retencion, 2)
     cuenta = (g.cuenta or "").strip() or _categoria_cuenta(conn, g.categoria)
     conn.execute(
-        "UPDATE gastos SET terminal=?, categoria=?, fecha=?, importe=?, concepto=?, proveedor_id=?, cuenta=? WHERE id=?",
+        "UPDATE finanzas.gastos SET terminal=?, categoria=?, fecha=?, importe=?, concepto=?, proveedor_id=?, cuenta=? WHERE id=?",
         (g.terminal, g.categoria, g.fecha, g.importe, g.concepto, g.proveedor_id, cuenta, gasto_id),
     )
-    conn.execute("DELETE FROM asientos WHERE origen='gasto' AND gasto_id=?", (gasto_id,))
+    conn.execute("DELETE FROM finanzas.asientos WHERE origen='gasto' AND gasto_id=?", (gasto_id,))
     if total != 0:
         lineas = [(cuenta, base, 0, g.concepto or g.categoria or "Gasto")]
         if cuota > 0:
@@ -449,7 +449,7 @@ def upd_gasto_vehiculo(gasto_id: int, body: dict, conn = Depends(get_conn)):
     if not fields:
         return {"ok": False, "error": "Sin campos editables"}
     sets = ", ".join(f"{k}=?" for k in fields)
-    conn.execute(f"UPDATE gastos_vehiculos SET {sets} WHERE id=?", (*fields.values(), gasto_id))
+    conn.execute(f"UPDATE finanzas.gastos_vehiculos SET {sets} WHERE id=?", (*fields.values(), gasto_id))
     conn.commit()
     return {"ok": True}
 

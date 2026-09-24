@@ -108,7 +108,7 @@ def entrar_empresa(slug: str):
 
 @router.get("/api/config")
 def get_config(conn = Depends(get_conn)):
-    rows = conn.execute("SELECT key, value FROM config").fetchall()
+    rows = conn.execute("SELECT key, value FROM sistema.config").fetchall()
     out = {}
     for r in rows:
         k, v = r["key"], r["value"]

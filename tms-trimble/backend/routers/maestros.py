@@ -183,7 +183,7 @@ def del_proveedor(prov_id: int, user: dict = Depends(require_role(["admin", "dis
 
 @router.delete("/api/transportistas/{tid}")
 def del_transportista(tid: int, conn = Depends(get_conn)):
-    conn.execute("DELETE FROM liquidaciones WHERE transportista_id=?", (tid,))
+    conn.execute("DELETE FROM finanzas.liquidaciones WHERE transportista_id=?", (tid,))
     conn.execute("DELETE FROM transportistas WHERE id=?", (tid,))
     conn.commit()
     return {"ok": True}

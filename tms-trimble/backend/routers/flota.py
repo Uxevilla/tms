@@ -38,7 +38,7 @@ router = APIRouter(dependencies=[Depends(require_role(["admin", "dispatcher"]))]
 @router.post("/api/mantenimientos")
 def add_mantenimiento(m: Mantenimiento, conn = Depends(get_conn)):
     cur = conn.execute(
-        "INSERT INTO mantenimientos (vehiculo_id, tipo, fecha, fecha_fin, km, coste, notas, hecho, creado) "
+        "INSERT INTO flota.mantenimientos (vehiculo_id, tipo, fecha, fecha_fin, km, coste, notas, hecho, creado) "
         "VALUES (?,?,?,?,?,?,?,?,?) RETURNING id",
         (m.vehiculo_id, m.tipo, m.fecha, m.fecha_fin, m.km, m.coste, m.notas, m.hecho,
          datetime.datetime.utcnow().isoformat() + "Z"),
@@ -51,7 +51,7 @@ def add_mantenimiento(m: Mantenimiento, conn = Depends(get_conn)):
         cuota = round(importe - float(m.base_imponible), 2)
         concepto = (m.tipo or "Reparación").strip()
         gcur = conn.execute(
-            "INSERT INTO gastos_vehiculos (vehiculo_id, proveedor_id, fecha, tipo, litros, base_imponible, iva, "
+            "INSERT INTO finanzas.gastos_vehiculos (vehiculo_id, proveedor_id, fecha, tipo, litros, base_imponible, iva, "
             "importe_total, factura_ref, cuenta_contable_gasto, estado_pago, creado) "
             "VALUES (?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id",
             (m.vehiculo_id, m.proveedor_id, m.fecha, "reparaciones", 0, m.base_imponible, iva_pct, importe,
@@ -103,7 +103,7 @@ def add_vehiculo(v: Vehiculo, conn = Depends(get_conn)):
     )
     # Asiento de adquisición (solo compra en Propiedad): Debe 218 / Haber 400, una sola vez.
     if coste > 0 and v.proveedor_id:
-        ya = conn.execute("SELECT id FROM asientos WHERE origen='Compra_Vehiculo' AND origen_id=?", (v.id,)).fetchone()
+        ya = conn.execute("SELECT id FROM finanzas.asientos WHERE origen='Compra_Vehiculo' AND origen_id=?", (v.id,)).fetchone()
         if not ya:
             fecha = v.fecha_adquisicion or datetime.date.today().isoformat()
             try:
@@ -182,7 +182,7 @@ def del_vehiculo_documento(veh_id: str, file_id: int, conn = Depends(get_conn)):
 
 @router.delete("/api/mantenimientos/{mid}")
 def delete_mantenimiento(mid: int, conn = Depends(get_conn)):
-    conn.execute("DELETE FROM mantenimientos WHERE id=?", (mid,))
+    conn.execute("DELETE FROM flota.mantenimientos WHERE id=?", (mid,))
     conn.commit()
     return {"ok": True}
 
@@ -238,7 +238,7 @@ def list_documentos(conn = Depends(get_conn)):
         UNION ALL
         SELECT g.id, 'gastos', COALESCE(g.factura_ref,''), 'gasto', 'pdf', g.fecha,
                g.archivo_base64, g.storage_key, NULL, g.vehiculo_id, v.matricula, NULL
-        FROM gastos_vehiculos g
+        FROM finanzas.gastos_vehiculos g
         LEFT JOIN vehiculos v ON v.id = g.vehiculo_id
         WHERE COALESCE(g.archivo_base64,'') <> '' OR COALESCE(g.storage_key,'') <> ''
         ORDER BY fecha DESC
@@ -282,12 +282,12 @@ def list_documentos(conn = Depends(get_conn)):
 def list_mantenimientos(vehiculo_id: str = "", conn = Depends(get_conn)):
     if vehiculo_id:
         rows = conn.execute(
-            "SELECT m.*, v.matricula, v.categoria FROM mantenimientos m LEFT JOIN vehiculos v ON v.id=m.vehiculo_id "
+            "SELECT m.*, v.matricula, v.categoria FROM flota.mantenimientos m LEFT JOIN vehiculos v ON v.id=m.vehiculo_id "
             "WHERE m.vehiculo_id=? ORDER BY m.fecha", (vehiculo_id,),
         ).fetchall()
     else:
         rows = conn.execute(
-            "SELECT m.*, v.matricula, v.categoria FROM mantenimientos m LEFT JOIN vehiculos v ON v.id=m.vehiculo_id ORDER BY m.fecha"
+            "SELECT m.*, v.matricula, v.categoria FROM flota.mantenimientos m LEFT JOIN vehiculos v ON v.id=m.vehiculo_id ORDER BY m.fecha"
         ).fetchall()
     return {"mantenimientos": [dict(r) for r in rows]}
 
@@ -351,7 +351,7 @@ def list_vehiculos_disponibles(fecha_esperada_carga: str = "", categoria: str = 
             f"""
             WITH man AS (
                 SELECT DISTINCT ON (vehiculo_id) vehiculo_id, tipo AS tipo_man
-                FROM mantenimientos
+                FROM flota.mantenimientos
                 WHERE ? >= fecha AND ? <= COALESCE(NULLIF(fecha_fin,''), fecha)
                   AND COALESCE(hecho, false) = false
                 ORDER BY vehiculo_id, fecha
@@ -427,7 +427,7 @@ def mantenimiento_convertir(alerta_id: int,
     km_val = km["km_actuales"] if km and km["km_actuales"] else 0
     hoy = datetime.date.today().isoformat()
     cur = conn.execute(
-        "INSERT INTO mantenimientos (vehiculo_id, tipo, fecha, km, coste, notas, hecho, creado) "
+        "INSERT INTO flota.mantenimientos (vehiculo_id, tipo, fecha, km, coste, notas, hecho, creado) "
         "VALUES (?,?,?,?,?,?,?,?) RETURNING id",
         (row["vehiculo_id"], tipo, hoy, km_val, 0,
          "Convertida desde alerta preventiva", False,
@@ -492,7 +492,7 @@ def renombrar_documento(doc_id: str, body: dict, conn = Depends(get_conn)):
         conn.execute("UPDATE files SET name=? WHERE id=?", (prefijo + nuevo, fid))
     elif doc_id.startswith("gastos:"):
         gid = int(doc_id.split(":", 1)[1])
-        conn.execute("UPDATE gastos_vehiculos SET factura_ref=? WHERE id=?", (nuevo, gid))
+        conn.execute("UPDATE finanzas.gastos_vehiculos SET factura_ref=? WHERE id=?", (nuevo, gid))
     else:
         raise HTTPException(status_code=400, detail={"error": "ID inválido"})
     conn.commit()
@@ -597,10 +597,10 @@ def upd_alerta(aid: int, body: AlertaUpdate, conn = Depends(get_conn)):
 @router.patch("/api/mantenimientos/{mid}")
 def upd_mantenimiento(mid: int, m: Optional[Mantenimiento] = None, conn = Depends(get_conn)):
     if m is None:
-        conn.execute("UPDATE mantenimientos SET hecho = NOT hecho WHERE id=?", (mid,))
+        conn.execute("UPDATE flota.mantenimientos SET hecho = NOT hecho WHERE id=?", (mid,))
     else:
         conn.execute(
-            "UPDATE mantenimientos SET vehiculo_id=?, tipo=?, fecha=?, km=?, coste=?, notas=?, hecho=? WHERE id=?",
+            "UPDATE flota.mantenimientos SET vehiculo_id=?, tipo=?, fecha=?, km=?, coste=?, notas=?, hecho=? WHERE id=?",
             (m.vehiculo_id, m.tipo, m.fecha, m.km, m.coste, m.notas, m.hecho, mid),
         )
     conn.commit()
@@ -617,7 +617,7 @@ def upd_mantenimiento_campos(mid: int, body: dict, conn = Depends(get_conn)):
     if not fields:
         return {"ok": False, "error": "Sin campos editables"}
     sets = ", ".join(f"{k}=?" for k in fields)
-    conn.execute(f"UPDATE mantenimientos SET {sets} WHERE id=?", (*fields.values(), mid))
+    conn.execute(f"UPDATE flota.mantenimientos SET {sets} WHERE id=?", (*fields.values(), mid))
     conn.commit()
     return {"ok": True}
 

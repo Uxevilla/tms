@@ -9,8 +9,8 @@ Uso (desde dentro del contenedor, WORKDIR=/app/backend):
   python reset_marks.py 2026-09-13   # re-sincronizar desde una fecha concreta (formato UTC)
 
 Equivalentes por SQL directo en psql:
-  DELETE FROM sync_state WHERE key IN ('traces_mark','files_mark','mensajes_mark','mensajes_free_mark');
-  INSERT INTO sync_state (key,value) VALUES ('traces_mark','2026-09-13T00:00:00.000')
+  DELETE FROM sistema.sync_state WHERE key IN ('traces_mark','files_mark','mensajes_mark','mensajes_free_mark');
+  INSERT INTO sistema.sync_state (key,value) VALUES ('traces_mark','2026-09-13T00:00:00.000')
     ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value;
 """
 import sys

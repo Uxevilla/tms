@@ -546,18 +546,13 @@ CREATE TABLE IF NOT EXISTS sistema.actividades (
 );
 
 -- Vistas de compatibilidad (el código sigue usando los nombres viejos).
-CREATE OR REPLACE VIEW config.roles AS SELECT * FROM sistema.roles;
+-- Fase 9: las vistas alias puras se eliminaron (código ya cualifica). Quedan las
+-- abstracciones legítimas: clientes/proveedores/transportistas/conductores/config.usuarios
+-- (JOIN/remap con triggers) + vehiculos/trips (remap PK) + rentabilidad_viaje.
 CREATE OR REPLACE VIEW config.usuarios AS
 SELECT u.id, u.usuario, u.password_hash, r.nombre AS rol, u.nombre,
        u.activo, u.creado_en, u.debe_cambiar_clave
 FROM sistema.usuarios u JOIN sistema.roles r ON r.id = u.rol_id;
-CREATE OR REPLACE VIEW config AS SELECT * FROM sistema.config;
-CREATE OR REPLACE VIEW sync_state AS SELECT * FROM sistema.sync_state;
-CREATE OR REPLACE VIEW audit_log AS SELECT * FROM sistema.audit_log;
-CREATE OR REPLACE VIEW integracion_proveedores AS SELECT * FROM sistema.integracion_proveedores;
-CREATE OR REPLACE VIEW integracion_campos AS SELECT * FROM sistema.integracion_campos;
-CREATE OR REPLACE VIEW integracion_valores AS SELECT * FROM sistema.integracion_valores;
-CREATE OR REPLACE VIEW actividades AS SELECT * FROM sistema.actividades;
 
 CREATE OR REPLACE FUNCTION sistema.usuarios_ins() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
@@ -644,6 +639,7 @@ INSERT INTO finanzas.series (codigo, ultimo) VALUES ('F', 0), ('A', 0) ON CONFLI
 
 _SCHEMA_VIEWS = """
 DROP VIEW IF EXISTS cuentas, asientos, apuntes, facturas, factura_lineas, gastos, gastos_vehiculos, costes_fijos, liquidaciones, vehiculos, mantenimientos, trips, paradas, tramos CASCADE;
+DROP VIEW IF EXISTS config.roles, config, sync_state, audit_log, integracion_proveedores, integracion_campos, integracion_valores, actividades CASCADE;
 DROP VIEW IF EXISTS finanzas.rentabilidad_viaje CASCADE;
 CREATE OR REPLACE VIEW finanzas.rentabilidad_viaje AS
 SELECT t.id AS viaje_id, t.codigo, t.referencia, t.estado,
@@ -656,14 +652,6 @@ LEFT JOIN (SELECT frl.viaje_id, SUM(frl.base) AS coste
            JOIN finanzas.facturas_recibidas fr ON fr.id = frl.factura_id
            WHERE fr.estado <> 'anulada'
            GROUP BY frl.viaje_id) c ON c.viaje_id = t.codigo;
--- Vistas de compatibilidad (el código sigue usando los nombres viejos).
-CREATE OR REPLACE VIEW cuentas AS SELECT * FROM finanzas.cuentas;
-CREATE OR REPLACE VIEW asientos AS SELECT * FROM finanzas.asientos;
-CREATE OR REPLACE VIEW apuntes AS SELECT * FROM finanzas.apuntes;
-CREATE OR REPLACE VIEW facturas AS SELECT * FROM finanzas.facturas;
-CREATE OR REPLACE VIEW factura_lineas AS SELECT * FROM finanzas.factura_lineas;
-CREATE OR REPLACE VIEW gastos AS SELECT * FROM finanzas.gastos;
-CREATE OR REPLACE VIEW gastos_vehiculos AS SELECT * FROM finanzas.gastos_vehiculos;
 -- Sincronización garantizada por la BD: los gastos (tabla plana, fuente de verdad)
 -- alimentan facturas_recibidas (capa analítica) vía triggers AFTER.
 CREATE OR REPLACE FUNCTION finanzas.gastos_sync_fr() RETURNS trigger LANGUAGE plpgsql AS $$
@@ -729,8 +717,6 @@ BEGIN
 END $$;
 DROP TRIGGER IF EXISTS gastos_veh_sync_fr ON finanzas.gastos_vehiculos;
 CREATE TRIGGER gastos_veh_sync_fr AFTER INSERT OR UPDATE OR DELETE ON finanzas.gastos_vehiculos FOR EACH ROW EXECUTE FUNCTION finanzas.gastos_veh_sync_fr();
-CREATE OR REPLACE VIEW costes_fijos AS SELECT * FROM finanzas.costes_fijos;
-CREATE OR REPLACE VIEW liquidaciones AS SELECT * FROM finanzas.liquidaciones;
 CREATE OR REPLACE VIEW vehiculos AS
 SELECT v.codigo AS id, v.id AS _pk, v.codigo, v.terminal_trimble,
        v.categoria, v.matricula, v.marca, v.modelo, v.anno, v.itv, v.seguro,
@@ -741,7 +727,6 @@ SELECT v.codigo AS id, v.id AS _pk, v.codigo, v.terminal_trimble,
        v.fecha_proxima_revision, v.app_terminal, v.last_position_time, v.device,
        v.coste_adquisicion, v.fecha_adquisicion, v.vida_util, v.valor_residual
 FROM flota.vehiculos v;
-CREATE OR REPLACE VIEW mantenimientos AS SELECT * FROM flota.mantenimientos;
 CREATE OR REPLACE VIEW trips AS
 SELECT t.codigo AS id, t.id AS _pk, t.codigo,
        t.nombre, t.matricula, t.conductor, t.tipo_carga, t.origen, t.destino, t.tareas,
@@ -754,8 +739,6 @@ SELECT t.codigo AS id, t.id AS _pk, t.codigo,
        t.destino_id, t.modo_tarifa, t.tarifa_id, t.precio_unitario, t.kilos,
        t.subcontratado, t.proveedor_id, t.coste
 FROM operaciones.trips t;
-CREATE OR REPLACE VIEW paradas AS SELECT * FROM operaciones.paradas;
-CREATE OR REPLACE VIEW tramos AS SELECT * FROM operaciones.tramos;
 """
 
 
@@ -888,16 +871,7 @@ def _db():
                 creado_en TEXT
             )""")
             # Auditoría contable + soft delete (nada se borra físicamente en contabilidad).
-            cur.execute("""CREATE TABLE IF NOT EXISTS audit_log (
-                id SERIAL PRIMARY KEY,
-                tabla TEXT NOT NULL,
-                registro_id TEXT,
-                accion TEXT NOT NULL,
-                usuario TEXT DEFAULT 'sistema',
-                antes TEXT,
-                despues TEXT,
-                ts TEXT
-            )""")
+            # (audit_log vive en sistema.* desde Fase 4; el CREATE público legacy se eliminó.)
             for _t in ("finanzas.asientos", "finanzas.facturas"):
                 cur.execute(f"ALTER TABLE {_t} ADD COLUMN IF NOT EXISTS borrado BOOLEAN DEFAULT false")
                 cur.execute(f"ALTER TABLE {_t} ADD COLUMN IF NOT EXISTS borrado_por TEXT")
@@ -956,7 +930,7 @@ def _db():
 
 def _get_config(key, default=""):
     conn = _db()
-    row = conn.execute("SELECT value FROM config WHERE key=?", (key,)).fetchone()
+    row = conn.execute("SELECT value FROM sistema.config WHERE key=?", (key,)).fetchone()
     conn.close()
     return row["value"] if row else default
 

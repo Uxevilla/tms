@@ -61,7 +61,7 @@ def _auditar(conn, tabla, registro_id, accion, usuario=None, antes=None, despues
     if usuario is None:
         usuario = _usuario_ctx.get() or "sistema"
     conn.execute(
-        "INSERT INTO audit_log (tabla, registro_id, accion, usuario, antes, despues, ts) "
+        "INSERT INTO sistema.audit_log (tabla, registro_id, accion, usuario, antes, despues, ts) "
         "VALUES (?,?,?,?,?,?,?)",
         (tabla, str(registro_id) if registro_id is not None else None, accion, usuario,
          json.dumps(antes, ensure_ascii=False, default=str) if antes is not None else None,
@@ -77,7 +77,7 @@ def _post_asiento(fecha, concepto, lineas, origen="manual", trip_id=None, gasto_
     if own:
         conn = _db()
     try:
-        _c = conn.execute("SELECT value FROM config WHERE key='cierre_fecha'").fetchone()
+        _c = conn.execute("SELECT value FROM sistema.config WHERE key='cierre_fecha'").fetchone()
         cierre = (_c["value"] if _c and _c["value"] else "")
         if cierre and fecha and (fecha or "")[:10] <= cierre:
             raise ValueError(f"Periodo cerrado (cierre {cierre}).")
@@ -87,12 +87,12 @@ def _post_asiento(fecha, concepto, lineas, origen="manual", trip_id=None, gasto_
             raise ValueError(f"Asiento descuadrado: debe {debe_total:.2f} ≠ haber {haber_total:.2f}")
         year = (fecha or "")[:4]
         row = conn.execute(
-            "SELECT COALESCE(MAX(numero), 0) AS m FROM asientos WHERE substr(fecha, 1, 4)=?",
+            "SELECT COALESCE(MAX(numero), 0) AS m FROM finanzas.asientos WHERE substr(fecha, 1, 4)=?",
             (year,),
         ).fetchone()
         numero = (row["m"] or 0) + 1
         cur = conn.execute(
-            "INSERT INTO asientos (numero, fecha, concepto, documento, origen, origen_id, trip_id, gasto_id, creado) "
+            "INSERT INTO finanzas.asientos (numero, fecha, concepto, documento, origen, origen_id, trip_id, gasto_id, creado) "
             "VALUES (?,?,?,?,?,?,?,?,?) RETURNING id",
             (numero, fecha, concepto, documento, origen, origen_id, trip_id, gasto_id,
              datetime.datetime.utcnow().isoformat() + "Z"),
@@ -100,7 +100,7 @@ def _post_asiento(fecha, concepto, lineas, origen="manual", trip_id=None, gasto_
         asiento_id = cur.fetchone()["id"]
         for cuenta, debe, haber, cline in lineas:
             conn.execute(
-                "INSERT INTO apuntes (asiento_id, cuenta, debe, haber, concepto) VALUES (?,?,?,?,?)",
+                "INSERT INTO finanzas.apuntes (asiento_id, cuenta, debe, haber, concepto) VALUES (?,?,?,?,?)",
                 (asiento_id, cuenta, round(debe or 0, 2), round(haber or 0, 2), cline or ""),
             )
         _auditar(conn, "asientos", asiento_id, "crear", usuario,
@@ -184,7 +184,7 @@ def _gasto_subcontrata(conn, trip, fecha):
         return None
     # Evitar duplicados si ya se generó la subcontrata de este viaje.
     if conn.execute(
-        "SELECT 1 FROM gastos WHERE trip_id=? AND categoria='Transportes' AND concepto LIKE 'Subcontrata%%'",
+        "SELECT 1 FROM finanzas.gastos WHERE trip_id=? AND categoria='Transportes' AND concepto LIKE 'Subcontrata%%'",
         (trip["id"],),
     ).fetchone():
         return None
@@ -193,7 +193,7 @@ def _gasto_subcontrata(conn, trip, fecha):
     cuota = round(coste - base, 2)
     concepto = f"Subcontrata viaje {trip['id']}"
     cur = conn.execute(
-        "INSERT INTO gastos (terminal, trip_id, categoria, fecha, importe, concepto, foto, creado, proveedor_id, iva, retencion, cuenta) "
+        "INSERT INTO finanzas.gastos (terminal, trip_id, categoria, fecha, importe, concepto, foto, creado, proveedor_id, iva, retencion, cuenta) "
         "VALUES (?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id",
         (trip["terminal"] or "", trip["id"], "Transportes", fecha, coste, concepto, "",
          datetime.datetime.utcnow().isoformat() + "Z", trip["proveedor_id"], iva_pct, 0, "624"),
@@ -217,7 +217,7 @@ def _facturar_viaje(trip_id):
         if _map_estado(trip["estado"]) != "Entregado":
             conn.close()
             return None
-        if conn.execute("SELECT 1 FROM facturas WHERE trip_id=?", (trip_id,)).fetchone():
+        if conn.execute("SELECT 1 FROM finanzas.facturas WHERE trip_id=?", (trip_id,)).fetchone():
             conn.close()
             return None  # ya facturado (borrador o emitida)
     return _crear_factura_borrador(dict(trip))
@@ -260,7 +260,7 @@ def _crear_factura_borrador(trip, conn=None):
     cuota = round(base * iva / 100.0, 2)
     total = round(base + cuota, 2)
     cur = conn.execute(
-        "INSERT INTO facturas (numero, fecha, trip_id, cliente_id, cliente_nombre, base, iva, cuota_iva, total, estado, coste, margen, creado) "
+        "INSERT INTO finanzas.facturas (numero, fecha, trip_id, cliente_id, cliente_nombre, base, iva, cuota_iva, total, estado, coste, margen, creado) "
         "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id",
         ("", (trip["creado"] or "")[:10] or datetime.date.today().isoformat(),
          trip["id"], trip["cliente_id"], trip["cliente"] or "",
@@ -270,7 +270,7 @@ def _crear_factura_borrador(trip, conn=None):
     factura_id = cur.fetchone()["id"]
     concepto = f"{trip['origen'] or ''} → {trip['destino'] or ''}".strip().strip("→").strip() or trip["id"]
     conn.execute(
-        "INSERT INTO factura_lineas (factura_id, trip_id, concepto, base, iva, cuota_iva, total) VALUES (?,?,?,?,?,?,?)",
+        "INSERT INTO finanzas.factura_lineas (factura_id, trip_id, concepto, base, iva, cuota_iva, total) VALUES (?,?,?,?,?,?,?)",
         (factura_id, trip["id"], concepto, base, iva, cuota, total),
     )
     _liquidar_conductor(trip, conn)
@@ -289,10 +289,10 @@ def _generar_factura_pdf(factura_id, conn=None):
     from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 
-    f = conn.execute("SELECT * FROM facturas WHERE id=?", (factura_id,)).fetchone()
+    f = conn.execute("SELECT * FROM finanzas.facturas WHERE id=?", (factura_id,)).fetchone()
     if not f:
         raise HTTPException(status_code=404, detail={"error": "Factura no encontrada."})
-    lineas = conn.execute("SELECT * FROM factura_lineas WHERE factura_id=? ORDER BY id", (factura_id,)).fetchall()
+    lineas = conn.execute("SELECT * FROM finanzas.factura_lineas WHERE factura_id=? ORDER BY id", (factura_id,)).fetchall()
     cliente = conn.execute("SELECT * FROM clientes WHERE id=?", (f["cliente_id"],)).fetchone() if f["cliente_id"] else None
     emp = _empresa()
 
@@ -370,7 +370,7 @@ def _liquidar_conductor(trip, conn):
     if importe <= 0:
         return None
     conn.execute(
-        "INSERT INTO liquidaciones (conductor_id, viaje_id, fecha, importe, concepto, pagado, creado) "
+        "INSERT INTO finanzas.liquidaciones (conductor_id, viaje_id, fecha, importe, concepto, pagado, creado) "
         "VALUES (?,?,?,?,?,?,?)",
         (trip["conductor_id"], trip["id"], datetime.date.today().isoformat(), importe,
          f"Liquidación viaje {trip['id']} - {trip['conductor'] or ''}", False,

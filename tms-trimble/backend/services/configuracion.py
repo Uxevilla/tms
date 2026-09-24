@@ -211,7 +211,7 @@ def _migrar_config_integraciones(dbname: str) -> None:
     try:
         cur = conn.cursor()
         for config_key, (codigo, campo_clave) in MIGRACION_CONFIG.items():
-            cur.execute("SELECT value FROM config WHERE key=%s", (config_key,))
+            cur.execute("SELECT value FROM sistema.config WHERE key=%s", (config_key,))
             row = cur.fetchone()
             if not row or not row[0]:
                 continue

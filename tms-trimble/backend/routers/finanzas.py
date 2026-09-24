@@ -37,14 +37,14 @@ router = APIRouter(dependencies=[Depends(require_role(["admin"]))])
 @router.get("/api/liquidaciones")
 def list_liquidaciones(conn = Depends(get_conn)):
     liq = conn.execute(
-        "SELECT l.*, t.nombre AS transportista FROM liquidaciones l "
+        "SELECT l.*, t.nombre AS transportista FROM finanzas.liquidaciones l "
         "LEFT JOIN transportistas t ON l.transportista_id = t.id ORDER BY l.fecha"
     ).fetchall()
     acum = conn.execute(
         "SELECT t.id, t.nombre, t.cif, t.tarifa, "
         "COALESCE(SUM(CASE WHEN l.pagado THEN 0 ELSE l.importe END), 0) AS pendiente, "
         "COALESCE(SUM(l.importe), 0) AS total "
-        "FROM transportistas t LEFT JOIN liquidaciones l ON l.transportista_id = t.id "
+        "FROM transportistas t LEFT JOIN finanzas.liquidaciones l ON l.transportista_id = t.id "
         "GROUP BY t.id, t.nombre, t.cif, t.tarifa ORDER BY t.nombre"
     ).fetchall()
     return {"liquidaciones": [dict(r) for r in liq], "por_transportista": [dict(r) for r in acum]}
@@ -55,7 +55,7 @@ def list_liquidaciones(conn = Depends(get_conn)):
 @router.post("/api/liquidaciones")
 def add_liquidacion(l: Liquidacion, conn = Depends(get_conn)):
     conn.execute(
-        "INSERT INTO liquidaciones (transportista_id, fecha, importe, concepto, pagado, creado) "
+        "INSERT INTO finanzas.liquidaciones (transportista_id, fecha, importe, concepto, pagado, creado) "
         "VALUES (?,?,?,?,?,?)",
         (l.transportista_id, l.fecha, l.importe, l.concepto, l.pagado,
          datetime.datetime.utcnow().isoformat() + "Z"),
@@ -69,10 +69,10 @@ def add_liquidacion(l: Liquidacion, conn = Depends(get_conn)):
 @router.patch("/api/liquidaciones/{lid}")
 def upd_liquidacion(lid: int, l: Optional[Liquidacion] = None, conn = Depends(get_conn)):
     if l is None:
-        conn.execute("UPDATE liquidaciones SET pagado = NOT pagado WHERE id=?", (lid,))
+        conn.execute("UPDATE finanzas.liquidaciones SET pagado = NOT pagado WHERE id=?", (lid,))
     else:
         conn.execute(
-            "UPDATE liquidaciones SET transportista_id=?, fecha=?, importe=?, concepto=?, pagado=? WHERE id=?",
+            "UPDATE finanzas.liquidaciones SET transportista_id=?, fecha=?, importe=?, concepto=?, pagado=? WHERE id=?",
             (l.transportista_id, l.fecha, l.importe, l.concepto, l.pagado, lid),
         )
     conn.commit()
@@ -83,7 +83,7 @@ def upd_liquidacion(lid: int, l: Optional[Liquidacion] = None, conn = Depends(ge
 
 @router.delete("/api/liquidaciones/{lid}")
 def del_liquidacion(lid: int, conn = Depends(get_conn)):
-    conn.execute("DELETE FROM liquidaciones WHERE id=?", (lid,))
+    conn.execute("DELETE FROM finanzas.liquidaciones WHERE id=?", (lid,))
     conn.commit()
     return {"ok": True}
 
@@ -113,7 +113,7 @@ def ingresos(desde: str = "", hasta: str = "", estado: str = "", conn = Depends(
     rows = conn.execute(query, params).fetchall()
 
     cf_map = {}
-    for r in conn.execute("SELECT terminal, SUM(importe) AS t FROM costes_fijos GROUP BY terminal").fetchall():
+    for r in conn.execute("SELECT terminal, SUM(importe) AS t FROM finanzas.costes_fijos GROUP BY terminal").fetchall():
         cf_map[(r["terminal"] or "").strip()] = round(r["t"] or 0, 2)
     gv_map = {}
     gv_conds, gv_params = [], []
@@ -124,7 +124,7 @@ def ingresos(desde: str = "", hasta: str = "", estado: str = "", conn = Depends(
         gv_conds.append("substr(fecha, 1, 10) <= ?")
         gv_params.append(hasta)
     gv_where = (" WHERE " + " AND ".join(gv_conds)) if gv_conds else ""
-    for r in conn.execute(f"SELECT terminal, SUM(importe) AS t FROM gastos{gv_where} GROUP BY terminal", gv_params).fetchall():
+    for r in conn.execute(f"SELECT terminal, SUM(importe) AS t FROM finanzas.gastos{gv_where} GROUP BY terminal", gv_params).fetchall():
         gv_map[(r["terminal"] or "").strip()] = round(r["t"] or 0, 2)
 
     # Costes de estructura: % sobre ingresos (configurable en /api/config)
