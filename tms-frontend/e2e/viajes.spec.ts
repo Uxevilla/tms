@@ -7,6 +7,12 @@ async function abrirViajes(page: Page) {
   await expect(page.getByRole("button", { name: /Nuevo viaje/i })).toBeVisible();
 }
 
+// Abre el Sheet de creación (force: true evita el cuelgue del click por re-render del Radix).
+async function abrirSheet(page: Page) {
+  await page.getByRole("button", { name: /Nuevo viaje/i }).click({ force: true });
+  await expect(page.getByPlaceholder("Buscar cliente…")).toBeVisible({ timeout: 15_000 });
+}
+
 test.describe("Viajes (Fase 4)", () => {
   // Rellena un autocompletado y elige la primera sugerencia con Enter (solo teclado).
   async function elegir(page: Page, placeholder: string, texto: string) {
@@ -21,8 +27,7 @@ test.describe("Viajes (Fase 4)", () => {
     await abrirViajes(page);
     const t0 = Date.now();
 
-    await page.getByRole("button", { name: /Nuevo viaje/i }).click();
-    await expect(page.getByPlaceholder("Buscar cliente…")).toBeVisible();
+    await abrirSheet(page);
 
     // 1. Cliente (autocompletado → Enter).
     await elegir(page, "Buscar cliente…", "CLI-E2E");
@@ -56,8 +61,7 @@ test.describe("Viajes (Fase 4)", () => {
 
   test("validación en vivo: el botón se habilita solo con los obligatorios", async ({ page }) => {
     await abrirViajes(page);
-    await page.getByRole("button", { name: /Nuevo viaje/i }).click();
-    await expect(page.getByPlaceholder("Buscar cliente…")).toBeVisible();
+    await abrirSheet(page);
 
     // Sin rellenar nada, el botón de guardar debe estar deshabilitado.
     const guardar = page.getByRole("button", { name: /Crear viaje/i });
