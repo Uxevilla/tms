@@ -22,19 +22,41 @@ test.beforeEach(async ({ page }) => {
   }
 });
 
-// Conteo de viajes en BD (verificación del "crear viaje" por total, no por texto).
-async function countTrips(): Promise<number> {
-  const c = new Client({
+// Cliente pg reutilizable (misma configuración para countTrips y getTripFecha).
+function dbClient(): Client {
+  return new Client({
     host: process.env.DB_HOST ?? "127.0.0.1",
     port: Number(process.env.DB_PORT ?? 5432),
     user: process.env.DB_USER ?? "tms",
     password: process.env.DB_PASSWORD ?? "tms",
     database: process.env.DB_NAME ?? "tms",
   });
+}
+
+// Conteo de viajes en BD (verificación del "crear viaje" por total, no por texto).
+async function countTrips(): Promise<number> {
+  const c = dbClient();
   await c.connect();
   const r = await c.query("SELECT count(*)::int AS n FROM operaciones.trips");
   await c.end();
   return r.rows[0].n;
+}
+
+// fecha_esperada_carga en BD de un viaje (para verificar que la hora se conserva).
+async function getTripFecha(codigo: string): Promise<string> {
+  const c = dbClient();
+  await c.connect();
+  const r = await c.query("SELECT fecha_esperada_carga FROM operaciones.trips WHERE codigo = $1", [codigo]);
+  await c.end();
+  return r.rows[0]?.fecha_esperada_carga ?? "";
+}
+
+// Restaura la fecha (el test la muta y debe dejar el seed intacto para otros tests).
+async function restoreTripFecha(codigo: string, fecha: string): Promise<void> {
+  const c = dbClient();
+  await c.connect();
+  await c.query("UPDATE operaciones.trips SET fecha_esperada_carga = $2 WHERE codigo = $1", [codigo, fecha]);
+  await c.end();
 }
 
 // Fecha de HOY en local (misma lógica que `datetime.date.today()` del seed).
@@ -56,13 +78,9 @@ test.describe("Viajes (Fase 4)", () => {
     await page.waitForTimeout(300); // deja que el blur + el estado de React se apliquen
   }
 
-  // Abre el Sheet con el atajo "n". Se despacha vía evaluate: el settle de Playwright tras
-  // `keyboard.press("n")` se cuelga en CI (montaje del Sheet: leaflet + opciones + Radix),
-  // aunque la tecla sí abre el Sheet. El relleno del formulario SÍ usa keyboard.press/type.
+  // Abre el Sheet con el atajo "n" (keyboard.press real; si el CI se cuelga, se adjunta la traza).
   async function abrirSheetConN(page: Page) {
-    await page.evaluate(() =>
-      window.dispatchEvent(new KeyboardEvent("keydown", { key: "n", bubbles: true })),
-    );
+    await page.keyboard.press("n");
     await expect(page.getByPlaceholder("Buscar cliente…")).toBeVisible({ timeout: 15000 });
   }
 
@@ -106,6 +124,31 @@ test.describe("Viajes (Fase 4)", () => {
     await expect.poll(() => countTrips(), { timeout: 15_000 }).toBe(antes + 1);
     const elapsed = (Date.now() - t0) / 1000;
     expect(elapsed).toBeLessThan(30);
+  });
+
+  test("edición en línea de fecha: conserva la hora al cambiar el día", async ({ page }) => {
+    const antes = await getTripFecha("E2E-PLAN-OK"); // p. ej. "2026-09-24T10:00"
+    const hora = antes.slice(10); // "T10:00" (o "" si no había hora)
+    try {
+      await abrirViajes(page);
+
+      // E2E-PLAN-OK carga HOY; filtramos por hoy para traerlo a la vista (la lista pagina).
+      const hoy = hoyLocal();
+      await page.locator('input[type="date"]').nth(0).fill(hoy);
+      await page.locator('input[type="date"]').nth(1).fill(hoy);
+      await expect(page.getByText("E2E-PLAN-OK")).toBeVisible();
+
+      const fila = page.getByRole("row", { name: /E2E-PLAN-OK/ }).first();
+      const carga = fila.locator('[data-campo="fecha_carga"]');
+      await carga.waitFor({ timeout: 20_000 });
+      await carga.fill("2026-10-01");
+      await carga.press("Enter"); // blur → commit optimista
+
+      // En BD queda el nuevo día CON la hora original conservada.
+      await expect.poll(() => getTripFecha("E2E-PLAN-OK"), { timeout: 15_000 }).toBe("2026-10-01" + hora);
+    } finally {
+      await restoreTripFecha("E2E-PLAN-OK", antes);
+    }
   });
 
   test("edición en línea de matrícula: optimista y persiste al recargar", async ({ page }) => {

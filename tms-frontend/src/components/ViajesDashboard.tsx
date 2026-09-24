@@ -42,18 +42,20 @@ const filtroFecha: FilterFn<Viaje> = (row, columnId, filterValue) => {
 type Vista = "lista" | "mapa" | "dividido";
 
 // Celda editable (input/select) con commit optimista en blur/Enter/cambio.
-function CeldaInput({ valor, tipo, onCommit, placeholder, className = "" }: {
+function CeldaInput({ valor, tipo, onCommit, placeholder, className = "", dataCampo }: {
   valor: string;
   tipo?: "text" | "number" | "date";
   onCommit: (v: string) => void;
   placeholder?: string;
   className?: string;
+  dataCampo?: string;
 }) {
   const [v, setV] = useState(valor);
   useEffect(() => setV(valor), [valor]);
   const commit = () => { if (v !== valor) onCommit(v); };
   return (
     <input
+      data-campo={dataCampo}
       value={v}
       type={tipo ?? "text"}
       placeholder={placeholder}
@@ -198,8 +200,8 @@ export function ViajesDashboard() {
         { accessorKey: "km_total", header: "Km", size: 75, cell: (c) => (c.getValue() ? `${Number(c.getValue()).toFixed(0)} km` : "—") },
         { accessorKey: "peaje_estimado", header: "Peaje (€)", size: 90, cell: (c) => (c.getValue() ? Number(c.getValue()).toLocaleString("es-ES", { style: "currency", currency: "EUR" }) : "—") },
         { accessorKey: "tiempo_min", header: "Tiempo", size: 85, cell: (c) => (c.getValue() ? `${Math.round(Number(c.getValue()))} min` : "—") },
-        { accessorKey: "fecha_esperada_carga", header: "Carga", size: 130, filterFn: filtroFecha, cell: (c) => <CeldaInput tipo="date" valor={(c.row.original.fecha_esperada_carga ?? "").slice(0, 10)} onCommit={(v) => editarCelda(c.row.original.id, "fecha_esperada_carga", v, { fecha_esperada_carga: v }, "fecha de carga")} /> },
-        { accessorKey: "fecha_esperada_descarga", header: "Descarga", size: 130, cell: (c) => <CeldaInput tipo="date" valor={(c.row.original.fecha_esperada_descarga ?? "").slice(0, 10)} onCommit={(v) => editarCelda(c.row.original.id, "fecha_esperada_descarga", v, { fecha_esperada_descarga: v }, "fecha de descarga")} /> },
+        { accessorKey: "fecha_esperada_carga", header: "Carga", size: 130, filterFn: filtroFecha, cell: (c) => <CeldaInput dataCampo="fecha_carga" tipo="date" valor={(c.row.original.fecha_esperada_carga ?? "").slice(0, 10)} onCommit={(dia) => editarCelda(c.row.original.id, "fecha_esperada_carga", dia + (c.row.original.fecha_esperada_carga ?? "").slice(10), { fecha_esperada_carga: dia + (c.row.original.fecha_esperada_carga ?? "").slice(10) }, "fecha de carga")} /> },
+        { accessorKey: "fecha_esperada_descarga", header: "Descarga", size: 130, cell: (c) => <CeldaInput dataCampo="fecha_descarga" tipo="date" valor={(c.row.original.fecha_esperada_descarga ?? "").slice(0, 10)} onCommit={(dia) => editarCelda(c.row.original.id, "fecha_esperada_descarga", dia + (c.row.original.fecha_esperada_descarga ?? "").slice(10), { fecha_esperada_descarga: dia + (c.row.original.fecha_esperada_descarga ?? "").slice(10) }, "fecha de descarga")} /> },
         {
           accessorKey: "estado_pago",
           header: "Pago",
