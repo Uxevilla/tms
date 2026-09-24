@@ -50,7 +50,8 @@ test.describe("Viajes (Fase 4)", () => {
     await page.keyboard.press("n");
     await expect(page.getByPlaceholder("Buscar cliente…")).toBeVisible();
 
-    // 2. Cliente (autoFocus) → type + Enter.
+    // 2. Cliente → focus + type + Enter.
+    await page.getByPlaceholder("Buscar cliente…").focus();
     await page.keyboard.type("CLI-E2E");
     await expect(page.getByRole("button", { name: /CLI-E2E/ }).first()).toBeVisible({ timeout: 8000 });
     await page.keyboard.press("Enter");
@@ -133,6 +134,7 @@ test.describe("Viajes (Fase 4)", () => {
     await expect(guardar).toBeDisabled();
 
     // Al elegir cliente se precargan origen/destino; faltan las fechas.
+    await page.getByPlaceholder("Buscar cliente…").focus();
     await page.keyboard.type("CLI-E2E");
     await expect(page.getByRole("button", { name: /CLI-E2E/ }).first()).toBeVisible({ timeout: 8000 });
     await page.keyboard.press("Enter");

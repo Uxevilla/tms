@@ -492,7 +492,7 @@ export function NuevoViajeSheet({ onClose, onGuardado, editTripId = null }: {
           {/* Cliente con autocompletado */}
           <div className="relative">
             <label className="mb-0.5 block text-xs text-muted-foreground">Cliente *</label>
-            <input autoFocus value={buscandoCliente} onChange={(e) => { setBuscandoCliente(e.target.value); setClienteAbierto(true); }} onFocus={() => setClienteAbierto(true)} onKeyDown={(e) => { if (e.key === "Enter" && clienteAbierto && clientesFiltrados.length > 0) { e.preventDefault(); elegirCliente(clientesFiltrados[0]); } }} placeholder="Buscar cliente…" className="w-full rounded-md border px-2 py-1.5 text-sm" />
+            <input value={buscandoCliente} onChange={(e) => { setBuscandoCliente(e.target.value); setClienteAbierto(true); }} onFocus={() => setClienteAbierto(true)} onKeyDown={(e) => { if (e.key === "Enter" && clienteAbierto && clientesFiltrados.length > 0) { e.preventDefault(); elegirCliente(clientesFiltrados[0]); } }} placeholder="Buscar cliente…" className="w-full rounded-md border px-2 py-1.5 text-sm" />
             {servidor.cliente_id && <div className="text-[11px] text-red-500">{servidor.cliente_id}</div>}
             {errors.cliente_id?.message && <div className="text-[11px] text-red-500">{errors.cliente_id.message}</div>}
             {clienteAbierto && clientesFiltrados.length > 0 && (
