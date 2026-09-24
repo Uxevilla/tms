@@ -550,9 +550,9 @@ def tacografo_dstat(terminal: str):
 
 @router.get("/api/telemetria")
 def telemetria(vehiculo: str = "", desde: str = "", hasta: str = "", limit: int = 500, conn = Depends(get_conn)):
-    """Historial de telemetría (posiciones/velocidad/rumbo) de un vehículo (hypertable)."""
-    q = ("SELECT time, source, vehiculo_id, lat, lng, speed, heading, mileage "
-         "FROM telemetria WHERE 1=1")
+    """Historial de telemetría (posiciones/velocidad/rumbo) de un vehículo (hypertable activa posiciones_gps)."""
+    q = ("SELECT time, fuente AS source, vehiculo_id, lat, lng, speed_kmh AS speed, heading, odometer_km AS mileage "
+         "FROM telemetria.posiciones_gps WHERE 1=1")
     params = []
     if vehiculo:
         q += " AND vehiculo_id=?"

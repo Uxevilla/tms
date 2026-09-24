@@ -138,16 +138,6 @@ CREATE TABLE IF NOT EXISTS mensajes (
     originid TEXT, source TEXT, terminal TEXT, subject TEXT, body TEXT,
     time TEXT, needreply BOOLEAN DEFAULT false, creado TEXT
 );
-CREATE TABLE IF NOT EXISTS telemetria (
-    time TIMESTAMPTZ NOT NULL,
-    source TEXT,
-    vehiculo_id TEXT,
-    lat DOUBLE PRECISION,
-    lng DOUBLE PRECISION,
-    speed DOUBLE PRECISION,
-    heading DOUBLE PRECISION,
-    mileage DOUBLE PRECISION
-);
 CREATE TABLE IF NOT EXISTS flota.mantenimientos (
     id SERIAL PRIMARY KEY, vehiculo_id TEXT, tipo TEXT, fecha TEXT, km INTEGER,
     coste NUMERIC(10,2) DEFAULT 0, notas TEXT, hecho BOOLEAN DEFAULT false, fecha_fin TEXT, creado TEXT
@@ -713,13 +703,7 @@ def _db():
             # rápido (se reintenta en la próxima _db()) en vez de encadenar locks.
             cur.execute("SET LOCAL lock_timeout = '15000'")
             cur.execute(_SCHEMA)
-            # TimescaleDB: convertir telemetria en hypertable (particionado por tiempo).
-            # Si la extensión no está disponible, queda como tabla normal (degradación limpia).
-            try:
-                cur.execute("SELECT create_hypertable('telemetria', 'time', if_not_exists => TRUE, migrate_data => TRUE)")
-            except Exception:
-                pass
-            cur.execute("CREATE INDEX IF NOT EXISTS idx_telemetria_veh_time ON telemetria (vehiculo_id, time DESC)")
+            # TimescaleDB: hypertable de posiciones GPS (particionada por tiempo).
             try:
                 cur.execute("SELECT create_hypertable('telemetria.posiciones_gps', 'time', if_not_exists => TRUE, migrate_data => TRUE)")
             except Exception:
