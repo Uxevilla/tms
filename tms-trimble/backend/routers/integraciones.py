@@ -90,9 +90,18 @@ def crear_ecmr(req: dict):
 
 
 
+# Exportaciones que exponen datos sensibles (DNI, IBAN, salarios, asientos, facturas):
+# solo administradores. Un dispatcher NO debe poder descargarlas en Excel aunque el
+# token sea válido (en pantalla esas secciones ya le dan 403).
+_EXPORT_SOLO_ADMIN = {"facturas", "asientos", "balance", "pyg", "liquidaciones",
+                      "empleados", "nominas", "ausencias", "costes_fijos"}
+
+
 @router.get("/api/export")
-def export_xlsx(tipo: str = "trips", conn = Depends(get_conn)):
+def export_xlsx(tipo: str = "trips", user: dict = Depends(require_jwt), conn = Depends(get_conn)):
     """Descarga Excel (.xlsx) del histórico (trips), gastos o ingresos."""
+    if tipo in _EXPORT_SOLO_ADMIN and user.get("rol") != "admin":
+        raise HTTPException(status_code=403, detail={"error": "Solo administrador"})
     from openpyxl import Workbook
     from openpyxl.styles import Font, PatternFill, Alignment
     from openpyxl.utils import get_column_letter

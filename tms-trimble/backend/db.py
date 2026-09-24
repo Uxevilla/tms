@@ -686,7 +686,7 @@ END $$;
 DROP TRIGGER IF EXISTS gastos_sync_fr ON finanzas.gastos;
 CREATE TRIGGER gastos_sync_fr AFTER INSERT OR UPDATE OR DELETE ON finanzas.gastos FOR EACH ROW EXECUTE FUNCTION finanzas.gastos_sync_fr();
 CREATE OR REPLACE FUNCTION finanzas.gastos_veh_sync_fr() RETURNS trigger LANGUAGE plpgsql AS $$
-DECLARE v_base NUMERIC; v_cuota NUMERIC; v_id BIGINT;
+DECLARE v_base NUMERIC; v_cuota NUMERIC; v_id BIGINT; v_estado TEXT;
 BEGIN
   IF TG_OP = 'DELETE' THEN
     DELETE FROM finanzas.facturas_recibidas WHERE gasto_origen = 'gastos_vehiculos:' || OLD.id;
@@ -697,16 +697,19 @@ BEGIN
     v_base := CASE WHEN COALESCE(NEW.iva,0) > 0 THEN round(NEW.importe_total / (1 + NEW.iva/100.0), 2) ELSE NEW.importe_total END;
   END IF;
   v_cuota := round(COALESCE(NEW.importe_total,0) - v_base, 2);
+  -- Normaliza el estado de pago: los gastos de vehículo usan 'Pagado'/'Pendiente' en
+  -- pantalla, pero la capa analítica (facturas_recibidas) usa 'pagada'/'pendiente'.
+  v_estado := CASE WHEN lower(COALESCE(NEW.estado_pago,'')) IN ('pagado','pagada') THEN 'pagada' ELSE 'pendiente' END;
   IF TG_OP = 'INSERT' THEN
     INSERT INTO finanzas.facturas_recibidas (proveedor_id, numero_proveedor, fecha, base, cuota_iva, total, estado, origen, categoria, storage_key, gasto_origen)
     VALUES (NEW.proveedor_id, NEW.factura_ref, NEW.fecha, v_base, v_cuota, COALESCE(NEW.importe_total,0),
-            NEW.estado_pago, 'vehiculo', NEW.tipo, NEW.storage_key, 'gastos_vehiculos:' || NEW.id)
+            v_estado, 'vehiculo', NEW.tipo, NEW.storage_key, 'gastos_vehiculos:' || NEW.id)
     RETURNING id INTO v_id;
     INSERT INTO finanzas.facturas_recibidas_lineas (factura_id, cuenta, vehiculo_id, concepto, litros, base, iva_pct)
     VALUES (v_id, NEW.cuenta_contable_gasto, NEW.vehiculo_id, COALESCE(NEW.factura_ref, NEW.tipo), COALESCE(NEW.litros,0), v_base, NEW.iva);
   ELSE
     UPDATE finanzas.facturas_recibidas SET proveedor_id=NEW.proveedor_id, numero_proveedor=NEW.factura_ref,
-      fecha=NEW.fecha, base=v_base, cuota_iva=v_cuota, total=COALESCE(NEW.importe_total,0), estado=NEW.estado_pago,
+      fecha=NEW.fecha, base=v_base, cuota_iva=v_cuota, total=COALESCE(NEW.importe_total,0), estado=v_estado,
       categoria=NEW.tipo, storage_key=NEW.storage_key
     WHERE gasto_origen = 'gastos_vehiculos:' || NEW.id;
     UPDATE finanzas.facturas_recibidas_lineas SET vehiculo_id=NEW.vehiculo_id,
