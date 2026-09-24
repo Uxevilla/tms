@@ -57,11 +57,6 @@ class _Conn:
 
 
 _SCHEMA = """
-CREATE TABLE IF NOT EXISTS clientes (
-    id SERIAL PRIMARY KEY, nombre TEXT NOT NULL, cif TEXT, direccion TEXT,
-    poblacion TEXT, cp TEXT, telefono TEXT, email TEXT, activo BOOLEAN DEFAULT true,
-    cuenta_contable_defecto TEXT DEFAULT '430'
-);
 CREATE TABLE IF NOT EXISTS conductores (
     id SERIAL PRIMARY KEY, nombre TEXT NOT NULL, dni TEXT, telefono TEXT, email TEXT,
     activo BOOLEAN DEFAULT true, empleado_id TEXT, did TEXT
@@ -77,11 +72,6 @@ CREATE TABLE IF NOT EXISTS vehiculos (
     fecha_alta TEXT, cuota_mensual NUMERIC(12,2) DEFAULT 0, km_actuales NUMERIC(12,1) DEFAULT 0,
     fecha_proxima_revision TEXT, app_terminal TEXT
 );
-CREATE TABLE IF NOT EXISTS proveedores (
-    id SERIAL PRIMARY KEY, nombre TEXT NOT NULL, cif TEXT, direccion TEXT,
-    poblacion TEXT, cp TEXT, telefono TEXT, email TEXT,
-    cuenta_contable_defecto TEXT DEFAULT '400'
-);
 CREATE TABLE IF NOT EXISTS categorias_gasto (
     id SERIAL PRIMARY KEY, nombre TEXT NOT NULL UNIQUE
 );
@@ -96,7 +86,7 @@ CREATE TABLE IF NOT EXISTS trips (
     peaje_estimado NUMERIC(10,2) DEFAULT 0, peaje_fuente TEXT,
     gastos NUMERIC(12,2) DEFAULT 0, factura TEXT,
     estado_pago TEXT DEFAULT 'pendiente', iva NUMERIC(5,2) DEFAULT 21,
-    cliente_id INTEGER REFERENCES clientes(id), conductor_id INTEGER REFERENCES conductores(id),
+    cliente_id INTEGER, conductor_id INTEGER REFERENCES conductores(id),
     payload TEXT, fecha_actualizacion TEXT,
     fecha_esperada_carga TEXT, fecha_esperada_descarga TEXT
 );
@@ -123,11 +113,11 @@ CREATE TABLE IF NOT EXISTS direcciones (
 CREATE TABLE IF NOT EXISTS gastos (
     id SERIAL PRIMARY KEY, terminal TEXT, trip_id TEXT, categoria TEXT, fecha TEXT,
     importe NUMERIC(12,2) DEFAULT 0, concepto TEXT, foto TEXT, creado TEXT,
-    proveedor_id INTEGER REFERENCES proveedores(id),
+    proveedor_id INTEGER,
     categoria_id INTEGER REFERENCES categorias_gasto(id)
 );
 CREATE TABLE IF NOT EXISTS gastos_vehiculos (
-    id SERIAL PRIMARY KEY, vehiculo_id TEXT, proveedor_id INTEGER REFERENCES proveedores(id),
+    id SERIAL PRIMARY KEY, vehiculo_id TEXT, proveedor_id INTEGER,
     fecha TEXT, tipo TEXT, litros NUMERIC(10,2) DEFAULT 0,
     base_imponible NUMERIC(12,2) DEFAULT 0, iva NUMERIC(6,2) DEFAULT 21,
     importe_total NUMERIC(12,2) DEFAULT 0, factura_ref TEXT,
@@ -225,11 +215,8 @@ CREATE TABLE IF NOT EXISTS flota.alertas_mantenimiento (
     estado TEXT DEFAULT 'Pendiente',
     creado_en TIMESTAMPTZ DEFAULT now()
 );
-CREATE TABLE IF NOT EXISTS transportistas (
-    id SERIAL PRIMARY KEY, nombre TEXT NOT NULL, cif TEXT, telefono TEXT, email TEXT, tarifa NUMERIC(10,3) DEFAULT 0
-);
 CREATE TABLE IF NOT EXISTS liquidaciones (
-    id SERIAL PRIMARY KEY, transportista_id INTEGER REFERENCES transportistas(id),
+    id SERIAL PRIMARY KEY, transportista_id INTEGER,
     fecha TEXT, importe NUMERIC(12,2) DEFAULT 0, concepto TEXT, pagado BOOLEAN DEFAULT false, creado TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_trips_creado ON trips(creado);
@@ -308,7 +295,7 @@ CREATE TABLE IF NOT EXISTS ausencias_empleados (
 );
 CREATE TABLE IF NOT EXISTS saldos_pales (
     id SERIAL PRIMARY KEY,
-    cliente_id INTEGER NOT NULL REFERENCES clientes(id) ON DELETE CASCADE,
+    cliente_id INTEGER NOT NULL,
     viaje_id TEXT,
     entregados INTEGER NOT NULL DEFAULT 0,
     recuperados INTEGER NOT NULL DEFAULT 0,
@@ -414,6 +401,109 @@ CREATE TABLE IF NOT EXISTS actividades (
     activo BOOLEAN DEFAULT true,
     UNIQUE(proveedor_id, nombre)
 );
+CREATE SCHEMA IF NOT EXISTS maestros;
+CREATE TABLE IF NOT EXISTS maestros.terceros (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    razon_social TEXT NOT NULL,
+    nombre_comercial TEXT,
+    nif TEXT UNIQUE,
+    email TEXT, telefono TEXT,
+    direccion TEXT, poblacion TEXT, cp TEXT,
+    es_cliente BOOLEAN NOT NULL DEFAULT false,
+    es_proveedor BOOLEAN NOT NULL DEFAULT false,
+    es_transportista BOOLEAN NOT NULL DEFAULT false,
+    forma_pago TEXT, dias_pago SMALLINT DEFAULT 0,
+    cuenta_cliente TEXT DEFAULT '430',
+    cuenta_proveedor TEXT DEFAULT '400',
+    tarifa_km NUMERIC(10,3) DEFAULT 0,
+    activo BOOLEAN NOT NULL DEFAULT true,
+    creado_en TIMESTAMPTZ NOT NULL DEFAULT now(),
+    actualizado_en TIMESTAMPTZ NOT NULL DEFAULT now(),
+    borrado_en TIMESTAMPTZ
+);
+-- Vistas de compatibilidad: clientes/proveedores/transportistas -> maestros.terceros
+CREATE OR REPLACE VIEW clientes AS
+SELECT id, razon_social AS nombre, nif AS cif, direccion, poblacion, cp, telefono, email,
+       activo, cuenta_cliente AS cuenta_contable_defecto,
+       (borrado_en IS NOT NULL) AS borrado, NULL::text AS borrado_por, borrado_en::text AS borrado_en
+FROM maestros.terceros WHERE es_cliente;
+CREATE OR REPLACE VIEW proveedores AS
+SELECT id, razon_social AS nombre, nif AS cif, direccion, poblacion, cp, telefono, email,
+       cuenta_proveedor AS cuenta_contable_defecto,
+       (borrado_en IS NOT NULL) AS borrado, NULL::text AS borrado_por, borrado_en::text AS borrado_en
+FROM maestros.terceros WHERE es_proveedor;
+CREATE OR REPLACE VIEW transportistas AS
+SELECT id, razon_social AS nombre, nif AS cif, telefono, email, tarifa_km AS tarifa
+FROM maestros.terceros WHERE es_transportista;
+
+CREATE OR REPLACE FUNCTION maestros.clientes_ins() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  INSERT INTO maestros.terceros (razon_social, nif, direccion, poblacion, cp, telefono, email, cuenta_cliente, es_cliente, activo)
+  VALUES (NEW.nombre, NEW.cif, NEW.direccion, NEW.poblacion, NEW.cp, NEW.telefono, NEW.email, COALESCE(NEW.cuenta_contable_defecto,'430'), true, COALESCE(NEW.activo, true))
+  RETURNING id INTO NEW.id;
+  RETURN NEW;
+END $$;
+CREATE OR REPLACE FUNCTION maestros.clientes_upd() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  UPDATE maestros.terceros SET razon_social=NEW.nombre, nif=NEW.cif, direccion=NEW.direccion,
+    poblacion=NEW.poblacion, cp=NEW.cp, telefono=NEW.telefono, email=NEW.email,
+    cuenta_cliente=COALESCE(NEW.cuenta_contable_defecto,'430'),
+    borrado_en = CASE WHEN NEW.borrado THEN COALESCE(NEW.borrado_en::timestamptz, now()) ELSE NULL END,
+    actualizado_en = now()
+  WHERE id = OLD.id;
+  RETURN NEW;
+END $$;
+CREATE OR REPLACE FUNCTION maestros.proveedores_ins() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  INSERT INTO maestros.terceros (razon_social, nif, direccion, poblacion, cp, telefono, email, cuenta_proveedor, es_proveedor)
+  VALUES (NEW.nombre, NEW.cif, NEW.direccion, NEW.poblacion, NEW.cp, NEW.telefono, NEW.email, COALESCE(NEW.cuenta_contable_defecto,'400'), true)
+  RETURNING id INTO NEW.id;
+  RETURN NEW;
+END $$;
+CREATE OR REPLACE FUNCTION maestros.proveedores_upd() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  UPDATE maestros.terceros SET razon_social=NEW.nombre, nif=NEW.cif, direccion=NEW.direccion,
+    poblacion=NEW.poblacion, cp=NEW.cp, telefono=NEW.telefono, email=NEW.email,
+    cuenta_proveedor=COALESCE(NEW.cuenta_contable_defecto,'400'),
+    borrado_en = CASE WHEN NEW.borrado THEN COALESCE(NEW.borrado_en::timestamptz, now()) ELSE NULL END,
+    actualizado_en = now()
+  WHERE id = OLD.id;
+  RETURN NEW;
+END $$;
+CREATE OR REPLACE FUNCTION maestros.transportistas_ins() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  INSERT INTO maestros.terceros (razon_social, nif, telefono, email, tarifa_km, es_transportista)
+  VALUES (NEW.nombre, NEW.cif, NEW.telefono, NEW.email, COALESCE(NEW.tarifa,0), true)
+  RETURNING id INTO NEW.id;
+  RETURN NEW;
+END $$;
+CREATE OR REPLACE FUNCTION maestros.transportistas_upd() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  UPDATE maestros.terceros SET razon_social=NEW.nombre, nif=NEW.cif, telefono=NEW.telefono, email=NEW.email,
+    tarifa_km=COALESCE(NEW.tarifa,0), actualizado_en=now()
+  WHERE id = OLD.id;
+  RETURN NEW;
+END $$;
+CREATE OR REPLACE FUNCTION maestros.transportistas_del() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  DELETE FROM maestros.terceros WHERE id = OLD.id;
+  RETURN OLD;
+END $$;
+
+DROP TRIGGER IF EXISTS clientes_ins ON clientes;
+CREATE TRIGGER clientes_ins INSTEAD OF INSERT ON clientes FOR EACH ROW EXECUTE FUNCTION maestros.clientes_ins();
+DROP TRIGGER IF EXISTS clientes_upd ON clientes;
+CREATE TRIGGER clientes_upd INSTEAD OF UPDATE ON clientes FOR EACH ROW EXECUTE FUNCTION maestros.clientes_upd();
+DROP TRIGGER IF EXISTS proveedores_ins ON proveedores;
+CREATE TRIGGER proveedores_ins INSTEAD OF INSERT ON proveedores FOR EACH ROW EXECUTE FUNCTION maestros.proveedores_ins();
+DROP TRIGGER IF EXISTS proveedores_upd ON proveedores;
+CREATE TRIGGER proveedores_upd INSTEAD OF UPDATE ON proveedores FOR EACH ROW EXECUTE FUNCTION maestros.proveedores_upd();
+DROP TRIGGER IF EXISTS transportistas_ins ON transportistas;
+CREATE TRIGGER transportistas_ins INSTEAD OF INSERT ON transportistas FOR EACH ROW EXECUTE FUNCTION maestros.transportistas_ins();
+DROP TRIGGER IF EXISTS transportistas_upd ON transportistas;
+CREATE TRIGGER transportistas_upd INSTEAD OF UPDATE ON transportistas FOR EACH ROW EXECUTE FUNCTION maestros.transportistas_upd();
+DROP TRIGGER IF EXISTS transportistas_del ON transportistas;
+CREATE TRIGGER transportistas_del INSTEAD OF DELETE ON transportistas FOR EACH ROW EXECUTE FUNCTION maestros.transportistas_del();
 """
 
 
