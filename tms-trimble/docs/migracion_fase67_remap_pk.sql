@@ -1,0 +1,13 @@
+-- Fase 6/7: remap PK — id (TEXT referencia Trimble) → id (BIGINT surrogate) + codigo/terminal_trimble.
+-- Aplicado a tms_mig y tms (2026-09-24). Idempotente vía remap_verify.py (no SQL puro, usa DDL condicional).
+--
+-- Resumen de lo que hace (ver /tmp/remap_verify.py para la versión ejecutable idempotente):
+--   1) flota.vehiculos: RENAME id -> codigo (TEXT, UNIQUE); ADD id BIGINT GENERATED ALWAYS AS IDENTITY PK;
+--      ADD terminal_trimble TEXT UNIQUE (backfill = codigo).
+--   2) operaciones.trips: RENAME id -> codigo (TEXT, UNIQUE); ADD id BIGINT GENERATED ALWAYS AS IDENTITY PK.
+--   3) FKs paradas/tramos.trip_id: se sueltan ANTES de la PK y se re-añaden a operaciones.trips(codigo).
+--   4) Vistas compat vehiculos/trips: exponen `id = codigo` (TEXT) para que código+worker+frontend sigan
+--      usando la referencia; la surrogate queda oculta (columna _pk en la vista).
+--
+-- OJO: `ALTER TABLE ... RENAME COLUMN` NO rompe las FKs que apuntan a la columna (siguen por OID);
+-- solo la PK (que respalda el índice único de las FKs) exige soltarlas y re-añadirlas.

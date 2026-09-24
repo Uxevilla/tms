@@ -53,14 +53,14 @@ def _save_trip(trip_id, nombre, matricula, conductor, tipo_carga,
         referencia = _next_referencia(conn)
     conn.execute(
         "INSERT INTO operaciones.trips "
-        "(id, nombre, matricula, conductor, tipo_carga, origen, destino, "
+        "(codigo, nombre, matricula, conductor, tipo_carga, origen, destino, "
         "tareas, estado, error, creado, terminal, semirremolque_id, remolque_id, "
         "cliente, cliente_id, conductor_id, "
         "precio, km_total, tiempo_min, pausas_min, trafico_min, peaje_km, peaje_estimado, peaje_fuente, "
         "gastos, factura, estado_pago, iva, referencia, fecha_esperada_carga, fecha_esperada_descarga, "
         "modo_tarifa, tarifa_id, precio_unitario, kilos, subcontratado, proveedor_id, coste) "
         "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
-        "ON CONFLICT (id) DO UPDATE SET "
+        "ON CONFLICT (codigo) DO UPDATE SET "
         "nombre=EXCLUDED.nombre, matricula=EXCLUDED.matricula, conductor=EXCLUDED.conductor, "
         "tipo_carga=EXCLUDED.tipo_carga, origen=EXCLUDED.origen, destino=EXCLUDED.destino, "
         "tareas=EXCLUDED.tareas, estado=EXCLUDED.estado, error=EXCLUDED.error, "

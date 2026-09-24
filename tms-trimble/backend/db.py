@@ -58,7 +58,9 @@ class _Conn:
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS flota.vehiculos (
-    id TEXT PRIMARY KEY, categoria TEXT DEFAULT 'tractora', matricula TEXT, marca TEXT, modelo TEXT, anno INTEGER,
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    codigo TEXT UNIQUE, terminal_trimble TEXT UNIQUE,
+    categoria TEXT DEFAULT 'tractora', matricula TEXT, marca TEXT, modelo TEXT, anno INTEGER,
     itv TEXT, seguro TEXT, peaje_categoria TEXT, ptv_profile TEXT DEFAULT 'EUR_TRAILER_TRUCK',
     ejes INTEGER, mma INTEGER, clase_euro TEXT, activo BOOLEAN DEFAULT true,
     last_lat NUMERIC(10,7), last_lng NUMERIC(10,7),
@@ -72,7 +74,8 @@ CREATE TABLE IF NOT EXISTS categorias_gasto (
     id SERIAL PRIMARY KEY, nombre TEXT NOT NULL UNIQUE
 );
 CREATE TABLE IF NOT EXISTS operaciones.trips (
-    id TEXT PRIMARY KEY, nombre TEXT, matricula TEXT, conductor TEXT, tipo_carga TEXT,
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    codigo TEXT UNIQUE, nombre TEXT, matricula TEXT, conductor TEXT, tipo_carga TEXT,
     origen TEXT, destino TEXT, tareas INTEGER, estado TEXT, error TEXT, creado TEXT,
     terminal TEXT, ecmr_id TEXT, semirremolque_id TEXT, remolque_id TEXT, tareas_estado TEXT, cliente TEXT, precio NUMERIC(12,2) DEFAULT 0,
     km_total NUMERIC(10,1) DEFAULT 0, km_vacio NUMERIC(10,1) DEFAULT 0, tiempo_min NUMERIC(8,1) DEFAULT 0,
@@ -87,12 +90,12 @@ CREATE TABLE IF NOT EXISTS operaciones.trips (
     fecha_esperada_carga TEXT, fecha_esperada_descarga TEXT
 );
 CREATE TABLE IF NOT EXISTS operaciones.paradas (
-    id SERIAL PRIMARY KEY, trip_id TEXT REFERENCES operaciones.trips(id) ON DELETE CASCADE,
+    id SERIAL PRIMARY KEY, trip_id TEXT REFERENCES operaciones.trips(codigo) ON DELETE CASCADE,
     orden INTEGER, nombre TEXT, ciudad TEXT, lat NUMERIC(10,7), lng NUMERIC(10,7),
     actividad TEXT, comentario TEXT
 );
 CREATE TABLE IF NOT EXISTS operaciones.tramos (
-    id SERIAL PRIMARY KEY, trip_id TEXT REFERENCES operaciones.trips(id) ON DELETE CASCADE,
+    id SERIAL PRIMARY KEY, trip_id TEXT REFERENCES operaciones.trips(codigo) ON DELETE CASCADE,
     orden INTEGER DEFAULT 1,
     origen_nombre TEXT DEFAULT '', origen_ciudad TEXT DEFAULT '', origen_lat NUMERIC(10,7), origen_lng NUMERIC(10,7),
     destino_nombre TEXT DEFAULT '', destino_ciudad TEXT DEFAULT '', destino_lat NUMERIC(10,7), destino_lng NUMERIC(10,7),
@@ -650,9 +653,29 @@ CREATE OR REPLACE VIEW gastos AS SELECT * FROM finanzas.gastos;
 CREATE OR REPLACE VIEW gastos_vehiculos AS SELECT * FROM finanzas.gastos_vehiculos;
 CREATE OR REPLACE VIEW costes_fijos AS SELECT * FROM finanzas.costes_fijos;
 CREATE OR REPLACE VIEW liquidaciones AS SELECT * FROM finanzas.liquidaciones;
-CREATE OR REPLACE VIEW vehiculos AS SELECT * FROM flota.vehiculos;
+CREATE OR REPLACE VIEW vehiculos AS
+SELECT v.codigo AS id, v.id AS _pk, v.codigo, v.terminal_trimble,
+       v.categoria, v.matricula, v.marca, v.modelo, v.anno, v.itv, v.seguro,
+       v.peaje_categoria, v.ptv_profile, v.ejes, v.mma, v.clase_euro, v.activo,
+       v.last_lat, v.last_lng, v.capacidad_peso, v.capacidad_palets,
+       v.fecha_caducidad_itv, v.seguro_compania, v.fecha_caducidad_seguro,
+       v.tipo_tenencia, v.proveedor_id, v.fecha_alta, v.cuota_mensual, v.km_actuales,
+       v.fecha_proxima_revision, v.app_terminal, v.last_position_time, v.device,
+       v.coste_adquisicion, v.fecha_adquisicion, v.vida_util, v.valor_residual
+FROM flota.vehiculos v;
 CREATE OR REPLACE VIEW mantenimientos AS SELECT * FROM flota.mantenimientos;
-CREATE OR REPLACE VIEW trips AS SELECT * FROM operaciones.trips;
+CREATE OR REPLACE VIEW trips AS
+SELECT t.codigo AS id, t.id AS _pk, t.codigo,
+       t.nombre, t.matricula, t.conductor, t.tipo_carga, t.origen, t.destino, t.tareas,
+       t.estado, t.error, t.creado, t.terminal, t.ecmr_id, t.semirremolque_id, t.remolque_id,
+       t.tareas_estado, t.cliente, t.precio, t.km_total, t.km_vacio, t.tiempo_min,
+       t.km_inicio, t.km_fin, t.km_real, t.km_fuente, t.pausas_min, t.trafico_min,
+       t.peaje_km, t.peaje_estimado, t.peaje_fuente, t.gastos, t.factura, t.estado_pago,
+       t.iva, t.cliente_id, t.conductor_id, t.payload, t.fecha_actualizacion,
+       t.fecha_esperada_carga, t.fecha_esperada_descarga, t.referencia, t.origen_id,
+       t.destino_id, t.modo_tarifa, t.tarifa_id, t.precio_unitario, t.kilos,
+       t.subcontratado, t.proveedor_id, t.coste
+FROM operaciones.trips t;
 CREATE OR REPLACE VIEW paradas AS SELECT * FROM operaciones.paradas;
 CREATE OR REPLACE VIEW tramos AS SELECT * FROM operaciones.tramos;
 """
@@ -804,7 +827,7 @@ def _db():
                 cur.execute(f"ALTER TABLE {_t} ADD COLUMN IF NOT EXISTS borrado_por TEXT")
                 cur.execute(f"ALTER TABLE {_t} ADD COLUMN IF NOT EXISTS borrado_en TEXT")
             # Backfill: asignar referencia interna a viajes existentes (por orden de creación)
-            cur.execute("SELECT id FROM operaciones.trips WHERE referencia IS NULL OR referencia = '' ORDER BY creado ASC")
+            cur.execute("SELECT codigo FROM operaciones.trips WHERE referencia IS NULL OR referencia = '' ORDER BY creado ASC")
             _pend = [r[0] for r in cur.fetchall()]
             if _pend:
                 _n = 0
@@ -815,7 +838,7 @@ def _db():
                         _n = max(_n, int(_m.group(1)))
                 for _tid in _pend:
                     _n += 1
-                    cur.execute("UPDATE operaciones.trips SET referencia=%s WHERE id=%s", (f"V-{_n:04d}", _tid))
+                    cur.execute("UPDATE operaciones.trips SET referencia=%s WHERE codigo=%s", (f"V-{_n:04d}", _tid))
             for c in _CATEGORIAS:
                 cur.execute(
                     "INSERT INTO categorias_gasto (nombre) VALUES (%s) "

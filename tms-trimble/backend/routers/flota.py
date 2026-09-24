@@ -85,12 +85,12 @@ def add_vehiculo(v: Vehiculo, conn = Depends(get_conn)):
     if (v.tipo_tenencia in ("Renting", "Leasing") or coste > 0) and not v.proveedor_id:
         raise HTTPException(status_code=400, detail={"error": "Indica el proveedor (proveedor_id) para este vehículo."})
     conn.execute(
-        "INSERT INTO flota.vehiculos (id, categoria, matricula, marca, modelo, anno, itv, seguro, peaje_categoria, "
+        "INSERT INTO flota.vehiculos (codigo, categoria, matricula, marca, modelo, anno, itv, seguro, peaje_categoria, "
         "ptv_profile, ejes, mma, clase_euro, capacidad_peso, capacidad_palets, "
         "coste_adquisicion, fecha_adquisicion, vida_util, valor_residual, "
         "fecha_caducidad_itv, seguro_compania, fecha_caducidad_seguro, tipo_tenencia, proveedor_id, fecha_alta, cuota_mensual) "
         "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
-        "ON CONFLICT (id) DO UPDATE SET categoria=EXCLUDED.categoria, matricula=EXCLUDED.matricula, marca=EXCLUDED.marca, "
+        "ON CONFLICT (codigo) DO UPDATE SET categoria=EXCLUDED.categoria, matricula=EXCLUDED.matricula, marca=EXCLUDED.marca, "
         "modelo=EXCLUDED.modelo, anno=EXCLUDED.anno, itv=EXCLUDED.itv, seguro=EXCLUDED.seguro, "
         "peaje_categoria=EXCLUDED.peaje_categoria, ptv_profile=EXCLUDED.ptv_profile, "
         "ejes=EXCLUDED.ejes, mma=EXCLUDED.mma, clase_euro=EXCLUDED.clase_euro, "

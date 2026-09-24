@@ -279,11 +279,11 @@ def _seed_demo(conn):
     ]
     for i, (mat, marca, modelo, palets) in enumerate(semis):
         conn.execute(
-            "INSERT INTO flota.vehiculos (id, categoria, matricula, marca, modelo, anno, ejes, mma, clase_euro, "
+            "INSERT INTO flota.vehiculos (codigo, categoria, matricula, marca, modelo, anno, ejes, mma, clase_euro, "
             "capacidad_peso, capacidad_palets, fecha_caducidad_itv, seguro_compania, fecha_caducidad_seguro, "
             "tipo_tenencia, fecha_alta, cuota_mensual, km_actuales, fecha_proxima_revision) "
             "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
-            "ON CONFLICT (id) DO NOTHING",
+            "ON CONFLICT (codigo) DO NOTHING",
             (mat, "semirremolque", mat, marca, modelo, 2016 + (i % 8), 3, 38000, "",
              24000, palets, d(-30 * (i % 5)), "Mapfre", d(60 + 40 * (i % 3)), "Propiedad", d(-3000), 0, 0,
              d(-10 + 40 * (i % 4))),
@@ -295,11 +295,11 @@ def _seed_demo(conn):
     ]
     for i, (mat, marca, modelo, km) in enumerate(turismos):
         conn.execute(
-            "INSERT INTO flota.vehiculos (id, categoria, matricula, marca, modelo, anno, ejes, mma, clase_euro, "
+            "INSERT INTO flota.vehiculos (codigo, categoria, matricula, marca, modelo, anno, ejes, mma, clase_euro, "
             "capacidad_peso, capacidad_palets, fecha_caducidad_itv, seguro_compania, fecha_caducidad_seguro, "
             "tipo_tenencia, fecha_alta, cuota_mensual, km_actuales, fecha_proxima_revision) "
             "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
-            "ON CONFLICT (id) DO NOTHING",
+            "ON CONFLICT (codigo) DO NOTHING",
             (mat, "turismo", mat, marca, modelo, 2019 + (i % 5), 4, 1800, "Euro 6",
              500, 0, d(15 * (i + 1)), "AXA", d(120 + 50 * i), "Propiedad", d(-2000), 0, km,
              d(30 + 90 * (i % 3))),
@@ -311,11 +311,11 @@ def _seed_demo(conn):
     ]
     for i, (mat, marca, modelo, km) in enumerate(ligeros):
         conn.execute(
-            "INSERT INTO flota.vehiculos (id, categoria, matricula, marca, modelo, anno, ejes, mma, clase_euro, "
+            "INSERT INTO flota.vehiculos (codigo, categoria, matricula, marca, modelo, anno, ejes, mma, clase_euro, "
             "capacidad_peso, capacidad_palets, fecha_caducidad_itv, seguro_compania, fecha_caducidad_seguro, "
             "tipo_tenencia, fecha_alta, cuota_mensual, km_actuales, fecha_proxima_revision) "
             "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
-            "ON CONFLICT (id) DO NOTHING",
+            "ON CONFLICT (codigo) DO NOTHING",
             (mat, "ligero", mat, marca, modelo, 2020 + (i % 4), 4, 3500, "Euro 6",
              1200, 0, d(-5 + 20 * (i % 4)), "AXA", d(90 + 60 * i), "Propiedad", d(-1800), 0, km,
              d(20 + 70 * (i % 3))),
