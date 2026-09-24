@@ -6,6 +6,7 @@ import { REST_GASTOS_VEHICULOS, REST_GASTOS_OCR, REST_VEHICULOS, REST_PROVEEDORE
 import { api } from "../api";
 import { useAgGridState } from "../hooks/useAgGridState";
 import { VisorDocumentos } from "./VisorDocumentos";
+import { panelCell } from "./panelCell";
 
 import { gridTheme, GRID_ROW_HEIGHT, GRID_HEADER_HEIGHT } from "../gridConfig";
 
@@ -255,7 +256,7 @@ export function GastosDashboard() {
   const columnDefs = useMemo<ColDef<GastoVehiculo>[]>(
     () => [
       { field: "fecha", headerName: "Fecha", width: 110 },
-      { field: "matricula", headerName: "Vehículo", width: 130 },
+      { field: "matricula", headerName: "Vehículo", width: 130, cellRenderer: panelCell("vehiculo") },
       { field: "tipo", headerName: "Tipo", width: 120, valueFormatter: (p) => labelTipo(String(p.value || "")) },
       { field: "litros", headerName: "Litros", width: 90, type: "rightAligned", valueFormatter: (p) => (p.value ? `${Number(p.value).toLocaleString("es-ES")} L` : "—") },
       { field: "base_imponible", headerName: "Base", width: 110, type: "rightAligned", valueFormatter: (p) => eur(Number(p.value) || 0) },

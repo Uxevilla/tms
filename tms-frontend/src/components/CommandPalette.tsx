@@ -23,12 +23,14 @@ interface CommandPaletteProps {
 }
 
 /**
- * Paleta de comandos (Ctrl/⌘+K). Con búsqueda global (/api/buscar, debounce 150 ms)
- * + acciones ("Nuevo viaje"). Los resultados de entidad abren el panel lateral.
+ * Paleta de comandos (Ctrl/⌘+K). Búsqueda global (/api/buscar, debounce 150 ms)
+ * + "Ir a…" (rutas del rol filtradas en el navegador) + acciones. Los resultados
+ * de entidad abren el panel lateral.
  */
 export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
   const navigate = useNavigate();
-  const grupos = itemsVisibles(getRol());
+  const rol = getRol();
+  const grupos = itemsVisibles(rol);
   const [q, setQ] = useState("");
   const [debounced, setDebounced] = useState("");
 
@@ -46,6 +48,11 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
 
   const buscando = debounced.length >= 2;
 
+  // Rutas del rol, filtradas en el navegador (cmdk va con shouldFilter={false}).
+  const navItems = grupos
+    .flatMap((g) => g.items)
+    .filter((it) => !buscando || it.label.toLowerCase().includes(debounced.toLowerCase()));
+
   const abrirResultado = (r: BuscarResultado) => {
     onOpenChange(false);
     if (r.tipo === "vehiculo" || r.tipo === "viaje" || r.tipo === "conductor") {
@@ -53,7 +60,8 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
     } else if (r.tipo === "factura") {
       navigate({ to: "/facturacion" });
     } else if (r.tipo === "cliente") {
-      navigate({ to: "/contabilidad" });
+      // Contabilidad es solo admin; el dispatcher va a una sección que sí puede ver.
+      navigate({ to: rol === "admin" ? "/contabilidad" : "/gastos" });
     } else {
       navigate({ to: "/gastos" });
     }
@@ -67,56 +75,52 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
         onValueChange={setQ}
       />
       <CommandList>
+        <CommandEmpty>{busqueda.isLoading && buscando ? "Buscando…" : "Sin resultados."}</CommandEmpty>
+
         {buscando ? (
-          <>
-            <CommandEmpty>
-              {busqueda.isLoading ? "Buscando…" : "Sin resultados."}
-            </CommandEmpty>
-            <CommandGroup heading="Resultados">
-              {(busqueda.data?.resultados ?? []).map((r) => (
-                <CommandItem
-                  key={`${r.tipo}:${r.id}`}
-                  value={`${r.tipo}:${r.id}`}
-                  onSelect={() => abrirResultado(r)}
-                >
-                  <span className="truncate">{r.titulo}</span>
-                  <span className="ml-auto shrink-0 text-xs text-muted-foreground">{r.subtitulo}</span>
-                </CommandItem>
-              ))}
-            </CommandGroup>
-          </>
-        ) : (
-          <>
-            <CommandGroup heading="Acciones">
+          <CommandGroup heading="Resultados">
+            {(busqueda.data?.resultados ?? []).map((r) => (
               <CommandItem
-                value="accion:nuevo-viaje"
+                key={`${r.tipo}:${r.id}`}
+                value={`${r.tipo}:${r.id}`}
+                onSelect={() => abrirResultado(r)}
+              >
+                <span className="truncate">{r.titulo}</span>
+                <span className="ml-auto shrink-0 text-xs text-muted-foreground">{r.subtitulo}</span>
+              </CommandItem>
+            ))}
+          </CommandGroup>
+        ) : (
+          <CommandGroup heading="Acciones">
+            <CommandItem
+              value="accion:nuevo-viaje"
+              onSelect={() => {
+                onOpenChange(false);
+                navigate({ to: "/planificacion" });
+              }}
+            >
+              <Plus />
+              <span>Nuevo viaje</span>
+            </CommandItem>
+          </CommandGroup>
+        )}
+
+        {navItems.length > 0 && (
+          <CommandGroup heading="Ir a…">
+            {navItems.map((item) => (
+              <CommandItem
+                key={item.to}
+                value={`nav:${item.to}`}
                 onSelect={() => {
+                  navigate({ to: item.to });
                   onOpenChange(false);
-                  navigate({ to: "/planificacion" });
                 }}
               >
-                <Plus />
-                <span>Nuevo viaje</span>
+                <item.icon />
+                <span>{item.label}</span>
               </CommandItem>
-            </CommandGroup>
-            {grupos.map((grupo) => (
-              <CommandGroup key={grupo.label} heading={grupo.label}>
-                {grupo.items.map((item) => (
-                  <CommandItem
-                    key={item.to}
-                    value={`nav:${item.to}`}
-                    onSelect={() => {
-                      navigate({ to: item.to });
-                      onOpenChange(false);
-                    }}
-                  >
-                    <item.icon />
-                    <span>{item.label}</span>
-                  </CommandItem>
-                ))}
-              </CommandGroup>
             ))}
-          </>
+          </CommandGroup>
         )}
       </CommandList>
     </CommandDialog>

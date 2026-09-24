@@ -33,7 +33,7 @@ export function TorreDashboard() {
 
   const telemetria = useQuery({
     queryKey: ["telemetria"],
-    queryFn: () => api<{ telemetria: TelemetriaActiva[] }>(REST_TELEMETRIA),
+    queryFn: () => api<{ telemetria: TelemetriaActiva[] }>(REST_TELEMETRIA).then((r) => r.telemetria),
     refetchInterval: 30000,
   });
   const atencion = useQuery({
@@ -43,18 +43,19 @@ export function TorreDashboard() {
   });
   const viajes = useQuery({
     queryKey: ["viajes"],
-    queryFn: () => api<{ viajes: Viaje[] }>(REST_VIAJES),
+    queryFn: () => api<{ viajes: Viaje[] }>(REST_VIAJES).then((r) => r.viajes),
     refetchInterval: 60000,
   });
 
-  const vehiculos = telemetria.data?.telemetria ?? [];
+  const vehiculos = telemetria.data ?? [];
   const enRuta = vehiculos.filter((v) => v.disponibilidad === "En_Viaje" && (v.velocidad ?? 0) > 3).length;
   const libres = vehiculos.filter((v) => v.disponibilidad === "Libre").length;
   const parados = vehiculos.filter((v) => v.disponibilidad === "En_Viaje" && (v.velocidad ?? 0) <= 3).length;
 
-  // Viajes de hoy: carga o descarga prevista hoy; "hechos" = entregados.
-  const hoy = new Date().toISOString().slice(0, 10);
-  const viajesHoy = (viajes.data?.viajes ?? []).filter(
+  // Viajes de hoy: carga o descarga prevista hoy (fecha LOCAL, no UTC); "hechos" = entregados.
+  const now = new Date();
+  const hoy = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+  const viajesHoy = (viajes.data ?? []).filter(
     (v) => (v.fecha_esperada_carga ?? "").startsWith(hoy) || (v.fecha_esperada_descarga ?? "").startsWith(hoy),
   );
   const viajesHechos = viajesHoy.filter((v) => v.estado === "Entregado").length;
@@ -72,6 +73,11 @@ export function TorreDashboard() {
     } else {
       navigate({ to: "/gastos" });
     }
+  };
+
+  const accionAtencion = (item: AtencionItem, acc: { id: string; label: string }) => {
+    if (acc.id === "facturar") navigate({ to: "/facturacion" });
+    else abrirAtencion(item);
   };
 
   const abrirVehiculo = (v: TelemetriaActiva) => {
@@ -119,14 +125,25 @@ export function TorreDashboard() {
                   <span>{g.items.length}</span>
                 </div>
                 {g.items.map((it) => (
-                  <button
-                    key={it.id}
-                    onClick={() => abrirAtencion(it)}
-                    className="mb-1 w-full rounded-md border px-2 py-1.5 text-left transition hover:bg-secondary"
-                  >
-                    <div className="text-sm font-medium">{it.titulo}</div>
-                    <div className="text-xs text-muted-foreground">{it.detalle}</div>
-                  </button>
+                  <div key={it.id} className="mb-1 rounded-md border px-2 py-1.5">
+                    <button onClick={() => abrirAtencion(it)} className="w-full text-left">
+                      <div className="text-sm font-medium">{it.titulo}</div>
+                      <div className="text-xs text-muted-foreground">{it.detalle}</div>
+                    </button>
+                    {it.acciones.length > 0 && (
+                      <div className="mt-1 flex gap-1">
+                        {it.acciones.map((acc) => (
+                          <button
+                            key={acc.id}
+                            onClick={() => accionAtencion(it, acc)}
+                            className="rounded border px-2 py-0.5 text-xs transition hover:bg-secondary"
+                          >
+                            {acc.label}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 ))}
               </div>
             ))}

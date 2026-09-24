@@ -5,9 +5,10 @@ Reutiliza la lógica existente (tacógrafo, caducidades, mantenimiento); no dupl
 """
 import datetime
 import unicodedata
-from typing import Annotated
+from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
 
 from db import get_conn, _Conn
 from security import require_role
@@ -19,6 +20,105 @@ _MAX_CONDUCCION_CONTINUA_MIN = 270.0
 _MAX_DIA_CONDUCCION_MIN = 540.0
 
 _ORDEN_SEVERIDAD = {"critico": 0, "aviso": 1, "info": 2}
+
+# Búsqueda insensible a acentos SIN la extensión `unaccent` (translate + lower en SQL).
+_ACCENT_FROM = "áéíóúüñ"
+_ACCENT_TO = "aeiouun"
+
+
+# ---------------------------------------------------------------- modelos de respuesta
+class VehiculoBase(BaseModel):
+    codigo: Optional[str] = None
+    matricula: Optional[str] = None
+    categoria: Optional[str] = None
+    marca: Optional[str] = None
+    modelo: Optional[str] = None
+    km_actuales: Optional[float] = None
+    terminal_trimble: Optional[str] = None
+
+
+class Posicion(BaseModel):
+    lat: Optional[float] = None
+    lng: Optional[float] = None
+    velocidad: Optional[float] = None
+    heading: Optional[float] = None
+    odometer_km: Optional[float] = None
+    time: Optional[str] = None
+
+
+class ViajeCorto(BaseModel):
+    codigo: Optional[str] = None
+    estado: Optional[str] = None
+    origen: Optional[str] = None
+    destino: Optional[str] = None
+    cliente: Optional[str] = None
+    fecha_esperada_carga: Optional[str] = None
+    fecha_esperada_descarga: Optional[str] = None
+
+
+class Tacografo(BaseModel):
+    conductor: Optional[str] = None
+    did: Optional[str] = None
+    driving_coupure_min: Optional[float] = None
+    day_driving_min: Optional[float] = None
+    remaining_week_available_min: Optional[float] = None
+    next_rest_due_ts: Optional[int] = None
+
+
+class Caducidad(BaseModel):
+    tipo: str
+    fecha: Optional[str] = None
+    dias: Optional[int] = None
+
+
+class Mantenimiento(BaseModel):
+    tipo: Optional[str] = None
+    fecha: Optional[str] = None
+    km: Optional[int] = None
+    coste: Optional[float] = None
+    hecho: Optional[bool] = None
+
+
+class Documento(BaseModel):
+    nombre: Optional[str] = None
+    formato: Optional[str] = None
+    bytes: Optional[int] = None
+    origen: Optional[str] = None
+
+
+class Margen(BaseModel):
+    ingresos: float = 0
+    costes: float = 0
+    margen: float = 0
+
+
+class EntidadVehiculo(BaseModel):
+    vehiculo: VehiculoBase
+    posicion: Optional[Posicion] = None
+    viaje_actual: Optional[dict] = None
+    proximos: list[dict] = []
+    tacografo: Optional[Tacografo] = None
+    caducidades: list[Caducidad] = []
+    mantenimientos: list[Mantenimiento] = []
+    documentos: list[Documento] = []
+    coste_margen_mes: Optional[Margen] = None
+
+
+class EntidadViaje(BaseModel):
+    viaje: dict
+    paradas: list[dict] = []
+    documentos: list[Documento] = []
+    mensajes: list[dict] = []
+    rentabilidad: Optional[Margen] = None
+
+
+class EntidadConductor(BaseModel):
+    conductor: dict
+    tacografo: Optional[Tacografo] = None
+    viaje_actual: Optional[dict] = None
+    proximos: list[dict] = []
+    caducidades: list[Caducidad] = []
+    ausencias: list[dict] = []
 
 
 def _hoy() -> str:
@@ -35,15 +135,25 @@ def _dias_hasta(fecha) -> int | None:
 
 
 def _normalizar(q: str) -> str:
-    """Minúsculas y sin acentos (búsqueda insensible a mayúsculas/acentos)."""
+    """Minúsculas y sin acentos (para normalizar el término de búsqueda)."""
     return "".join(
         c for c in unicodedata.normalize("NFKD", q.lower()) if not unicodedata.combining(c)
     )
 
 
-def _item(tipo, severidad, titulo, detalle, entidad, ts=None, acciones=None):
+def _norm_sql(cols: str) -> str:
+    """Expresión SQL que normaliza (minúsculas + sin acentos) para búsqueda insensible."""
+    return f"translate(lower({cols}), '{_ACCENT_FROM}', '{_ACCENT_TO}')"
+
+
+def _item(tipo, severidad, titulo, detalle, entidad, ts=None, acciones=None, sub=None):
+    clave = entidad.get("codigo") or entidad.get("id")
+    partes = [tipo]
+    if sub:
+        partes.append(sub)
+    partes.append(str(clave))
     return {
-        "id": f"{tipo}:{entidad.get('tipo', '')}:{entidad.get('codigo') or entidad.get('id')}",
+        "id": ":".join(partes),
         "tipo": tipo,
         "severidad": severidad,
         "titulo": titulo,
@@ -60,8 +170,11 @@ def atencion(user: dict = Depends(require_role(["admin", "dispatcher"])), conn: 
     items = []
     hoy = _hoy()
     es_admin = user.get("rol") == "admin"
+    hace_12h = (datetime.datetime.utcnow() - datetime.timedelta(hours=12)).isoformat() + "Z"
 
     # 1. viaje_retrasado: en tránsito y con fecha_esperada_descarga ya pasada.
+    #    DECISIÓN (documentada): no hay columna ETA persistida (el snapshot la deja en None),
+    #    así que se usa "descarga prevista ya vencida" como heurística de retraso.
     for r in conn.execute(
         "SELECT codigo, matricula, cliente, origen, destino, fecha_esperada_descarga, estado "
         "FROM operaciones.trips "
@@ -77,14 +190,18 @@ def atencion(user: dict = Depends(require_role(["admin", "dispatcher"])), conn: 
             {"tipo": "viaje", "id": r["codigo"], "codigo": r["codigo"]},
         ))
 
-    # 2. conduccion_limite: < 30 min de conducción continua (>=240/270) o diaria (>=510/540).
+    # 2. conduccion_limite: solo lecturas de tacógrafo de las últimas 12 h; < 30 min de
+    #    conducción continua (>=240/270) o diaria (>=510/540) restante.
     for r in conn.execute(
-        "SELECT d.did, d.vehiculo_id, d.driving_coupure_min, d.day_driving_min, d.remaining_week_available_min, c.id AS conductor_id, c.nombre "
+        "SELECT d.did, d.vehiculo_id, d.driving_coupure_min, d.day_driving_min, d.remaining_week_available_min, "
+        "       c.id AS conductor_id, c.nombre "
         "FROM (SELECT DISTINCT ON (vehiculo_id) * FROM tacografo_dstat "
+        "      WHERE COALESCE(time, creado) >= ? "
         "      ORDER BY vehiculo_id, COALESCE(time, creado) DESC) d "
         "LEFT JOIN conductores c ON c.did = d.did "
         "WHERE COALESCE(d.driving_coupure_min,0) >= 240 OR COALESCE(d.day_driving_min,0) >= 510 "
         "ORDER BY GREATEST(COALESCE(d.driving_coupure_min,0), COALESCE(d.day_driving_min,0)) DESC LIMIT 50",
+        (hace_12h,),
     ).fetchall():
         restante = min(
             _MAX_CONDUCCION_CONTINUA_MIN - float(r["driving_coupure_min"] or 0),
@@ -98,6 +215,7 @@ def atencion(user: dict = Depends(require_role(["admin", "dispatcher"])), conn: 
         ))
 
     # 3. caducidad: ITV/seguro (vehículos) + carné/CAP/médico (conductores).
+    #    El id incluye el subtipo (caducidad:itv:<codigo>) para no colisionar.
     for r in conn.execute(
         "SELECT id, codigo, matricula, fecha_caducidad_itv AS itv, fecha_caducidad_seguro AS seguro "
         "FROM vehiculos WHERE activo = true",
@@ -106,32 +224,38 @@ def atencion(user: dict = Depends(require_role(["admin", "dispatcher"])), conn: 
             dias = _dias_hasta(r[campo])
             if dias is None:
                 continue
+            sub = etiqueta.lower()
             if dias < 0:
                 items.append(_item("caducidad", "critico", f"{etiqueta} de {r['matricula'] or r['codigo']} caducada",
                                    f"Venció hace {-dias} días",
-                                   {"tipo": "vehiculo", "id": r["codigo"], "codigo": r["codigo"]}))
+                                   {"tipo": "vehiculo", "id": r["codigo"], "codigo": r["codigo"]}, sub=sub))
             elif dias <= 30:
                 items.append(_item("caducidad", "aviso", f"{etiqueta} de {r['matricula'] or r['codigo']} próxima",
                                    f"Vence en {dias} días",
-                                   {"tipo": "vehiculo", "id": r["codigo"], "codigo": r["codigo"]}))
+                                   {"tipo": "vehiculo", "id": r["codigo"], "codigo": r["codigo"]}, sub=sub))
     for r in conn.execute(
         "SELECT c.id, e.nombre, e.apellidos, e.caducidad_carnet, e.caducidad_cap, e.caducidad_medica "
         "FROM empleados e JOIN rrhh.conductores c ON c.empleado_id = e.id "
         "WHERE COALESCE(e.fecha_baja,'') = ''",
     ).fetchall():
-        nombre = f"{r['nombre']} {r['apellidos']}".strip()
-        for campo, etiqueta in (("caducidad_carnet", "Carné"), ("caducidad_cap", "CAP"), ("caducidad_medica", "Reconocimiento médico")):
+        nombre = (r["nombre"] or "").strip()
+        ap = (r["apellidos"] or "").strip()
+        if ap and ap not in nombre:
+            nombre = f"{nombre} {ap}".strip()
+        for campo, etiqueta, sub in (("caducidad_carnet", "Carné", "carne"),
+                                     ("caducidad_cap", "CAP", "cap"),
+                                     ("caducidad_medica", "Reconocimiento médico", "medico")):
             dias = _dias_hasta(r[campo])
             if dias is None:
                 continue
             if dias < 0:
                 items.append(_item("caducidad", "critico", f"{etiqueta} de {nombre} caducado",
                                    f"Venció hace {-dias} días",
-                                   {"tipo": "conductor", "id": r["id"], "codigo": nombre}))
+                                   {"tipo": "conductor", "id": r["id"], "codigo": nombre}, sub=sub))
             elif dias <= 30:
                 items.append(_item("caducidad", "aviso", f"{etiqueta} de {nombre} próximo",
                                    f"Vence en {dias} días",
-                                   {"tipo": "conductor", "id": r["id"], "codigo": nombre}))
+                                   {"tipo": "conductor", "id": r["id"], "codigo": nombre}, sub=sub))
 
     # 4. viaje_sin_facturar: entregado sin factura (solo admin).
     facturacion_pendiente = 0.0
@@ -173,19 +297,35 @@ def atencion(user: dict = Depends(require_role(["admin", "dispatcher"])), conn: 
             {"tipo": "gasto", "id": r["id"], "codigo": f"GV-{r['id']}"},
         ))
 
-    # 6. mensaje_sin_responder: needreply y sin mensaje posterior en el hilo.
+    # 6. mensaje_sin_responder: needreply y sin respuesta posterior de la dirección contraria
+    #    en el mismo terminal. Si no hay viaje, el aviso apunta al vehículo (nunca entidad null).
     for r in conn.execute(
-        "SELECT m.id, m.trip_id, m.messagetype, m.time, m.source, t.codigo FROM mensajes m "
-        "LEFT JOIN operaciones.trips t ON t.codigo = m.trip_id "
+        "SELECT m.id, m.trip_id, m.terminal, m.source, m.messagetype, m.time, t.codigo AS trip_codigo "
+        "FROM mensajes m LEFT JOIN operaciones.trips t ON t.codigo = m.trip_id "
         "WHERE m.needreply = true AND NOT EXISTS ("
-        "  SELECT 1 FROM mensajes m2 WHERE m2.trip_id = m.trip_id AND m2.time > m.time"
+        "  SELECT 1 FROM mensajes m2 "
+        "  WHERE COALESCE(m2.terminal,'') = COALESCE(m.terminal,'') "
+        "    AND COALESCE(m2.source,'') != COALESCE(m.source,'') "
+        "    AND COALESCE(m2.time,'') > COALESCE(m.time,'')"
         ") ORDER BY m.time DESC LIMIT 50",
     ).fetchall():
+        if r["trip_id"]:
+            entidad = {"tipo": "viaje", "id": r["trip_id"], "codigo": r["trip_id"]}
+        elif r["terminal"]:
+            veh = conn.execute(
+                "SELECT codigo FROM vehiculos WHERE id = ? OR codigo = ? OR terminal_trimble = ? LIMIT 1",
+                (r["terminal"], r["terminal"], r["terminal"]),
+            ).fetchone()
+            if not veh:
+                continue  # sin vehículo ni viaje: se descarta (nunca entidad null)
+            entidad = {"tipo": "vehiculo", "id": veh["codigo"], "codigo": veh["codigo"]}
+        else:
+            continue  # sin viaje ni terminal: se descarta
         items.append(_item(
             "mensaje_sin_responder", "aviso",
             f"Mensaje sin responder ({r['messagetype'] or '?'})",
-            f"De {r['source'] or '?'} · viaje {r['codigo'] or r['trip_id']}",
-            {"tipo": "viaje", "id": r["trip_id"], "codigo": r["trip_id"]},
+            f"De {r['source'] or '?'} · {r['trip_codigo'] or entidad.get('codigo') or '?'}",
+            entidad,
         ))
 
     # 7. mantenimiento_vencido: km_actuales por encima de ultimo_km_realizado + intervalo_km.
@@ -231,115 +371,107 @@ def atencion(user: dict = Depends(require_role(["admin", "dispatcher"])), conn: 
 @router.get("/api/buscar")
 def buscar(q: Annotated[str, Query(max_length=80)] = "", limite: Annotated[int, Query(ge=1, le=20)] = 8,
            user: dict = Depends(require_role(["admin", "dispatcher"])), conn: _Conn = Depends(get_conn)):
-    """Búsqueda global para la paleta. Mínimo 2 caracteres; insensible a mayúsculas y acentos (normalización Python)."""
+    """Búsqueda global para la paleta. Filtra en SQL (translate+lower, sin unaccent) con LIMIT por grupo."""
     q_norm = _normalizar(q.strip())
     if len(q_norm) < 2:
         return {"resultados": []}
     es_admin = user.get("rol") == "admin"
+    patron = f"%{q_norm}%"
     resultados = []
 
-    def _coincide(r, *campos):
-        return q_norm in _normalizar(" ".join(str(r.get(c) or "") for c in campos))
+    def fila(tipo, ident, titulo, subtitulo):
+        resultados.append({"tipo": tipo, "id": ident, "titulo": titulo, "subtitulo": subtitulo})
 
+    viaje_campos = "COALESCE(codigo,'') || ' ' || COALESCE(referencia,'') || ' ' || COALESCE(cliente,'') || ' ' || COALESCE(origen,'') || ' ' || COALESCE(destino,'')"
     for r in conn.execute(
         "SELECT codigo, referencia, cliente, origen, destino FROM operaciones.trips "
-        "ORDER BY COALESCE(fecha_actualizacion, creado) DESC LIMIT 300",
+        "WHERE " + _norm_sql(viaje_campos) + " LIKE ? "
+        "ORDER BY COALESCE(fecha_actualizacion, creado) DESC LIMIT ?",
+        (patron, limite),
     ).fetchall():
-        if _coincide(r, "codigo", "referencia", "cliente", "origen", "destino"):
-            resultados.append({
-                "tipo": "viaje", "id": r["codigo"],
-                "titulo": r["codigo"] or r["referencia"] or "Viaje",
-                "subtitulo": f"{r['cliente'] or ''} · {r['origen']} → {r['destino']}",
-            })
+        fila("viaje", r["codigo"], r["codigo"] or r["referencia"] or "Viaje",
+             f"{r['cliente'] or ''} · {r['origen']} → {r['destino']}")
 
+    veh_campos = "COALESCE(matricula,'') || ' ' || COALESCE(codigo,'') || ' ' || COALESCE(terminal_trimble,'')"
     for r in conn.execute(
-        "SELECT id, codigo, matricula, terminal_trimble FROM vehiculos WHERE activo = true LIMIT 300",
+        "SELECT id, codigo, matricula, terminal_trimble FROM vehiculos "
+        "WHERE " + _norm_sql(veh_campos) + " LIKE ? AND activo = true LIMIT ?",
+        (patron, limite),
     ).fetchall():
-        if _coincide(r, "matricula", "codigo", "terminal_trimble"):
-            resultados.append({
-                "tipo": "vehiculo", "id": r["id"],
-                "titulo": r["matricula"] or r["codigo"],
-                "subtitulo": f"Vehículo · {r['codigo'] or ''}",
-            })
+        fila("vehiculo", r["id"], r["matricula"] or r["codigo"], f"Vehículo · {r['codigo'] or ''}")
 
+    # Conductor: el nombre SIEMPRE; el DNI solo para admin (se excluye del filtro si no es admin).
+    cond_campos = "COALESCE(nombre,'') || ' ' || COALESCE(dni,'')" if es_admin else "COALESCE(nombre,'')"
     for r in conn.execute(
-        "SELECT id, nombre, dni FROM conductores WHERE activo = true LIMIT 300",
+        "SELECT id, nombre, dni FROM conductores "
+        "WHERE " + _norm_sql(cond_campos) + " LIKE ? AND activo = true LIMIT ?",
+        (patron, limite),
     ).fetchall():
-        if _coincide(r, "nombre", "dni"):
-            resultados.append({
-                "tipo": "conductor", "id": r["id"],
-                "titulo": r["nombre"],
-                "subtitulo": f"Conductor · DNI {r['dni']}" if es_admin and r["dni"] else "Conductor",
-            })
+        fila("conductor", r["id"], r["nombre"],
+             f"Conductor · DNI {r['dni']}" if es_admin and r["dni"] else "Conductor")
+
+    tercero_campos = "COALESCE(razon_social,'') || ' ' || COALESCE(nombre_comercial,'') || ' ' || COALESCE(nif,'')"
+    for r in conn.execute(
+        "SELECT id, razon_social, nombre_comercial, nif FROM maestros.terceros "
+        "WHERE es_cliente = true AND " + _norm_sql(tercero_campos) + " LIKE ? AND activo = true LIMIT ?",
+        (patron, limite),
+    ).fetchall():
+        fila("cliente", r["id"], r["nombre_comercial"] or r["razon_social"], f"Cliente · {r['nif'] or ''}")
 
     for r in conn.execute(
         "SELECT id, razon_social, nombre_comercial, nif FROM maestros.terceros "
-        "WHERE es_cliente = true AND activo = true LIMIT 300",
+        "WHERE es_proveedor = true AND " + _norm_sql(tercero_campos) + " LIKE ? AND activo = true LIMIT ?",
+        (patron, limite),
     ).fetchall():
-        if _coincide(r, "razon_social", "nombre_comercial", "nif"):
-            resultados.append({
-                "tipo": "cliente", "id": r["id"],
-                "titulo": r["nombre_comercial"] or r["razon_social"],
-                "subtitulo": f"Cliente · {r['nif'] or ''}",
-            })
-
-    for r in conn.execute(
-        "SELECT id, razon_social, nombre_comercial, nif FROM maestros.terceros "
-        "WHERE es_proveedor = true AND activo = true LIMIT 300",
-    ).fetchall():
-        if _coincide(r, "razon_social", "nombre_comercial", "nif"):
-            resultados.append({
-                "tipo": "proveedor", "id": r["id"],
-                "titulo": r["nombre_comercial"] or r["razon_social"],
-                "subtitulo": f"Proveedor · {r['nif'] or ''}",
-            })
+        fila("proveedor", r["id"], r["nombre_comercial"] or r["razon_social"], f"Proveedor · {r['nif'] or ''}")
 
     if es_admin:
+        fact_campos = "COALESCE(numero,'') || ' ' || COALESCE(cliente_nombre,'')"
         for r in conn.execute(
             "SELECT id, numero, cliente_nombre, fecha FROM finanzas.facturas "
-            "WHERE COALESCE(borrado,false) = false ORDER BY id DESC LIMIT 300",
+            "WHERE " + _norm_sql(fact_campos) + " LIKE ? AND COALESCE(borrado,false) = false LIMIT ?",
+            (patron, limite),
         ).fetchall():
-            if _coincide(r, "numero", "cliente_nombre"):
-                resultados.append({
-                    "tipo": "factura", "id": r["numero"],
-                    "titulo": r["numero"],
-                    "subtitulo": f"Factura · {r['cliente_nombre'] or ''}",
-                })
+            fila("factura", r["numero"], r["numero"], f"Factura · {r['cliente_nombre'] or ''}")
 
     return {"resultados": resultados[:limite]}
 
 
-@router.get("/api/entidad/vehiculo/{codigo}")
+@router.get("/api/entidad/vehiculo/{codigo}", response_model=EntidadVehiculo)
 def entidad_vehiculo(codigo: str, user: dict = Depends(require_role(["admin", "dispatcher"])),
                      conn: _Conn = Depends(get_conn)):
+    # Acepta id, codigo o matrícula; resuelve el vehículo UNA vez y usa el resuelto en todas las subconsultas.
     v = conn.execute(
-        "SELECT * FROM vehiculos WHERE id = ? OR codigo = ? LIMIT 1", (codigo, codigo),
+        "SELECT * FROM vehiculos WHERE id = ? OR codigo = ? OR matricula = ? LIMIT 1",
+        (codigo, codigo, codigo),
     ).fetchone()
     if not v:
         raise HTTPException(status_code=404, detail={"error": "Vehículo no encontrado"})
     es_admin = user.get("rol") == "admin"
+    veh = v["codigo"] or ""  # identificador canónico (== matrícula en producción)
+    terminal = v["terminal_trimble"] or ""
 
     pos = conn.execute(
         "SELECT lat, lng, speed_kmh, heading, odometer_km, time FROM telemetria.posiciones_gps "
-        "WHERE vehiculo_id = ? ORDER BY time DESC LIMIT 1", (codigo,),
+        "WHERE vehiculo_id = ? ORDER BY time DESC LIMIT 1", (veh,),
     ).fetchone()
 
     viaje_actual = conn.execute(
         "SELECT codigo, estado, origen, destino, cliente, fecha_esperada_descarga FROM operaciones.trips "
-        "WHERE terminal = ? AND COALESCE(estado,'') NOT IN ('Entregado','Cancelado','sin_asignar','') "
-        "ORDER BY creado DESC LIMIT 1", (codigo,),
+        "WHERE (matricula = ? OR terminal = ?) AND COALESCE(estado,'') NOT IN ('Entregado','Cancelado','sin_asignar','') "
+        "ORDER BY creado DESC LIMIT 1", (veh, terminal),
     ).fetchone()
 
     proximos = conn.execute(
         "SELECT codigo, estado, origen, destino, fecha_esperada_carga FROM operaciones.trips "
-        "WHERE terminal = ? AND (estado IN ('sin_asignar','planificado') OR estado IS NULL) "
-        "ORDER BY creado DESC LIMIT 5", (codigo,),
+        "WHERE (matricula = ? OR terminal = ?) AND (estado IN ('sin_asignar','planificado') OR estado IS NULL) "
+        "ORDER BY creado DESC LIMIT 5", (veh, terminal),
     ).fetchall()
 
     dstat = conn.execute(
         "SELECT d.*, c.nombre AS conductor_nombre FROM (SELECT DISTINCT ON (vehiculo_id) * FROM tacografo_dstat "
         "WHERE vehiculo_id = ? ORDER BY vehiculo_id, COALESCE(time, creado) DESC) d "
-        "LEFT JOIN conductores c ON c.did = d.did", (codigo,),
+        "LEFT JOIN conductores c ON c.did = d.did", (veh,),
     ).fetchone()
 
     caducidades = []
@@ -350,12 +482,12 @@ def entidad_vehiculo(codigo: str, user: dict = Depends(require_role(["admin", "d
 
     mantenimientos = conn.execute(
         "SELECT tipo, fecha, km, coste, hecho FROM flota.mantenimientos "
-        "WHERE vehiculo_id = ? ORDER BY fecha DESC LIMIT 5", (codigo,),
+        "WHERE vehiculo_id = ? ORDER BY fecha DESC LIMIT 5", (veh,),
     ).fetchall()
 
     documentos = conn.execute(
         "SELECT name, formato, bytes FROM files WHERE vehiculo_id = ? ORDER BY ftime DESC LIMIT 20",
-        (codigo,),
+        (veh,),
     ).fetchall()
 
     resultado = {
@@ -392,10 +524,10 @@ def entidad_vehiculo(codigo: str, user: dict = Depends(require_role(["admin", "d
         r = conn.execute(
             "SELECT "
             "  (SELECT COALESCE(SUM(COALESCE(t.precio,0)),0) FROM operaciones.trips t "
-            "   WHERE t.terminal = ? AND substr(COALESCE(t.fecha_actualizacion, t.creado),1,7) = ?) AS ingresos, "
+            "   WHERE (t.matricula = ? OR t.terminal = ?) AND substr(COALESCE(t.fecha_actualizacion, t.creado),1,7) = ?) AS ingresos, "
             "  (SELECT COALESCE(SUM(COALESCE(g.importe_total,0)),0) FROM finanzas.gastos_vehiculos g "
             "   WHERE g.vehiculo_id = ? AND substr(COALESCE(g.fecha,''),1,7) = ?) AS costes",
-            (codigo, mes, codigo, mes),
+            (veh, terminal, mes, veh, mes),
         ).fetchone()
         ingresos = float(r["ingresos"] or 0)
         costes = float(r["costes"] or 0)
@@ -404,7 +536,7 @@ def entidad_vehiculo(codigo: str, user: dict = Depends(require_role(["admin", "d
     return resultado
 
 
-@router.get("/api/entidad/viaje/{codigo}")
+@router.get("/api/entidad/viaje/{codigo}", response_model=EntidadViaje)
 def entidad_viaje(codigo: str, user: dict = Depends(require_role(["admin", "dispatcher"])),
                   conn: _Conn = Depends(get_conn)):
     t = conn.execute("SELECT * FROM operaciones.trips WHERE codigo = ? LIMIT 1", (codigo,)).fetchone()
@@ -452,8 +584,8 @@ def entidad_viaje(codigo: str, user: dict = Depends(require_role(["admin", "disp
     return resultado
 
 
-@router.get("/api/entidad/conductor/{conductor_id}")
-def entidad_conductor(conductor_id, user: dict = Depends(require_role(["admin", "dispatcher"])),
+@router.get("/api/entidad/conductor/{conductor_id}", response_model=EntidadConductor)
+def entidad_conductor(conductor_id: int, user: dict = Depends(require_role(["admin", "dispatcher"])),
                       conn: _Conn = Depends(get_conn)):
     c = conn.execute(
         "SELECT id, nombre, dni, telefono, email, did FROM conductores WHERE id = ? LIMIT 1",

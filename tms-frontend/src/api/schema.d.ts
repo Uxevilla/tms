@@ -2696,6 +2696,97 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/atencion": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Atencion
+         * @description Bandeja de 'Requiere atención': 8 clases de avisos, agrupadas por severidad.
+         */
+        get: operations["atencion_api_atencion_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/buscar": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Buscar
+         * @description Búsqueda global para la paleta. Filtra en SQL (translate+lower, sin unaccent) con LIMIT por grupo.
+         */
+        get: operations["buscar_api_buscar_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/entidad/vehiculo/{codigo}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Entidad Vehiculo */
+        get: operations["entidad_vehiculo_api_entidad_vehiculo__codigo__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/entidad/viaje/{codigo}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Entidad Viaje */
+        get: operations["entidad_viaje_api_entidad_viaje__codigo__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/entidad/conductor/{conductor_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Entidad Conductor */
+        get: operations["entidad_conductor_api_entidad_conductor__conductor_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -2785,7 +2876,7 @@ export interface components {
              */
             ecmr_id: string;
             /** Documentos */
-            documentos?: components["schemas"]["Documento"][];
+            documentos?: components["schemas"]["Documento-Input"][];
             /**
              * Force
              * @default false
@@ -2857,6 +2948,15 @@ export interface components {
              * @default
              */
             observaciones: string;
+        };
+        /** Caducidad */
+        Caducidad: {
+            /** Tipo */
+            tipo: string;
+            /** Fecha */
+            fecha?: string | null;
+            /** Dias */
+            dias?: number | null;
         };
         /** Cliente */
         Cliente: {
@@ -3068,7 +3168,7 @@ export interface components {
             comentario: string;
         };
         /** Documento */
-        Documento: {
+        "Documento-Input": {
             /** Nombre */
             nombre: string;
             /**
@@ -3076,6 +3176,17 @@ export interface components {
              * @default
              */
             contenido: string;
+        };
+        /** Documento */
+        "Documento-Output": {
+            /** Nombre */
+            nombre?: string | null;
+            /** Formato */
+            formato?: string | null;
+            /** Bytes */
+            bytes?: number | null;
+            /** Origen */
+            origen?: string | null;
         };
         /** Empleado */
         Empleado: {
@@ -3273,6 +3384,97 @@ export interface components {
              */
             iban: string;
         };
+        /** EntidadConductor */
+        EntidadConductor: {
+            /** Conductor */
+            conductor: {
+                [key: string]: unknown;
+            };
+            tacografo?: components["schemas"]["Tacografo"] | null;
+            /** Viaje Actual */
+            viaje_actual?: {
+                [key: string]: unknown;
+            } | null;
+            /**
+             * Proximos
+             * @default []
+             */
+            proximos: {
+                [key: string]: unknown;
+            }[];
+            /**
+             * Caducidades
+             * @default []
+             */
+            caducidades: components["schemas"]["Caducidad"][];
+            /**
+             * Ausencias
+             * @default []
+             */
+            ausencias: {
+                [key: string]: unknown;
+            }[];
+        };
+        /** EntidadVehiculo */
+        EntidadVehiculo: {
+            vehiculo: components["schemas"]["VehiculoBase"];
+            posicion?: components["schemas"]["Posicion"] | null;
+            /** Viaje Actual */
+            viaje_actual?: {
+                [key: string]: unknown;
+            } | null;
+            /**
+             * Proximos
+             * @default []
+             */
+            proximos: {
+                [key: string]: unknown;
+            }[];
+            tacografo?: components["schemas"]["Tacografo"] | null;
+            /**
+             * Caducidades
+             * @default []
+             */
+            caducidades: components["schemas"]["Caducidad"][];
+            /**
+             * Mantenimientos
+             * @default []
+             */
+            mantenimientos: components["schemas"]["Mantenimiento-Output"][];
+            /**
+             * Documentos
+             * @default []
+             */
+            documentos: components["schemas"]["Documento-Output"][];
+            coste_margen_mes?: components["schemas"]["Margen"] | null;
+        };
+        /** EntidadViaje */
+        EntidadViaje: {
+            /** Viaje */
+            viaje: {
+                [key: string]: unknown;
+            };
+            /**
+             * Paradas
+             * @default []
+             */
+            paradas: {
+                [key: string]: unknown;
+            }[];
+            /**
+             * Documentos
+             * @default []
+             */
+            documentos: components["schemas"]["Documento-Output"][];
+            /**
+             * Mensajes
+             * @default []
+             */
+            mensajes: {
+                [key: string]: unknown;
+            }[];
+            rentabilidad?: components["schemas"]["Margen"] | null;
+        };
         /** Gasto */
         Gasto: {
             /**
@@ -3442,7 +3644,7 @@ export interface components {
             pagado: boolean;
         };
         /** Mantenimiento */
-        Mantenimiento: {
+        "Mantenimiento-Input": {
             /**
              * Vehiculo Id
              * @default
@@ -3500,6 +3702,37 @@ export interface components {
              * @default false
              */
             generar_gasto: boolean;
+        };
+        /** Mantenimiento */
+        "Mantenimiento-Output": {
+            /** Tipo */
+            tipo?: string | null;
+            /** Fecha */
+            fecha?: string | null;
+            /** Km */
+            km?: number | null;
+            /** Coste */
+            coste?: number | null;
+            /** Hecho */
+            hecho?: boolean | null;
+        };
+        /** Margen */
+        Margen: {
+            /**
+             * Ingresos
+             * @default 0
+             */
+            ingresos: number;
+            /**
+             * Costes
+             * @default 0
+             */
+            costes: number;
+            /**
+             * Margen
+             * @default 0
+             */
+            margen: number;
         };
         /** Nomina */
         Nomina: {
@@ -3606,6 +3839,21 @@ export interface components {
              */
             actividad: string;
         };
+        /** Posicion */
+        Posicion: {
+            /** Lat */
+            lat?: number | null;
+            /** Lng */
+            lng?: number | null;
+            /** Velocidad */
+            velocidad?: number | null;
+            /** Heading */
+            heading?: number | null;
+            /** Odometer Km */
+            odometer_km?: number | null;
+            /** Time */
+            time?: string | null;
+        };
         /** Proveedor */
         Proveedor: {
             /**
@@ -3693,6 +3941,21 @@ export interface components {
              * @default false
              */
             needreply: boolean;
+        };
+        /** Tacografo */
+        Tacografo: {
+            /** Conductor */
+            conductor?: string | null;
+            /** Did */
+            did?: string | null;
+            /** Driving Coupure Min */
+            driving_coupure_min?: number | null;
+            /** Day Driving Min */
+            day_driving_min?: number | null;
+            /** Remaining Week Available Min */
+            remaining_week_available_min?: number | null;
+            /** Next Rest Due Ts */
+            next_rest_due_ts?: number | null;
         };
         /** TarifaPeaje */
         TarifaPeaje: {
@@ -3991,6 +4254,23 @@ export interface components {
              */
             fecha_proxima_revision: string;
         };
+        /** VehiculoBase */
+        VehiculoBase: {
+            /** Codigo */
+            codigo?: string | null;
+            /** Matricula */
+            matricula?: string | null;
+            /** Categoria */
+            categoria?: string | null;
+            /** Marca */
+            marca?: string | null;
+            /** Modelo */
+            modelo?: string | null;
+            /** Km Actuales */
+            km_actuales?: number | null;
+            /** Terminal Trimble */
+            terminal_trimble?: string | null;
+        };
         /**
          * ViaPoint
          * @description Punto de paso de navegación (via point, manual §5.3.6): no es una parada,
@@ -4029,7 +4309,7 @@ export interface components {
              */
             tipo_carga: string;
             /** Documentos */
-            documentos?: components["schemas"]["Documento"][];
+            documentos?: components["schemas"]["Documento-Input"][];
             /**
              * Terminal
              * @default
@@ -4719,7 +4999,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["Mantenimiento"];
+                "application/json": components["schemas"]["Mantenimiento-Input"];
             };
         };
         responses: {
@@ -5035,7 +5315,7 @@ export interface operations {
         };
         requestBody?: {
             content: {
-                "application/json": components["schemas"]["Mantenimiento"] | null;
+                "application/json": components["schemas"]["Mantenimiento-Input"] | null;
             };
         };
         responses: {
@@ -10606,6 +10886,170 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    atencion_api_atencion_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    buscar_api_buscar_get: {
+        parameters: {
+            query?: {
+                q?: string;
+                limite?: number;
+            };
+            header?: {
+                authorization?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    entidad_vehiculo_api_entidad_vehiculo__codigo__get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string;
+            };
+            path: {
+                codigo: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EntidadVehiculo"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    entidad_viaje_api_entidad_viaje__codigo__get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string;
+            };
+            path: {
+                codigo: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EntidadViaje"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    entidad_conductor_api_entidad_conductor__conductor_id__get: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string;
+            };
+            path: {
+                conductor_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EntidadConductor"];
                 };
             };
             /** @description Validation Error */

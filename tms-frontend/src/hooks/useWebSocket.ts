@@ -28,8 +28,8 @@ export function useWebSocket<T>(url: string, onMessage: (data: T) => void): WsSt
       ws.onmessage = (ev) => {
         try {
           handlerRef.current(JSON.parse(ev.data) as T);
-        } catch {
-          // Mensaje no-JSON: se ignora silenciosamente.
+        } catch (err) {
+          console.error("[ws] error procesando mensaje:", err, ev.data);
         }
       };
 

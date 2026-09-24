@@ -69,6 +69,18 @@ function AppShellInner() {
     return () => window.removeEventListener("tms:sesion-caducada", onCaducada);
   }, [navigate]);
 
+  // Panel de entidad desde cualquier pantalla: cualquier elemento con [data-panel="tipo:id"]
+  // (celdas de las tablas antiguas, marcadores, avisos…) abre el panel sin cambiar de ruta.
+  useEffect(() => {
+    const onClick = (e: MouseEvent) => {
+      const el = (e.target as HTMLElement | null)?.closest?.("[data-panel]");
+      const panel = el?.getAttribute("data-panel");
+      if (panel) navigate({ search: { panel } as never });
+    };
+    document.addEventListener("click", onClick);
+    return () => document.removeEventListener("click", onClick);
+  }, [navigate]);
+
   const logout = () => {
     clearToken();
     navigate({ to: "/login" });

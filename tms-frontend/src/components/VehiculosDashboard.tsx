@@ -7,6 +7,7 @@ import { api, ApiError } from "../api";
 import { useAgGridState } from "../hooks/useAgGridState";
 import { TallerCalendario } from "./TallerCalendario";
 import { CaducidadRenderer } from "./CaducidadRenderer";
+import { panelCell } from "./panelCell";
 
 import { gridTheme, GRID_ROW_HEIGHT, GRID_HEADER_HEIGHT } from "../gridConfig";
 
@@ -377,7 +378,7 @@ export function VehiculosDashboard() {
   const flotaCols = useMemo<ColDef<Vehiculo>[]>(
     () => [
       { field: "id", headerName: "ID Trimble", width: 150, pinned: "left" },
-      { field: "matricula", headerName: "Matrícula", width: 110, pinned: "left" },
+      { field: "matricula", headerName: "Matrícula", width: 110, pinned: "left", cellRenderer: panelCell("vehiculo") },
       { field: "categoria", headerName: "Categoría", width: 110 },
       { field: "marca", headerName: "Marca", flex: 1, minWidth: 110 },
       { field: "modelo", headerName: "Modelo", flex: 1, minWidth: 110 },

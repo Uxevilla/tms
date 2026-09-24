@@ -4,8 +4,14 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api";
 import { REST_ENTIDAD } from "@/config";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import type { components } from "@/api/schema";
 
 type PanelTipo = "vehiculo" | "viaje" | "conductor";
+type EntidadVehiculo = components["schemas"]["EntidadVehiculo"];
+type EntidadViaje = components["schemas"]["EntidadViaje"];
+type EntidadConductor = components["schemas"]["EntidadConductor"];
+type EntidadData = EntidadVehiculo | EntidadViaje | EntidadConductor;
+type Dict = Record<string, unknown>;
 
 interface EntityPanelProps {
   panel: string; // "vehiculo:1111-KKK"
@@ -18,8 +24,11 @@ function parsePanel(panel: string): { tipo: PanelTipo; id: string } | null {
   return { tipo: m[1] as PanelTipo, id: m[2] };
 }
 
-const fmtEuro = (n: number | null | undefined) =>
-  n == null ? "—" : n.toLocaleString("es-ES", { style: "currency", currency: "EUR" });
+const s = (x: unknown, fb = "—") => (x == null || x === "" ? fb : String(x));
+const n = (x: unknown) => (x == null || x === "" ? null : Number(x));
+
+const fmtEuro = (v: number | null | undefined) =>
+  v == null ? "—" : v.toLocaleString("es-ES", { style: "currency", currency: "EUR" });
 
 const fmtMin = (m: number | null | undefined) => {
   if (m == null) return "—";
@@ -41,9 +50,10 @@ function Fila({ k, v }: { k: string; v: React.ReactNode }) {
   );
 }
 
-function Caducidad({ c }: { c: { tipo: string; fecha: string; dias: number } }) {
-  const color = c.dias < 0 ? "text-red-500" : c.dias <= 30 ? "text-amber-500" : "text-muted-foreground";
-  const txt = c.dias < 0 ? `Vencido hace ${-c.dias} d` : c.dias === 0 ? "Vence hoy" : `En ${c.dias} d`;
+function Caducidad({ c }: { c: { tipo: string; fecha: string | null; dias: number | null } }) {
+  const dias = c.dias ?? 0;
+  const color = dias < 0 ? "text-red-500" : dias <= 30 ? "text-amber-500" : "text-muted-foreground";
+  const txt = dias < 0 ? `Vencido hace ${-dias} d` : dias === 0 ? "Vence hoy" : `En ${dias} d`;
   return (
     <div className="flex justify-between gap-3 py-1 text-sm">
       <span>{c.tipo}</span>
@@ -58,7 +68,7 @@ export function EntityPanel({ panel, onClose }: EntityPanelProps) {
 
   const query = useQuery({
     queryKey: ["entidad", parsed?.tipo ?? "", parsed?.id ?? ""],
-    queryFn: () => api<any>(REST_ENTIDAD(parsed!.tipo, parsed!.id)),
+    queryFn: () => api<EntidadData>(REST_ENTIDAD(parsed!.tipo, parsed!.id)),
     enabled: !!parsed,
   });
 
@@ -68,10 +78,10 @@ export function EntityPanel({ panel, onClose }: EntityPanelProps) {
 
   const titulo =
     parsed.tipo === "vehiculo"
-      ? data?.vehiculo?.matricula || parsed.id
+      ? (data as EntidadVehiculo | undefined)?.vehiculo?.matricula || parsed.id
       : parsed.tipo === "viaje"
-        ? data?.viaje?.codigo || parsed.id
-        : data?.conductor?.nombre || parsed.id;
+        ? s((data as EntidadViaje | undefined)?.viaje?.codigo, "") || parsed.id
+        : s((data as EntidadConductor | undefined)?.conductor?.nombre, "") || parsed.id;
 
   const pestanas: string[] =
     parsed.tipo === "vehiculo"
@@ -117,13 +127,25 @@ export function EntityPanel({ panel, onClose }: EntityPanelProps) {
   );
 }
 
-function Contenido({ tipo, pestana, data }: { tipo: PanelTipo; pestana: number; data: any }) {
-  if (tipo === "vehiculo") return <Vehiculo pestana={pestana} data={data} />;
-  if (tipo === "viaje") return <Viaje pestana={pestana} data={data} />;
-  return <Conductor pestana={pestana} data={data} />;
+function Contenido({ tipo, pestana, data }: { tipo: PanelTipo; pestana: number; data: EntidadData }) {
+  if (tipo === "vehiculo") return <Vehiculo pestana={pestana} data={data as EntidadVehiculo} />;
+  if (tipo === "viaje") return <Viaje pestana={pestana} data={data as EntidadViaje} />;
+  return <Conductor pestana={pestana} data={data as EntidadConductor} />;
 }
 
-function Vehiculo({ pestana, data }: { pestana: number; data: any }) {
+function ViajeCard({ label, viaje }: { label: string; viaje: Dict }) {
+  return (
+    <div className="rounded border p-2">
+      <div className="font-medium">{label}</div>
+      <div className="text-xs text-muted-foreground">
+        {s(viaje.origen)} → {s(viaje.destino)}
+      </div>
+      <div className="text-xs">{s(viaje.estado)}</div>
+    </div>
+  );
+}
+
+function Vehiculo({ pestana, data }: { pestana: number; data: EntidadVehiculo }) {
   const v = data.vehiculo ?? {};
   const pos = data.posicion;
   const taco = data.tacografo;
@@ -134,21 +156,21 @@ function Vehiculo({ pestana, data }: { pestana: number; data: any }) {
         <Fila k="Código" v={v.codigo || "—"} />
         <Fila k="Marca/modelo" v={[v.marca, v.modelo].filter(Boolean).join(" ") || "—"} />
         <Fila k="Categoría" v={v.categoria || "—"} />
-        <Fila k="Odómetro" v={v.km_actuales != null ? `${Number(v.km_actuales).toLocaleString("es-ES")} km` : "—"} />
+        <Fila k="Odómetro" v={v.km_actuales != null ? `${v.km_actuales.toLocaleString("es-ES")} km` : "—"} />
         <Fila k="Terminal Trimble" v={v.terminal_trimble || "—"} />
         {pos && (
           <div className="mt-3 border-t pt-2">
             <div className="mb-1 text-xs font-semibold text-muted-foreground">Posición</div>
             <Fila k="Velocidad" v={pos.velocidad != null ? `${Math.round(pos.velocidad)} km/h` : "—"} />
             <Fila k="Rumbo" v={pos.heading != null ? `${Math.round(pos.heading)}°` : "—"} />
-            <Fila k="Actualizada" v={fmtFecha(pos.time)} />
+            <Fila k="Actualizada" v={fmtFecha(pos.time ?? null)} />
           </div>
         )}
         {data.caducidades?.length > 0 && (
           <div className="mt-3 border-t pt-2">
             <div className="mb-1 text-xs font-semibold text-muted-foreground">Caducidades</div>
-            {data.caducidades.map((c: any) => (
-              <Caducidad key={c.tipo} c={c} />
+            {data.caducidades.map((c) => (
+              <Caducidad key={c.tipo} c={{ tipo: c.tipo, fecha: c.fecha ?? null, dias: c.dias ?? null }} />
             ))}
           </div>
         )}
@@ -166,15 +188,15 @@ function Vehiculo({ pestana, data }: { pestana: number; data: any }) {
     return (
       <div className="space-y-2">
         {data.viaje_actual ? (
-          <ViajeCard label="Viaje actual" viaje={data.viaje_actual} />
+          <ViajeCard label="Viaje actual" viaje={data.viaje_actual as Dict} />
         ) : (
           <div className="text-muted-foreground">Sin viaje en curso.</div>
         )}
         {data.proximos?.length > 0 && (
           <div className="mt-3">
             <div className="mb-1 text-xs font-semibold text-muted-foreground">Próximos</div>
-            {data.proximos.map((t: any) => (
-              <ViajeCard key={t.codigo} label={t.codigo} viaje={t} />
+            {data.proximos.map((t, i) => (
+              <ViajeCard key={i} label={s(t.codigo)} viaje={t as Dict} />
             ))}
           </div>
         )}
@@ -195,11 +217,11 @@ function Vehiculo({ pestana, data }: { pestana: number; data: any }) {
   if (pestana === 3)
     return data.mantenimientos?.length > 0 ? (
       <div className="space-y-2">
-        {data.mantenimientos.map((m: any, i: number) => (
+        {data.mantenimientos.map((m, i) => (
           <div key={i} className="rounded border p-2">
-            <div className="font-medium">{m.tipo}</div>
+            <div className="font-medium">{m.tipo ?? "—"}</div>
             <div className="text-xs text-muted-foreground">
-              {m.fecha} · {m.km != null ? `${Number(m.km).toLocaleString("es-ES")} km` : ""} · {fmtEuro(m.coste)}
+              {m.fecha ?? ""} · {m.km != null ? `${m.km.toLocaleString("es-ES")} km` : ""} · {fmtEuro(m.coste)}
             </div>
           </div>
         ))}
@@ -210,10 +232,10 @@ function Vehiculo({ pestana, data }: { pestana: number; data: any }) {
   return (
     <div className="space-y-1">
       {data.documentos?.length > 0 ? (
-        data.documentos.map((d: any, i: number) => (
+        data.documentos.map((d, i) => (
           <div key={i} className="flex justify-between py-1">
-            <span className="truncate">{d.nombre}</span>
-            <span className="text-xs text-muted-foreground">{d.formato}</span>
+            <span className="truncate">{d.nombre ?? ""}</span>
+            <span className="text-xs text-muted-foreground">{d.formato ?? ""}</span>
           </div>
         ))
       ) : (
@@ -223,32 +245,20 @@ function Vehiculo({ pestana, data }: { pestana: number; data: any }) {
   );
 }
 
-function ViajeCard({ label, viaje }: { label: string; viaje: any }) {
-  return (
-    <div className="rounded border p-2">
-      <div className="font-medium">{label}</div>
-      <div className="text-xs text-muted-foreground">
-        {viaje.origen} → {viaje.destino}
-      </div>
-      <div className="text-xs">{viaje.estado || "—"}</div>
-    </div>
-  );
-}
-
-function Viaje({ pestana, data }: { pestana: number; data: any }) {
+function Viaje({ pestana, data }: { pestana: number; data: EntidadViaje }) {
   const v = data.viaje ?? {};
   if (pestana === 0)
     return (
       <div className="space-y-1">
-        <Fila k="Código" v={v.codigo || "—"} />
-        <Fila k="Referencia" v={v.referencia || "—"} />
-        <Fila k="Estado" v={v.estado || "—"} />
-        <Fila k="Cliente" v={v.cliente || "—"} />
-        <Fila k="Ruta" v={`${v.origen || "?"} → ${v.destino || "?"}`} />
-        <Fila k="Vehículo" v={v.matricula || v.terminal || "—"} />
-        <Fila k="Conductor" v={v.conductor || "—"} />
-        <Fila k="Precio" v={fmtEuro(v.precio)} />
-        <Fila k="Km totales" v={v.km_total != null ? `${Number(v.km_total).toLocaleString("es-ES")} km` : "—"} />
+        <Fila k="Código" v={s(v.codigo)} />
+        <Fila k="Referencia" v={s(v.referencia)} />
+        <Fila k="Estado" v={s(v.estado)} />
+        <Fila k="Cliente" v={s(v.cliente)} />
+        <Fila k="Ruta" v={`${s(v.origen, "?")} → ${s(v.destino, "?")}`} />
+        <Fila k="Vehículo" v={s(v.matricula, "") || s(v.terminal)} />
+        <Fila k="Conductor" v={s(v.conductor)} />
+        <Fila k="Precio" v={fmtEuro(n(v.precio))} />
+        <Fila k="Km totales" v={n(v.km_total) != null ? `${n(v.km_total)!.toLocaleString("es-ES")} km` : "—"} />
         {data.rentabilidad && (
           <div className="mt-3 border-t pt-2">
             <div className="mb-1 text-xs font-semibold text-muted-foreground">Rentabilidad</div>
@@ -262,12 +272,12 @@ function Viaje({ pestana, data }: { pestana: number; data: any }) {
   if (pestana === 1)
     return data.paradas?.length > 0 ? (
       <div className="space-y-2">
-        {data.paradas.map((p: any, i: number) => (
+        {data.paradas.map((p, i) => (
           <div key={i} className="rounded border p-2">
             <div className="font-medium">
-              {p.orden}. {p.nombre || p.ciudad || "—"}
+              {s(p.orden, "")}. {s(p.nombre, "") || s(p.ciudad)}
             </div>
-            <div className="text-xs text-muted-foreground">{p.actividad || ""}</div>
+            <div className="text-xs text-muted-foreground">{s(p.actividad, "")}</div>
           </div>
         ))}
       </div>
@@ -278,10 +288,10 @@ function Viaje({ pestana, data }: { pestana: number; data: any }) {
     return (
       <div className="space-y-1">
         {data.documentos?.length > 0 ? (
-          data.documentos.map((d: any, i: number) => (
+          data.documentos.map((d, i) => (
             <div key={i} className="flex justify-between py-1">
-              <span className="truncate">{d.nombre}</span>
-              <span className="text-xs text-muted-foreground">{d.formato}</span>
+              <span className="truncate">{d.nombre ?? ""}</span>
+              <span className="text-xs text-muted-foreground">{d.formato ?? ""}</span>
             </div>
           ))
         ) : (
@@ -292,13 +302,13 @@ function Viaje({ pestana, data }: { pestana: number; data: any }) {
   return (
     <div className="space-y-2">
       {data.mensajes?.length > 0 ? (
-        data.mensajes.map((m: any, i: number) => (
+        data.mensajes.map((m, i) => (
           <div key={i} className="rounded border p-2">
             <div className="flex justify-between text-xs text-muted-foreground">
-              <span>{m.messagetype || m.tipo || "—"}</span>
-              <span>{m.source || ""}</span>
+              <span>{s(m.messagetype, "") || s(m.tipo)}</span>
+              <span>{s(m.source, "")}</span>
             </div>
-            <div className="text-xs">{m.subject || m.body || ""}</div>
+            <div className="text-xs">{s(m.subject, "") || s(m.body)}</div>
           </div>
         ))
       ) : (
@@ -308,21 +318,21 @@ function Viaje({ pestana, data }: { pestana: number; data: any }) {
   );
 }
 
-function Conductor({ pestana, data }: { pestana: number; data: any }) {
+function Conductor({ pestana, data }: { pestana: number; data: EntidadConductor }) {
   const c = data.conductor ?? {};
   const taco = data.tacografo;
   if (pestana === 0)
     return (
       <div className="space-y-1">
-        <Fila k="Nombre" v={c.nombre || "—"} />
-        {c.dni && <Fila k="DNI" v={c.dni} />}
-        <Fila k="Teléfono" v={c.telefono || "—"} />
-        <Fila k="Email" v={c.email || "—"} />
+        <Fila k="Nombre" v={s(c.nombre)} />
+        {c.dni ? <Fila k="DNI" v={s(c.dni)} /> : null}
+        <Fila k="Teléfono" v={s(c.telefono)} />
+        <Fila k="Email" v={s(c.email)} />
         {data.caducidades?.length > 0 && (
           <div className="mt-3 border-t pt-2">
             <div className="mb-1 text-xs font-semibold text-muted-foreground">Caducidades</div>
-            {data.caducidades.map((cd: any) => (
-              <Caducidad key={cd.tipo} c={cd} />
+            {data.caducidades.map((cd) => (
+              <Caducidad key={cd.tipo} c={{ tipo: cd.tipo, fecha: cd.fecha ?? null, dias: cd.dias ?? null }} />
             ))}
           </div>
         )}
@@ -332,15 +342,15 @@ function Conductor({ pestana, data }: { pestana: number; data: any }) {
     return (
       <div className="space-y-2">
         {data.viaje_actual ? (
-          <ViajeCard label="Viaje actual" viaje={data.viaje_actual} />
+          <ViajeCard label="Viaje actual" viaje={data.viaje_actual as Dict} />
         ) : (
           <div className="text-muted-foreground">Sin viaje en curso.</div>
         )}
         {data.proximos?.length > 0 && (
           <div className="mt-3">
             <div className="mb-1 text-xs font-semibold text-muted-foreground">Próximos</div>
-            {data.proximos.map((t: any) => (
-              <ViajeCard key={t.codigo} label={t.codigo} viaje={t} />
+            {data.proximos.map((t, i) => (
+              <ViajeCard key={i} label={s(t.codigo)} viaje={t as Dict} />
             ))}
           </div>
         )}
@@ -359,11 +369,11 @@ function Conductor({ pestana, data }: { pestana: number; data: any }) {
   return (
     <div className="space-y-2">
       {data.ausencias?.length > 0 ? (
-        data.ausencias.map((a: any, i: number) => (
+        data.ausencias.map((a, i) => (
           <div key={i} className="rounded border p-2">
-            <div className="font-medium">{a.tipo}</div>
+            <div className="font-medium">{s(a.tipo)}</div>
             <div className="text-xs text-muted-foreground">
-              {a.fecha_inicio} → {a.fecha_fin}
+              {s(a.fecha_inicio)} → {s(a.fecha_fin)}
             </div>
           </div>
         ))
