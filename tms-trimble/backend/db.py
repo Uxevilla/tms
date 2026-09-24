@@ -188,9 +188,6 @@ CREATE TABLE IF NOT EXISTS finanzas.liquidaciones (
 CREATE INDEX IF NOT EXISTS idx_trips_creado ON operaciones.trips(creado);
 CREATE INDEX IF NOT EXISTS idx_trips_terminal ON operaciones.trips(terminal);
 CREATE INDEX IF NOT EXISTS idx_trips_cliente ON operaciones.trips(cliente_id);
-CREATE INDEX IF NOT EXISTS idx_gastos_terminal ON finanzas.gastos(terminal);
-CREATE INDEX IF NOT EXISTS idx_gastos_fecha ON finanzas.gastos(fecha);
-CREATE INDEX IF NOT EXISTS idx_gastos_proveedor ON finanzas.gastos(proveedor_id);
 CREATE INDEX IF NOT EXISTS idx_paradas_trip ON operaciones.paradas(trip_id);
 CREATE TABLE IF NOT EXISTS finanzas.cuentas (
     codigo TEXT PRIMARY KEY, nombre TEXT NOT NULL,
