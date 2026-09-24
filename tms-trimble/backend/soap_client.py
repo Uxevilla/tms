@@ -251,6 +251,8 @@ class TrimbleClient:
 
         Manual 1.6.5 §5.2: UnassignTrips desvincula del terminal sin borrar del servidor;
         a diferencia de removeTrips, el viaje queda disponible para volver a asignarlo.
+        Confirmado en el WSDL: usa <tripId> (SINGULAR, repetible) igual que removeTrips,
+        NO <tripIds> (que es solo para assignTrips/deployTrips).
         """
         ids_xml = "".join(f"<tripId>{escape(t)}</tripId>" for t in trip_ids)
         body = (

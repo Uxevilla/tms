@@ -81,9 +81,11 @@ def planificacion(desde: str = "", hasta: str = "", conn=Depends(get_conn)):
     viajes = []
     for r in rows:
         palets = 0
+        pendiente_reenvio = False
         try:
             payload = json.loads(r["payload"] or "{}")
             palets = int(payload.get("palets") or 0)
+            pendiente_reenvio = bool(payload.get("pendiente_reenvio"))
         except (json.JSONDecodeError, TypeError, ValueError):
             palets = 0
         inicio = _fecha(r["fecha_esperada_carga"])
@@ -101,6 +103,7 @@ def planificacion(desde: str = "", hasta: str = "", conn=Depends(get_conn)):
             "kilos": float(r["kilos"] or 0), "palets": palets,
             "tiempo_min": float(r["tiempo_min"] or 0),
             "inicio": inicio, "fin": fin,
+            "pendiente_reenvio": pendiente_reenvio,
         })
 
     return {"vehiculos": vehiculos, "viajes": viajes}
@@ -265,9 +268,12 @@ def mover(req: MoverRequest, conn=Depends(get_conn)):
     terminal_anterior = (row["terminal"] or "").strip()
     terminal_nuevo = (req.terminal or "").strip()
     in_trimble = estado == "enviado" or en_curso
+    # Misma tractora (cambio de hora/semi/conductor sin mover de camión): NO desasignar,
+    # NO tocar Trimble, mantener el estado y marcar pendiente de reenvío.
+    misma_tractora = in_trimble and terminal_nuevo == terminal_anterior and terminal_nuevo != ""
 
     # Si está en Trimble y cambia de tractora (o vuelve a Pendientes) → desvincular ANTES de la BD.
-    if in_trimble and terminal_nuevo != terminal_anterior:
+    if in_trimble and not misma_tractora and terminal_nuevo != terminal_anterior:
         r = get_client().unassign_trips([trip_id])
         if not r["ok"]:
             raise HTTPException(status_code=502, detail={
@@ -283,31 +289,39 @@ def mover(req: MoverRequest, conn=Depends(get_conn)):
     inicio = (req.inicio or "").strip()
     fin = (req.fin or "").strip()
 
+    # Estado final: sin_asignar al desasignar; misma tractora → se mantiene (enviado/en curso).
+    estado_nuevo = estado if misma_tractora else "sin_asignar"
+    pendiente_reenvio = misma_tractora
+    payload = json.loads(row["payload"] or "{}")
+    if pendiente_reenvio:
+        payload["pendiente_reenvio"] = True
+
     conn.execute(
         "UPDATE trips SET terminal=?, semirremolque_id=?, conductor=?, conductor_id=?, "
-        "fecha_esperada_carga=?, fecha_esperada_descarga=?, estado=? WHERE id=?",
+        "fecha_esperada_carga=?, fecha_esperada_descarga=?, estado=?, payload=? WHERE id=?",
         (terminal_nuevo or None, semirremolque or None, conductor_nombre or None, conductor_id,
-         inicio or None, fin or None, "sin_asignar", trip_id),
+         inicio or None, fin or None, estado_nuevo, json.dumps(payload), trip_id),
     )
     conn.commit()
 
-    # Liberar el viaje activo del terminal anterior si salió de Trimble.
-    if in_trimble:
+    # Liberar el viaje activo del terminal anterior solo si SALIÓ de Trimble (no en misma tractora).
+    if in_trimble and not misma_tractora:
         _del_viaje_activo(terminal_anterior)
 
     _auditar(conn, "trips", trip_id, "mover", None,
              {"terminal": terminal_anterior, "semirremolque_id": row["semirremolque_id"],
               "conductor_id": row["conductor_id"], "estado": estado},
              {"terminal": terminal_nuevo or None, "semirremolque_id": semirremolque or None,
-              "conductor_id": conductor_id, "estado": "sin_asignar"})
+              "conductor_id": conductor_id, "estado": estado_nuevo})
 
     return {
         "ok": True,
         "viaje": {
             "id": trip_id, "terminal": terminal_nuevo or None,
             "semirremolque_id": semirremolque or None, "conductor": conductor_nombre or None,
-            "conductor_id": conductor_id, "estado": "sin_asignar",
+            "conductor_id": conductor_id, "estado": estado_nuevo,
             "fecha_esperada_carga": inicio or None, "fecha_esperada_descarga": fin or None,
+            "pendiente_reenvio": pendiente_reenvio,
         },
         "avisos": avisos,
     }
@@ -316,13 +330,17 @@ def mover(req: MoverRequest, conn=Depends(get_conn)):
 @router.get("/api/trimble/fake-calls")
 def trimble_fake_calls():
     """Registro de llamadas SOAP en modo TMS_TRIMBLE_FAKE=1 (para los e2e)."""
-    from soap_client import _fake_calls
+    from soap_client import _fake_calls, _trimble_fake
+    if not _trimble_fake():
+        raise HTTPException(status_code=404, detail="Modo falso de Trimble no activo")
     return {"calls": _fake_calls()}
 
 
 @router.post("/api/trimble/fake-reset")
 def trimble_fake_reset():
     """Limpia el registro de llamadas SOAP en modo falso."""
-    from soap_client import _fake_reset
+    from soap_client import _fake_reset, _trimble_fake
+    if not _trimble_fake():
+        raise HTTPException(status_code=404, detail="Modo falso de Trimble no activo")
     _fake_reset()
     return {"ok": True}

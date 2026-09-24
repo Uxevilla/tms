@@ -61,7 +61,6 @@ services:
       - DB_HOST=timescaledb
       - DB_PORT=5432
       - REDIS_URL=redis://redis:6379/0
-      - TMS_TRIMBLE_FAKE=${TMS_TRIMBLE_FAKE:-}
     volumes:
       - tms_backend_data:/app/backend/data
     depends_on:

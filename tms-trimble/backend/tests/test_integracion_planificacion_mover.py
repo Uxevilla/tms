@@ -1,6 +1,8 @@
 """Integración del cambio de planificación: mover (unassign + BD), enviar, quitar-terminal,
 delete con remove. Usa TMS_TRIMBLE_FAKE=1 (sin red) + un cliente SOAP falso que registra
 las llamadas (create/assign/deploy/unassign/remove)."""
+import json
+
 import pytest
 from fastapi import HTTPException
 
@@ -179,6 +181,50 @@ def test_delete_enviado_remove(scratch_db):
         assert r["ok"] is True
         assert [c["op"] for c in _fake_calls()].count("removeTrips") == 1
         assert conn.execute("SELECT 1 FROM trips WHERE id='T1'").fetchone() is None
+    finally:
+        conn.close()
+        main._tenant_ctx.reset(tok)
+
+
+# 10. mover enviado a la MISMA tractora: mantiene estado, 0 SOAP, marca pendiente_reenvio.
+@pytest.mark.integration
+def test_mover_enviado_misma_tractora(scratch_db):
+    tok, conn = _conn(scratch_db)
+    try:
+        _tractoras(conn, "TRAC1")
+        conn.execute(
+            "INSERT INTO operaciones.trips (codigo, estado, terminal, payload) "
+            "VALUES ('T1', 'enviado', 'TRAC1', "
+            "'{\"origen\": {\"nombre\": \"A\"}, \"destino\": {\"nombre\": \"B\"}}')")
+        r = planificacion.mover(_mv(terminal="TRAC1", inicio="2026-09-24T10:00", fin="2026-09-24T14:00"), conn=conn)
+        assert r["ok"] is True
+        assert _fake_calls() == []  # 0 llamadas a Trimble (misma tractora)
+        row = conn.execute("SELECT terminal, estado, payload FROM trips WHERE id='T1'").fetchone()
+        assert row["terminal"] == "TRAC1"
+        assert row["estado"] == "enviado"  # NO pasa a sin_asignar
+        assert json.loads(row["payload"]).get("pendiente_reenvio") is True
+        assert r["viaje"]["pendiente_reenvio"] is True
+    finally:
+        conn.close()
+        main._tenant_ctx.reset(tok)
+
+
+# 11. /enviar quita la marca pendiente_reenvio.
+@pytest.mark.integration
+def test_enviar_quita_pendiente_reenvio(scratch_db, monkeypatch):
+    tok, conn = _conn(scratch_db)
+    try:
+        conn.execute(
+            "INSERT INTO operaciones.trips (codigo, estado, terminal, payload) "
+            "VALUES ('T1', 'enviado', 'TRAC', "
+            "'{\"origen\": {\"nombre\": \"A\"}, \"destino\": {\"nombre\": \"B\"}, "
+            "\"pendiente_reenvio\": true}')")
+        # Saltar el despacho SOAP/PTV real; solo se prueba que la marca se limpia.
+        monkeypatch.setattr(viajes, "_enviar_viaje", lambda *a, **k: {"ok": True, "estado": "enviado"})
+        r = viajes.enviar_trip("T1", force=True, conn=conn)
+        assert r["ok"] is True
+        row = conn.execute("SELECT payload FROM trips WHERE id='T1'").fetchone()
+        assert json.loads(row["payload"]).get("pendiente_reenvio") is None
     finally:
         conn.close()
         main._tenant_ctx.reset(tok)

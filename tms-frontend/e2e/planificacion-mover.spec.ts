@@ -24,18 +24,27 @@ async function tripRow(codigo: string) {
   return r.rows[0];
 }
 
+// Fecha "hoy" en LOCAL (misma fuente que el seed, datetime.date.today()), no UTC.
+// toISOString() da la fecha UTC y el test f) fallaría entre 00:00 y 02:00 en España.
+function hoyLocal(): string {
+  const d = new Date();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${d.getFullYear()}-${m}-${dd}`;
+}
+
 // Reset determinista de los viajes que mutan los tests (el seed corre una sola vez).
 test.beforeEach(async () => {
   const c = dbClient();
   await c.connect();
-  const hoy = new Date().toISOString().slice(0, 10);
+  const hoy = hoyLocal();
   await c.query(
     "UPDATE operaciones.trips SET terminal=NULL, semirremolque_id=NULL, remolque_id=NULL, conductor_id=NULL, estado='sin_asignar', fecha_esperada_carga=$1, fecha_esperada_descarga=$2 WHERE codigo='E2E-PLAN-OK'",
     [hoy + "T10:00", hoy + "T12:00"],
   );
   await c.query(
-    "UPDATE operaciones.trips SET terminal='E2E-TRAC', estado='enviado', fecha_esperada_carga=$1, fecha_esperada_descarga=$2 WHERE codigo='E2E-PLAN-ENVIADO'",
-    [hoy + "T16:00", hoy + "T18:00"],
+    "UPDATE operaciones.trips SET terminal='E2E-TRAC', estado='enviado', fecha_esperada_carga=$1, fecha_esperada_descarga=$2, payload=$3 WHERE codigo='E2E-PLAN-ENVIADO'",
+    [hoy + "T16:00", hoy + "T18:00", '{"origen": {"nombre": "Madrid"}, "destino": {"nombre": "Valencia"}}'],
   );
   await c.query(
     "UPDATE operaciones.trips SET terminal='E2E-TRAC', estado='enviado', fecha_esperada_carga=$1, fecha_esperada_descarga=$2 WHERE codigo='E2E-FAIL-1'",
@@ -247,18 +256,34 @@ test.describe("Planificación — envío manual", () => {
     expect(row.terminal).toBeNull();
   });
 
-  test("m) auto-scroll: arrastrar al borde inferior baja el tablero", async ({ page }) => {
+  test("m) auto-scroll: ratón quieto en el borde inferior 1 s → scrollTop aumenta", async ({ page }) => {
     await abrirPlanificacion(page);
     await page.locator('[data-viaje-pendiente="E2E-PLAN-OK"]').hover();
     await page.mouse.down();
     const eje = page.locator("[data-eje]");
     const box = await eje.boundingBox();
-    // Acercarse al borde inferior (auto-scroll) y mantener para que avance.
+    // Mover una sola vez al borde inferior y dejar el ratón quieto.
     await page.mouse.move(box!.x + 200, box!.y + box!.height - 5);
-    await page.waitForTimeout(700);
-    const scrollTop = await page.evaluate(() => (document.querySelector("[data-eje]") as HTMLElement).scrollTop);
-    expect(scrollTop).toBeGreaterThan(0);
+    const antes = await page.evaluate(() => (document.querySelector("[data-eje]") as HTMLElement).scrollTop);
+    await page.waitForTimeout(1000);
+    const despues = await page.evaluate(() => (document.querySelector("[data-eje]") as HTMLElement).scrollTop);
+    expect(despues).toBeGreaterThan(antes); // el bucle rAF sigue desplazando con el ratón quieto
     await page.keyboard.press("Escape");
     await page.mouse.up();
+  });
+
+  test("n) enviado + misma tractora (cambio de hora): ámbar 'cambios sin enviar' y NO pasa a sin_asignar", async ({ page }) => {
+    await abrirPlanificacion(page);
+    const bloque = page.locator('[data-viaje-bloque="E2E-PLAN-ENVIADO"]');
+    await expect(bloque).toBeVisible({ timeout: 10000 });
+    const box = await bloque.boundingBox();
+    // Arrastrar en horizontal dentro de la MISMA fila (cambio de hora, sin cambiar de tractora).
+    await page.mouse.move(box!.x + 10, box!.y + box!.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(box!.x + 10 + 48, box!.y + box!.height / 2, { steps: 4 });
+    await page.mouse.up();
+    // Ámbar = cambios sin enviar al terminal; el estado se mantiene 'enviado'.
+    await expect(bloque).toHaveClass(/border-amber/, { timeout: 10000 });
+    await expect.poll(async () => (await tripRow("E2E-PLAN-ENVIADO")).estado).toBe("enviado");
   });
 });

@@ -351,7 +351,13 @@ def enviar_trip(trip_id: str, force: bool = False, conn = Depends(get_conn)):
     if not force:
         _chequear_conduccion_legal(viaje, row)
 
-    return _enviar_viaje(trip_id, viaje, terminal, viaje.semirremolque_id, viaje.remolque_id)
+    resp = _enviar_viaje(trip_id, viaje, terminal, viaje.semirremolque_id, viaje.remolque_id)
+    # El envío ya refleja los cambios pendientes → quitar la marca de reenvío.
+    payload = json.loads(row["payload"] or "{}")
+    if payload.pop("pendiente_reenvio", None):
+        conn.execute("UPDATE trips SET payload=? WHERE id=?", (json.dumps(payload), trip_id))
+        conn.commit()
+    return resp
 
 
 @router.post("/api/trips/{trip_id}/quitar-terminal")

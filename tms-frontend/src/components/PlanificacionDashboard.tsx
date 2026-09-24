@@ -127,14 +127,19 @@ export function PlanificacionDashboard() {
   const [erroresViaje, setErroresViaje] = useState<Record<string, string>>({});
   const [guardando, setGuardando] = useState<Set<string>>(new Set());
   const [historial, setHistorial] = useState<{ id: string; destino: Asignacion }[]>([]);
+  // Marca "cambios sin enviar al terminal" (misma tractora con un viaje ya enviado).
+  const [pendienteReenvio, setPendienteReenvio] = useState<Record<string, boolean>>({});
 
   const lista = useMemo(() => {
-    if (Object.keys(enCurso).length === 0) return listaBase;
     return listaBase.map((v) => {
       const pend = enCurso[v.id];
-      return pend ? { ...v, terminal: pend.terminal, semirremolque_id: pend.semirremolque_id, conductor_id: pend.conductor_id, inicio: pend.inicio, fin: pend.fin } : v;
+      const base = pend
+        ? { ...v, terminal: pend.terminal, semirremolque_id: pend.semirremolque_id, conductor_id: pend.conductor_id, inicio: pend.inicio, fin: pend.fin }
+        : v;
+      const reenvio = pendienteReenvio[v.id] ?? v.pendiente_reenvio;
+      return reenvio === undefined ? base : { ...base, pendiente_reenvio: reenvio };
     });
-  }, [listaBase, enCurso]);
+  }, [listaBase, enCurso, pendienteReenvio]);
   const pendientes = useMemo(() => lista.filter((v) => !v.terminal), [lista]);
   const asignados = useMemo(() => lista.filter((v) => !!v.terminal), [lista]);
 
@@ -212,12 +217,19 @@ export function PlanificacionDashboard() {
       setEnCurso((cur) => ({ ...cur, [v.id]: destino }));
       setGuardando((prev) => new Set(prev).add(v.id));
       try {
-        const r = await api<{ ok: boolean; avisos: ValidacionMotivo[] }>(REST_PLANIFICACION_MOVER, {
+        const r = await api<{ ok: boolean; avisos: ValidacionMotivo[]; viaje?: { pendiente_reenvio?: boolean } }>(REST_PLANIFICACION_MOVER, {
           method: "POST",
           body: JSON.stringify({ trip_id: v.id, ...destino, force }),
         });
         if (r.avisos && r.avisos.length > 0) setAvisosViaje((cur) => ({ ...cur, [v.id]: r.avisos }));
         else setAvisosViaje((cur) => { const n = { ...cur }; delete n[v.id]; return n; });
+        // Marca "cambios sin enviar al terminal" (misma tractora con viaje ya enviado).
+        if (r.viaje?.pendiente_reenvio !== undefined) {
+          setPendienteReenvio((cur) => {
+            if (r.viaje!.pendiente_reenvio) return { ...cur, [v.id]: true };
+            const n = { ...cur }; delete n[v.id]; return n;
+          });
+        }
         // Historial para Ctrl+Z solo si NO tocó Trimble (movimiento local).
         if (!enTrimble(v)) setHistorial((h) => [...h, { id: v.id, destino: anterior }]);
       } catch (e) {
@@ -242,6 +254,7 @@ export function PlanificacionDashboard() {
         await api(REST_ENVIAR(v.id) + (force ? "?force=true" : ""), { method: "POST" });
         await qc.invalidateQueries({ queryKey: ["planificacion"] });
         setErroresViaje((cur) => { const n = { ...cur }; delete n[v.id]; return n; });
+        setPendienteReenvio((cur) => { const n = { ...cur }; delete n[v.id]; return n; });
         toast("Viaje enviado al terminal.");
       } catch (e) {
         const err = e as ApiError;
@@ -313,6 +326,8 @@ export function PlanificacionDashboard() {
   const copiaRef = useRef<HTMLDivElement>(null);
   const sombraRef = useRef<HTMLDivElement>(null);
   const rafRef = useRef<number>(0);
+  const cursorRef = useRef({ x: 0, y: 0 });
+  const autoScrollRafRef = useRef<number>(0);
 
   // ---- Redimensionar (estirar el borde derecho = ajustar "fin", F) ----
   const [redimensionando, setRedimensionando] = useState<{ viaje: ViajePlanificacion; fin: string } | null>(null);
@@ -408,11 +423,31 @@ export function PlanificacionDashboard() {
       validacionRef.current = null;
       validacionErrorRef.current = false;
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
+      if (autoScrollRafRef.current) { cancelAnimationFrame(autoScrollRafRef.current); autoScrollRafRef.current = 0; }
       setArrastre(null);
       setSobreTractora(null);
       setHoraArrastre("");
       setValidacion(null);
       setValidacionError(false);
+    };
+
+    // D: auto-scroll continuo con rAF — mientras el cursor esté en la zona del borde
+    // (aunque no se mueva), el área se desplaza sola.
+    const scrollLoop = () => {
+      if (!arrastreRef.current) { autoScrollRafRef.current = 0; return; }
+      const eje = ejeRef.current;
+      if (eje) {
+        const { x, y } = cursorRef.current;
+        const r = eje.getBoundingClientRect();
+        const margen = 40;
+        let dx = 0; let dy = 0;
+        if (x < r.left + margen) dx = -Math.max(4, (r.left + margen - x) / 2);
+        else if (x > r.right - margen) dx = Math.max(4, (x - (r.right - margen)) / 2);
+        if (y < r.top + margen) dy = -Math.max(4, (r.top + margen - y) / 2);
+        else if (y > r.bottom - margen) dy = Math.max(4, (y - (r.bottom - margen)) / 2);
+        if (dx || dy) { eje.scrollLeft += dx; eje.scrollTop += dy; }
+      }
+      autoScrollRafRef.current = requestAnimationFrame(scrollLoop);
     };
 
     const onMove = (e: PointerEvent) => {
@@ -429,18 +464,9 @@ export function PlanificacionDashboard() {
         horaArrastreRef.current = hora;
         setHoraArrastre(hora);
       }
-      // D: auto-scroll al acercarse a los bordes (más rápido cuanto más cerca).
-      const eje = ejeRef.current;
-      if (eje) {
-        const r = eje.getBoundingClientRect();
-        const margen = 40;
-        let dx = 0; let dy = 0;
-        if (e.clientX < r.left + margen) dx = -Math.max(4, (r.left + margen - e.clientX) / 2);
-        else if (e.clientX > r.right - margen) dx = Math.max(4, (e.clientX - (r.right - margen)) / 2);
-        if (e.clientY < r.top + margen) dy = -Math.max(4, (r.top + margen - e.clientY) / 2);
-        else if (e.clientY > r.bottom - margen) dy = Math.max(4, (e.clientY - (r.bottom - margen)) / 2);
-        if (dx || dy) { eje.scrollLeft += dx; eje.scrollTop += dy; }
-      }
+      // D: auto-scroll continuo — actualiza el cursor y arranca el bucle rAF si no está ya.
+      cursorRef.current = { x: e.clientX, y: e.clientY };
+      if (!autoScrollRafRef.current) autoScrollRafRef.current = requestAnimationFrame(scrollLoop);
       // A/H: copia + sombra con transform vía rAF (sin re-render del tablero).
       cancelAnimationFrame(rafRef.current);
       rafRef.current = requestAnimationFrame(() => {
@@ -597,6 +623,7 @@ export function PlanificacionDashboard() {
     const error = erroresViaje[v.id];
     if (guardandoV) return "border-slate-400/50 bg-slate-400/20";
     if (error) return "border-red-500/60 bg-red-500/20";
+    if (v.pendiente_reenvio) return "border-solid border-amber-500/70 bg-amber-500/25";
     if (enTrimble(v)) return "border-solid border-slate-500/60 bg-slate-500/25";
     return "border-dashed border-sky-600/40 bg-sky-500/15";
   };
@@ -689,11 +716,12 @@ export function PlanificacionDashboard() {
                               onPointerDown={(e) => { if (e.button !== 0) return; e.preventDefault(); iniciarArrastre(v); }}
                               className={`absolute top-1 overflow-hidden rounded border px-1.5 py-0.5 text-[10px] cursor-grab active:cursor-grabbing ${bloqueCls(v)}`}
                               style={{ left: pos.left, width: pos.width, height: ROW_H - 8, pointerEvents: arrastre?.id === v.id ? "none" : undefined, opacity: arrastre?.id === v.id ? 0.4 : undefined }}
-                              title={`${v.id} · ${v.origen} → ${v.destino} · ${fmtHora(v.inicio)}–${fmtHora(v.fin)}${enviado ? " · Enviado" : ""}${avisosViaje[v.id]?.map((a) => " · ⚠️ " + a.mensaje).join("") ?? ""}`}
+                              title={`${v.id} · ${v.origen} → ${v.destino} · ${fmtHora(v.inicio)}–${fmtHora(v.fin)}${enviado ? " · Enviado" : ""}${v.pendiente_reenvio ? " · Cambios sin enviar al terminal — clic derecho → Reenviar" : ""}${avisosViaje[v.id]?.map((a) => " · ⚠️ " + a.mensaje).join("") ?? ""}`}
                             >
                               <div className="flex items-center gap-1 truncate font-medium">
                                 {guardando.has(v.id) && <Loader2 size={10} className="animate-spin" />}
                                 {enviado && <Truck size={10} className="text-muted-foreground" />}
+                                {v.pendiente_reenvio && <AlertTriangle size={10} className="text-amber-500" />}
                                 {(avisosViaje[v.id]?.length ?? 0) > 0 && <AlertTriangle size={10} className="text-amber-500" />}
                                 {v.id}
                               </div>
