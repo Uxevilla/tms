@@ -1,7 +1,12 @@
 import "maplibre-gl/dist/maplibre-gl.css";
 
+import maplibreWorkerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url";
+import { setWorkerUrl } from "maplibre-gl";
 import Map, { Marker, NavigationControl } from "react-map-gl/maplibre";
 import type { StyleSpecification } from "maplibre-gl";
+
+// Vite no bundlea el worker de maplibre por defecto; lo resolvemos explícitamente.
+setWorkerUrl(maplibreWorkerUrl);
 
 import { MAP_STYLE_URL } from "@/config";
 import type { TelemetriaActiva } from "@/types";

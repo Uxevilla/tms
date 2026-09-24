@@ -53,6 +53,33 @@ export default async function globalSetup(): Promise<void> {
   if (!dispLogin.ok()) throw new Error(`login dispatcher: ${dispLogin.status()}`);
   const { token: dispToken } = await dispLogin.json();
 
+  // 4. Usuario con cambio de contraseña obligatorio (idempotente: se resetea en cada run).
+  const cambia = {
+    usuario: process.env.E2E_CAMBIA_USER ?? "e2e_cambia",
+    contrasena: process.env.E2E_CAMBIA_PASSWORD ?? "e2e-cambia-1",
+  };
+  await ctx.post("/api/configuracion/usuarios", {
+    headers: { Authorization: `Bearer ${adminToken}` },
+    data: {
+      usuario: cambia.usuario,
+      password: cambia.contrasena,
+      rol: "dispatcher",
+      nombre: "E2E Cambia Clave",
+      debe_cambiar_clave: true,
+    },
+  });
+  const lista = await ctx.get("/api/configuracion/usuarios", {
+    headers: { Authorization: `Bearer ${adminToken}` },
+  });
+  const { usuarios } = await lista.json();
+  const uid = usuarios.find((u: { usuario: string }) => u.usuario === cambia.usuario)?.id;
+  if (uid) {
+    await ctx.put(`/api/configuracion/usuarios/${uid}`, {
+      headers: { Authorization: `Bearer ${adminToken}` },
+      data: { password: cambia.contrasena, debe_cambiar_clave: true },
+    });
+  }
+
   mkdirSync(AUTH_DIR, { recursive: true });
   writeFileSync(join(AUTH_DIR, "admin.json"), JSON.stringify(storageState(adminToken)));
   writeFileSync(join(AUTH_DIR, "dispatcher.json"), JSON.stringify(storageState(dispToken)));

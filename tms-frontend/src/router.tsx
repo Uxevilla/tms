@@ -188,13 +188,6 @@ const kpisRoute = createRoute({
   component: () => <KpiDashboard />,
 });
 
-// 404 propia dentro del AppShell (catch-all bajo el layout autenticado).
-const notFoundRoute = createRoute({
-  getParentRoute: () => appRoute,
-  path: "*",
-  component: () => <NotFound />,
-});
-
 const routeTree = rootRoute.addChildren([
   indexRoute,
   loginRoute,
@@ -214,7 +207,6 @@ const routeTree = rootRoute.addChildren([
     documentosRoute,
     configuracionRoute,
     kpisRoute,
-    notFoundRoute,
   ]),
 ]);
 
@@ -223,6 +215,8 @@ export const router = createRouter({
   // strict: los search params no devueltos por validateSearch se DESCARTAN
   // (si no, un ?redirect=//evil.com rechazado se conservaría como "desconocido").
   search: { strict: true },
+  // 404 propia para rutas que no coinciden con ninguna de las del árbol.
+  defaultNotFoundComponent: () => <NotFound />,
 });
 
 declare module "@tanstack/react-router" {

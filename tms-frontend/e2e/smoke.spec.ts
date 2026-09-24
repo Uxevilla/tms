@@ -19,9 +19,13 @@ const SECCIONES: Record<string, string[]> = {
   ],
 };
 
-// Mosaicos de mapa externos: se simulan para no depender de la red externa.
+// Mosaicos de mapa externos: se simulan con un PNG 1×1 válido (maplibre decodifica
+// imágenes raster; un SVG fallaría con "source image could not be decoded").
 const TILE_HOSTS = ["tile.openstreetmap.org", "server.arcgisonline.com"];
-const TILE_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256"></svg>';
+const TILE_PNG = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
+  "base64",
+);
 
 function track(page: Page) {
   const erroresConsola: string[] = [];
@@ -38,7 +42,7 @@ function track(page: Page) {
 test.beforeEach(async ({ page }) => {
   for (const host of TILE_HOSTS) {
     await page.route(`**${host}/**`, (route) =>
-      route.fulfill({ status: 200, contentType: "image/svg+xml", body: TILE_SVG }),
+      route.fulfill({ status: 200, contentType: "image/png", body: TILE_PNG }),
     );
   }
 });
