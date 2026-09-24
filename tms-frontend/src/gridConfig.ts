@@ -1,7 +1,12 @@
 // Configuración global de AG Grid — ultra-alta densidad (estilo desktop legacy).
 // Todos los grids deben importar `gridTheme` y las constantes de altura desde aquí
 // para mantener una densidad uniforme en toda la app.
-import { themeQuartz } from "ag-grid-community";
+import { themeQuartz, AllCommunityModule, ModuleRegistry } from "ag-grid-community";
+
+// Registro ÚNICO de módulos de AG Grid. Vive aquí (y no en main.tsx) para que
+// solo lo carguen las pantallas con tablas; en main.tsx metía toda la librería
+// de AG Grid en el chunk inicial (~304 KB gzip → ~53 KB gzip).
+ModuleRegistry.registerModules([AllCommunityModule]);
 
 // Tema ultra-denso: tipografía 11px (text-xs), spacing mínimo.
 export const gridTheme = themeQuartz.withParams({

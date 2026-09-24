@@ -161,6 +161,9 @@ export function Login({ onLogin }: LoginProps) {
         <label className="mb-3 block text-sm font-medium text-slate-700">
           Empresa <span className="text-xs font-normal text-slate-400">(opcional — vacío = empresa por defecto)</span>
           <input
+            id="organization"
+            name="organization"
+            autoComplete="organization"
             className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
             value={empresa}
             onChange={(e) => setEmpresa(e.target.value)}

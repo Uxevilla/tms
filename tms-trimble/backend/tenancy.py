@@ -114,8 +114,10 @@ def _seed_rbac(dbname: str) -> None:
             "ON CONFLICT (usuario) DO NOTHING",
             (DEFAULT_ADMIN_USER, h),
         )
-        if DEFAULT_ADMIN_PASSWORD:
-            # .env explícito = contraseña canónica del admin → rota SIEMPRE (break-glass reset).
+        if DEFAULT_ADMIN_PASSWORD and os.environ.get("TMS_RESET_ADMIN") == "1":
+            # .env explícito + reset SOLICITADO (TMS_RESET_ADMIN=1): break-glass.
+            # NO rota en cada arranque, o un despliegue pisa la contraseña que el
+            # admin ya cambió.
             cur.execute(
                 "UPDATE sistema.usuarios SET password_hash=%s, debe_cambiar_clave=true, activo=true "
                 "WHERE usuario=%s",

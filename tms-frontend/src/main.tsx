@@ -1,12 +1,12 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
-import { AllCommunityModule, ModuleRegistry } from "ag-grid-community";
 import App from "./App";
 import "leaflet/dist/leaflet.css";
 import "./index.css";
 
-// Registro ÚNICO de módulos de AG Grid (antes repetido en 8 componentes).
-ModuleRegistry.registerModules([AllCommunityModule]);
+// Pantalla en blanco tras un despliegue: quien tenga la app abierta pedirá un
+// chunk que ya no existe → recargar en vez de desmontar toda la app.
+window.addEventListener("vite:preloadError", () => window.location.reload());
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
