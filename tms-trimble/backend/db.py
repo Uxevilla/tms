@@ -925,6 +925,9 @@ def _db():
                     (c,),
                 )
             cur.execute("ALTER TABLE categorias_gasto ADD COLUMN IF NOT EXISTS cuenta TEXT")
+            cur.execute("ALTER TABLE finanzas.facturas_recibidas ADD COLUMN IF NOT EXISTS terminal TEXT")
+            cur.execute("ALTER TABLE finanzas.facturas_recibidas ADD COLUMN IF NOT EXISTS categoria TEXT")
+            cur.execute("ALTER TABLE finanzas.facturas_recibidas ADD COLUMN IF NOT EXISTS storage_key TEXT")
             for cat, cuenta in _CATEGORIA_CUENTA.items():
                 cur.execute("UPDATE categorias_gasto SET cuenta=%s WHERE nombre=%s AND cuenta IS NULL", (cuenta, cat))
             for cat, info in _PEAJE_CATEGORIAS.items():
