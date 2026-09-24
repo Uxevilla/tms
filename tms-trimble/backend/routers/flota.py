@@ -58,11 +58,6 @@ def add_mantenimiento(m: Mantenimiento, conn = Depends(get_conn)):
              "", "622", "Pendiente", datetime.datetime.utcnow().isoformat() + "Z"),
         )
         gid = gcur.fetchone()["id"]
-        _sync_factura_recibida(conn, origen="mantenimiento", proveedor_id=m.proveedor_id,
-                               fecha=m.fecha, base=float(m.base_imponible), cuota_iva=cuota,
-                               total=importe, cuenta="622", vehiculo_id=m.vehiculo_id,
-                               concepto=concepto, iva_pct=iva_pct,
-                               gasto_origen=f"gastos_vehiculos:{gid}")
         lineas = [("622", float(m.base_imponible), 0, concepto)]
         if cuota > 0:
             lineas.append(("472", cuota, 0, "IVA soportado"))

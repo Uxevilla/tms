@@ -66,11 +66,6 @@ def add_gasto(g: Gasto, conn = Depends(get_conn)):
          datetime.datetime.utcnow().isoformat() + "Z", g.proveedor_id, iva_pct, ret_pct, cuenta),
     )
     gasto_id = cur.fetchone()["id"]
-    _sync_factura_recibida(conn, origen="viaje", proveedor_id=g.proveedor_id,
-                           fecha=g.fecha, base=base, cuota_iva=cuota, retencion=retencion, total=total,
-                           cuenta=cuenta, viaje_id=g.trip_id,
-                           concepto=g.concepto or g.categoria or "Gasto", iva_pct=iva_pct,
-                           gasto_origen=f"gastos:{gasto_id}")
     if total != 0:
         lineas = [(cuenta, base, 0, g.concepto or g.categoria or "Gasto")]
         if cuota > 0:
@@ -122,12 +117,6 @@ def add_gasto_vehiculo(g: GastoVehiculo, conn = Depends(get_conn)):
          datetime.datetime.utcnow().isoformat() + "Z"),
     )
     gasto_id = cur.fetchone()["id"]
-    _sync_factura_recibida(conn, origen="vehiculo", proveedor_id=g.proveedor_id,
-                           numero_proveedor=(g.factura_ref or None), fecha=g.fecha,
-                           base=base, cuota_iva=cuota, total=importe, cuenta=cuenta,
-                           vehiculo_id=g.vehiculo_id, concepto=(g.factura_ref or tipo),
-                           litros=litros, iva_pct=iva_pct,
-                           gasto_origen=f"gastos_vehiculos:{gasto_id}")
     if importe > 0:
         # Debe: cuenta de gasto (base) + 472 IVA soportado (cuota) · Haber: 400 Proveedores (total)
         label = tipo.capitalize()
