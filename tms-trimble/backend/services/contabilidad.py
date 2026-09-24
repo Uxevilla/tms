@@ -207,34 +207,6 @@ def _gasto_subcontrata(conn, trip, fecha):
     return gasto_id
 
 
-def _sync_factura_recibida(conn, *, origen, proveedor_id=None, numero_proveedor=None,
-                           fecha=None, base=0.0, cuota_iva=0.0, retencion=0.0, total=0.0,
-                           categoria_id=None, cuenta=None, vehiculo_id=None, viaje_id=None,
-                           concepto=None, litros=0.0, iva_pct=21.0, gasto_origen=None,
-                           terminal=None, categoria=None, storage_key=None):
-    """Dual-write (merge Fase 5 2b): registra el gasto unificado en
-    finanzas.facturas_recibidas(_lineas), con imputación por vehículo/viaje.
-    Se llama en la MISMA transacción que el INSERT en gastos/gastos_vehiculos.
-    `gasto_origen` (p. ej. 'gastos:123') enlaza la factura con su gasto fuente
-    para que borrar/editar el gasto se propague (triggers gastos_sync_fr)."""
-    cur = conn.execute(
-        "INSERT INTO finanzas.facturas_recibidas "
-        "(proveedor_id, numero_proveedor, fecha, base, cuota_iva, retencion, total, estado, origen, gasto_origen, terminal, categoria, storage_key) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id",
-        (proveedor_id, numero_proveedor, (fecha or "")[:10] or None,
-         base, cuota_iva, retencion, total, "pendiente", origen, gasto_origen,
-         terminal, categoria, storage_key),
-    )
-    fr_id = cur.fetchone()["id"]
-    conn.execute(
-        "INSERT INTO finanzas.facturas_recibidas_lineas "
-        "(factura_id, categoria_id, cuenta, vehiculo_id, viaje_id, concepto, litros, base, iva_pct) "
-        "VALUES (?,?,?,?,?,?,?,?,?)",
-        (fr_id, categoria_id, cuenta, vehiculo_id, viaje_id, concepto, litros, base, iva_pct),
-    )
-    return fr_id
-
-
 def _facturar_viaje(trip_id):
     """Dispara la facturación automática de un viaje entregado (idempotente)."""
     with _db() as conn:
