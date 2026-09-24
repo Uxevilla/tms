@@ -376,6 +376,11 @@ ALTER TABLE asientos ADD COLUMN IF NOT EXISTS borrado_en TEXT;
 ALTER TABLE facturas ADD COLUMN IF NOT EXISTS borrado BOOLEAN DEFAULT false;
 ALTER TABLE facturas ADD COLUMN IF NOT EXISTS borrado_por TEXT;
 ALTER TABLE facturas ADD COLUMN IF NOT EXISTS borrado_en TEXT;
+-- Docs: el binario sale de la BD a disco. storage_key + sha256 en la tabla, content_b64 en desuso.
+ALTER TABLE files ADD COLUMN IF NOT EXISTS storage_key TEXT;
+ALTER TABLE files ADD COLUMN IF NOT EXISTS sha256 TEXT;
+ALTER TABLE files ADD COLUMN IF NOT EXISTS bytes INTEGER;
+ALTER TABLE gastos_vehiculos ADD COLUMN IF NOT EXISTS storage_key TEXT;
 CREATE TABLE IF NOT EXISTS integracion_proveedores (
     id SERIAL PRIMARY KEY,
     codigo TEXT UNIQUE NOT NULL,

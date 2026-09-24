@@ -30,6 +30,7 @@ from services.mantenimiento import _insertar_alerta_publica, _revisar_caducidade
 from services.mensajeria import _save_mensaje, _store_mensaje, _extraer_pales, _procesar_pales, _webhook_autenticado, _direccion_dict
 from services.ocr import _parse_ticket, _parse_documento, _pdf_a_texto, _regex_matricula, _regex_litros, _regex_importe, _regex_fecha
 from services.empresa import _empresa
+from services.documentos import _guardar_archivo, _leer_archivo, _borrar_archivo
 
 router = APIRouter(dependencies=[Depends(require_role(["admin", "dispatcher"]))])
 
@@ -136,10 +137,14 @@ def add_vehiculo_documentos(veh_id: str, req: dict, conn = Depends(get_conn)):
             continue
         nombre = (d.get("nombre") or "documento.pdf").rsplit("/", 1)[-1][:120] or "documento.pdf"
         name = f"{uuid.uuid4().hex[:10]}__{nombre}"
+        g = _guardar_archivo(name, contenido)
+        if not g:
+            continue
+        storage_key, sha, nbytes, _mime = g
         conn.execute(
-            "INSERT INTO files (vehiculo_id, name, ftype, ftime, source, formato, content_b64) "
-            "VALUES (?,?,?,?,?,?,?) ON CONFLICT (name) DO NOTHING",
-            (veh_id, name, 3, datetime.datetime.utcnow().isoformat() + "Z", "vehiculo", "pdf", contenido),
+            "INSERT INTO files (vehiculo_id, name, ftype, ftime, source, formato, storage_key, sha256, bytes) "
+            "VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT (name) DO NOTHING",
+            (veh_id, name, 3, datetime.datetime.utcnow().isoformat() + "Z", "vehiculo", "pdf", storage_key, sha, nbytes),
         )
         guardados += 1
     conn.commit()
@@ -159,8 +164,17 @@ def del_vehiculo(veh_id: str, conn = Depends(get_conn)):
 
 @router.delete("/api/vehiculos/{veh_id}/documentos/{file_id}")
 def del_vehiculo_documento(veh_id: str, file_id: int, conn = Depends(get_conn)):
+    row = conn.execute(
+        "SELECT storage_key FROM files WHERE id=? AND vehiculo_id=? AND source='vehiculo'", (file_id, veh_id)
+    ).fetchone()
     conn.execute("DELETE FROM files WHERE id=? AND vehiculo_id=? AND source='vehiculo'", (file_id, veh_id))
     conn.commit()
+    if row and row["storage_key"]:
+        refs = conn.execute(
+            "SELECT 1 FROM files WHERE storage_key=? AND id<>?", (row["storage_key"], file_id)
+        ).fetchone()
+        if not refs:
+            _borrar_archivo(row["storage_key"])
     return {"ok": True}
 
 
@@ -217,16 +231,16 @@ def list_documentos(conn = Depends(get_conn)):
     rows = conn.execute(
         """
         SELECT f.id, 'files' AS origen, f.name AS nombre, f.source, f.formato, f.ftime AS fecha,
-               f.content_b64, f.trip_id, f.vehiculo_id, v.matricula, t.cliente
+               f.content_b64, f.storage_key, f.trip_id, f.vehiculo_id, v.matricula, t.cliente
         FROM files f
         LEFT JOIN vehiculos v ON v.id = f.vehiculo_id
         LEFT JOIN trips t ON t.id = f.trip_id
         UNION ALL
         SELECT g.id, 'gastos', COALESCE(g.factura_ref,''), 'gasto', 'pdf', g.fecha,
-               g.archivo_base64, NULL, g.vehiculo_id, v.matricula, NULL
+               g.archivo_base64, g.storage_key, NULL, g.vehiculo_id, v.matricula, NULL
         FROM gastos_vehiculos g
         LEFT JOIN vehiculos v ON v.id = g.vehiculo_id
-        WHERE COALESCE(g.archivo_base64,'') <> ''
+        WHERE COALESCE(g.archivo_base64,'') <> '' OR COALESCE(g.storage_key,'') <> ''
         ORDER BY fecha DESC
         """,
     ).fetchall()
@@ -256,7 +270,7 @@ def list_documentos(conn = Depends(get_conn)):
             "referencia": ref or "—",
             "formato": formato,
             "fecha": (r["fecha"] or "")[:10],
-            "content_b64": r["content_b64"] or "",
+            "content_b64": (_leer_archivo(r["storage_key"]) if r["storage_key"] else (r["content_b64"] or "")),
             "source": src,
         })
     return {"documentos": out}
@@ -298,11 +312,11 @@ def list_tarifas_peaje(conn = Depends(get_conn)):
 @router.get("/api/vehiculos/{veh_id}/documentos")
 def list_vehiculo_documentos(veh_id: str, conn = Depends(get_conn)):
     rows = conn.execute(
-        "SELECT id, name, content_b64 FROM files WHERE vehiculo_id=? AND source='vehiculo' ORDER BY id", (veh_id,)
+        "SELECT id, name, content_b64, storage_key FROM files WHERE vehiculo_id=? AND source='vehiculo' ORDER BY id", (veh_id,)
     ).fetchall()
     docs = []
     for r in rows:
-        c = r["content_b64"] or ""
+        c = _leer_archivo(r["storage_key"]) if r["storage_key"] else (r["content_b64"] or "")
         nombre = r["name"].split("__", 1)[1] if "__" in r["name"] else r["name"]
         docs.append({"id": r["id"], "nombre": nombre, "contenido": c, "size": round(len(c) * 3 / 4)})
     return {"documentos": docs}

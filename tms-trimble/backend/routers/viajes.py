@@ -30,6 +30,7 @@ from services.mantenimiento import _insertar_alerta_publica, _revisar_caducidade
 from services.mensajeria import _save_mensaje, _store_mensaje, _extraer_pales, _procesar_pales, _webhook_autenticado, _direccion_dict
 from services.ocr import _parse_ticket, _parse_documento, _pdf_a_texto, _regex_matricula, _regex_litros, _regex_importe, _regex_fecha
 from services.empresa import _empresa
+from services.documentos import _guardar_archivo, _leer_archivo, _borrar_archivo
 
 router = APIRouter(dependencies=[Depends(require_role(["admin", "dispatcher"]))])
 
@@ -49,10 +50,14 @@ def add_trip_documentos(trip_id: str, req: dict, conn = Depends(get_conn)):
             continue
         nombre = (d.get("nombre") or "documento.pdf").rsplit("/", 1)[-1][:120] or "documento.pdf"
         name = f"{uuid.uuid4().hex[:10]}__{nombre}"
+        g = _guardar_archivo(name, contenido)
+        if not g:
+            continue
+        storage_key, sha, nbytes, _mime = g
         conn.execute(
-            "INSERT INTO files (trip_id, name, ftype, ftime, source, formato, content_b64) "
-            "VALUES (?,?,?,?,?,?,?) ON CONFLICT (name) DO NOTHING",
-            (trip_id, name, 3, datetime.datetime.utcnow().isoformat() + "Z", "pedido", "pdf", contenido),
+            "INSERT INTO files (trip_id, name, ftype, ftime, source, formato, storage_key, sha256, bytes) "
+            "VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT (name) DO NOTHING",
+            (trip_id, name, 3, datetime.datetime.utcnow().isoformat() + "Z", "pedido", "pdf", storage_key, sha, nbytes),
         )
         guardados += 1
     conn.commit()
@@ -209,8 +214,17 @@ def create_trip(viaje: ViajeRequest):
 
 @router.delete("/api/trips/{trip_id}/documentos/{file_id}")
 def del_trip_documento(trip_id: str, file_id: int, conn = Depends(get_conn)):
+    row = conn.execute(
+        "SELECT storage_key FROM files WHERE id=? AND trip_id=? AND source='pedido'", (file_id, trip_id)
+    ).fetchone()
     conn.execute("DELETE FROM files WHERE id=? AND trip_id=? AND source='pedido'", (file_id, trip_id))
     conn.commit()
+    if row and row["storage_key"]:
+        refs = conn.execute(
+            "SELECT 1 FROM files WHERE storage_key=? AND id<>?", (row["storage_key"], file_id)
+        ).fetchone()
+        if not refs:
+            _borrar_archivo(row["storage_key"])
     return {"ok": True}
 
 
@@ -282,15 +296,16 @@ def duplicar_trip(trip_id: str):
     # Copiar los documentos PDF del pedido original
     conn = _db()
     docs = conn.execute(
-        "SELECT name, content_b64 FROM files WHERE trip_id=? AND source='pedido'", (trip_id,)
+        "SELECT name, storage_key, sha256, bytes FROM files WHERE trip_id=? AND source='pedido'", (trip_id,)
     ).fetchall()
     for d in docs:
         base = d["name"].split("__", 1)[1] if "__" in d["name"] else d["name"]
         name = f"{uuid.uuid4().hex[:10]}__{base}"
         conn.execute(
-            "INSERT INTO files (trip_id, name, ftype, ftime, source, formato, content_b64) "
-            "VALUES (?,?,?,?,?,?,?) ON CONFLICT (name) DO NOTHING",
-            (new_id, name, 3, datetime.datetime.utcnow().isoformat() + "Z", "pedido", "pdf", d["content_b64"]),
+            "INSERT INTO files (trip_id, name, ftype, ftime, source, formato, storage_key, sha256, bytes) "
+            "VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT (name) DO NOTHING",
+            (new_id, name, 3, datetime.datetime.utcnow().isoformat() + "Z", "pedido", "pdf",
+             d["storage_key"], d["sha256"], d["bytes"]),
         )
     conn.commit()
     conn.close()
@@ -369,11 +384,11 @@ def list_tarifas(conn = Depends(get_conn)):
 @router.get("/api/trips/{trip_id}/documentos")
 def list_trip_documentos(trip_id: str, conn = Depends(get_conn)):
     rows = conn.execute(
-        "SELECT id, name, content_b64, source, formato FROM files WHERE trip_id=? ORDER BY id", (trip_id,)
+        "SELECT id, name, content_b64, storage_key, source, formato FROM files WHERE trip_id=? ORDER BY id", (trip_id,)
     ).fetchall()
     docs = []
     for r in rows:
-        c = r["content_b64"] or ""
+        c = _leer_archivo(r["storage_key"]) if r["storage_key"] else (r["content_b64"] or "")
         name = r["name"]
         nombre = name.split("__", 1)[1] if "__" in name else name
         docs.append({"id": r["id"], "nombre": nombre, "contenido": c, "size": round(len(c) * 3 / 4), "source": r["source"] or "", "formato": r["formato"] or ""})
@@ -396,10 +411,16 @@ def list_trips(conn = Depends(get_conn)):
 @router.get("/api/trips/{trip_id}/files")
 def trip_files(trip_id: str, conn = Depends(get_conn)):
     rows = conn.execute(
-        "SELECT id, name, ftype, ftime, source, driver, lid, content_b64 "
+        "SELECT id, name, ftype, ftime, source, driver, lid, content_b64, storage_key "
         "FROM files WHERE trip_id=? ORDER BY ftime DESC", (trip_id,)
     ).fetchall()
-    return {"archivos": [dict(r) for r in rows]}
+    out = []
+    for r in rows:
+        d = dict(r)
+        if d.get("storage_key"):
+            d["content_b64"] = _leer_archivo(d["storage_key"])
+        out.append(d)
+    return {"archivos": out}
 
 
 

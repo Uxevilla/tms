@@ -30,6 +30,7 @@ from services.mantenimiento import _insertar_alerta_publica, _revisar_caducidade
 from services.mensajeria import _save_mensaje, _store_mensaje, _extraer_pales, _procesar_pales, _webhook_autenticado, _direccion_dict
 from services.ocr import _parse_ticket, _parse_documento, _pdf_a_texto, _regex_matricula, _regex_litros, _regex_importe, _regex_fecha
 from services.empresa import _empresa
+from services.documentos import _guardar_archivo, _leer_archivo, _borrar_archivo
 
 router = APIRouter(dependencies=[Depends(require_role(["admin", "dispatcher"]))])
 
@@ -101,12 +102,19 @@ def add_gasto_vehiculo(g: GastoVehiculo, conn = Depends(get_conn)):
     litros = round(float(g.litros or 0), 2)
     cuenta = (g.cuenta_contable_gasto or "").strip() or _TIPO_GASTO_CUENTA[tipo]
     estado = (g.estado_pago or "Pendiente").strip() or "Pendiente"
+    storage_key = None
+    archivo_b64 = g.archivo_base64 or ""
+    if archivo_b64:
+        g2 = _guardar_archivo(g.factura_ref or "ticket.pdf", archivo_b64)
+        if g2:
+            storage_key = g2[0]
     cur = conn.execute(
         "INSERT INTO gastos_vehiculos (vehiculo_id, proveedor_id, fecha, tipo, litros, base_imponible, iva, "
-        "importe_total, factura_ref, cuenta_contable_gasto, estado_pago, archivo_base64, creado) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id",
+        "importe_total, factura_ref, cuenta_contable_gasto, estado_pago, archivo_base64, storage_key, creado) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id",
         (g.vehiculo_id, g.proveedor_id, g.fecha, tipo, litros, base, iva_pct, importe,
-         g.factura_ref, cuenta, estado, g.archivo_base64, datetime.datetime.utcnow().isoformat() + "Z"),
+         g.factura_ref, cuenta, estado, ("" if storage_key else archivo_b64), storage_key,
+         datetime.datetime.utcnow().isoformat() + "Z"),
     )
     gasto_id = cur.fetchone()["id"]
     if importe > 0:

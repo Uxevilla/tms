@@ -9,6 +9,7 @@ import urllib.request
 
 import config
 from db import *
+from services.documentos import _guardar_archivo, _leer_archivo
 from core import *
 from security import *
 from tenancy import *
@@ -130,12 +131,21 @@ def _parse_props(block):
 
 
 def _save_file(trip_id, name, ftype, ftime, source, driver, lid, content_b64):
+    g = _guardar_archivo(name, content_b64)
     with _db() as conn:
-        conn.execute(
-            "INSERT INTO files (trip_id, name, ftype, ftime, source, driver, lid, content_b64) "
-            "VALUES (?,?,?,?,?,?,?,?) ON CONFLICT (name) DO NOTHING",
-            (trip_id, name, ftype, ftime, source, driver, lid, content_b64),
-        )
+        if g:
+            storage_key, sha, nbytes, _mime = g
+            conn.execute(
+                "INSERT INTO files (trip_id, name, ftype, ftime, source, driver, lid, storage_key, sha256, bytes) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT (name) DO NOTHING",
+                (trip_id, name, ftype, ftime, source, driver, lid, storage_key, sha, nbytes),
+            )
+        else:
+            conn.execute(
+                "INSERT INTO files (trip_id, name, ftype, ftime, source, driver, lid, content_b64) "
+                "VALUES (?,?,?,?,?,?,?,?) ON CONFLICT (name) DO NOTHING",
+                (trip_id, name, ftype, ftime, source, driver, lid, content_b64),
+            )
         conn.commit()
 
 
@@ -202,13 +212,23 @@ def _guardar_documento_entrega(trip_id, nombre, contenido_b64, formato="png", ft
     if not trip_id or not contenido_b64:
         return
     name = f"ecmr_{uuid.uuid4().hex[:8]}_{nombre}"
+    g = _guardar_archivo(name, contenido_b64)
     with _db() as conn:
-        conn.execute(
-            "INSERT INTO files (trip_id, name, ftype, ftime, source, content_b64, formato) "
-            "VALUES (?,?,?,?,?,?,?) ON CONFLICT (name) DO NOTHING",
-            (trip_id, name, 3, ftime or (datetime.datetime.utcnow().isoformat() + "Z"),
-             "ecmr", contenido_b64, formato),
-        )
+        if g:
+            storage_key, sha, nbytes, _mime = g
+            conn.execute(
+                "INSERT INTO files (trip_id, name, ftype, ftime, source, storage_key, sha256, bytes, formato) "
+                "VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT (name) DO NOTHING",
+                (trip_id, name, 3, ftime or (datetime.datetime.utcnow().isoformat() + "Z"),
+                 "ecmr", storage_key, sha, nbytes, formato),
+            )
+        else:
+            conn.execute(
+                "INSERT INTO files (trip_id, name, ftype, ftime, source, content_b64, formato) "
+                "VALUES (?,?,?,?,?,?,?) ON CONFLICT (name) DO NOTHING",
+                (trip_id, name, 3, ftime or (datetime.datetime.utcnow().isoformat() + "Z"),
+                 "ecmr", contenido_b64, formato),
+            )
         conn.commit()
 
 

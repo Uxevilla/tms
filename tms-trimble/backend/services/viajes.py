@@ -10,6 +10,7 @@ import urllib.request
 import config
 from fastapi import HTTPException
 from db import *
+from services.documentos import _guardar_archivo, _leer_archivo
 from core import *
 from security import *
 from tenancy import *
@@ -322,10 +323,14 @@ def _guardar_documentos_pedido(conn, trip_id, documentos):
             continue
         nombre = ((d.nombre or "documento.pdf").rsplit("/", 1)[-1])[:120] or "documento.pdf"
         name = f"{uuid.uuid4().hex[:10]}__{nombre}"
+        g = _guardar_archivo(name, contenido)
+        if not g:
+            continue
+        storage_key, sha, nbytes, _mime = g
         conn.execute(
-            "INSERT INTO files (trip_id, name, ftype, ftime, source, formato, content_b64) "
-            "VALUES (?,?,?,?,?,?,?) ON CONFLICT (name) DO NOTHING",
-            (trip_id, name, 3, datetime.datetime.utcnow().isoformat() + "Z", "pedido", "pdf", contenido),
+            "INSERT INTO files (trip_id, name, ftype, ftime, source, formato, storage_key, sha256, bytes) "
+            "VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT (name) DO NOTHING",
+            (trip_id, name, 3, datetime.datetime.utcnow().isoformat() + "Z", "pedido", "pdf", storage_key, sha, nbytes),
         )
 
 
