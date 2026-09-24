@@ -575,6 +575,24 @@ DROP TRIGGER IF EXISTS usuarios_upd ON config.usuarios;
 CREATE TRIGGER usuarios_upd INSTEAD OF UPDATE ON config.usuarios FOR EACH ROW EXECUTE FUNCTION sistema.usuarios_upd();
 DROP TRIGGER IF EXISTS usuarios_del ON config.usuarios;
 CREATE TRIGGER usuarios_del INSTEAD OF DELETE ON config.usuarios FOR EACH ROW EXECUTE FUNCTION sistema.usuarios_del();
+CREATE SCHEMA IF NOT EXISTS finanzas;
+CREATE TABLE IF NOT EXISTS finanzas.series (
+    codigo TEXT PRIMARY KEY, ultimo INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS finanzas.ejercicios (
+    anno SMALLINT PRIMARY KEY, cerrado BOOLEAN NOT NULL DEFAULT false, cerrado_en TIMESTAMPTZ
+);
+-- Trigger de cuadre: un asiento no puede quedar descuadrado (suma debe = suma haber).
+CREATE OR REPLACE FUNCTION public.chk_asiento_cuadra() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE d NUMERIC; h NUMERIC; aid INTEGER := COALESCE(NEW.asiento_id, OLD.asiento_id);
+BEGIN
+    SELECT COALESCE(SUM(debe),0), COALESCE(SUM(haber),0) INTO d, h FROM apuntes WHERE asiento_id = aid;
+    IF d <> h THEN RAISE EXCEPTION 'Asiento % descuadrado: debe % / haber %', aid, d, h; END IF;
+    RETURN NULL;
+END $$;
+DROP TRIGGER IF EXISTS apuntes_cuadre ON apuntes;
+CREATE CONSTRAINT TRIGGER apuntes_cuadre AFTER INSERT OR UPDATE OR DELETE ON apuntes
+    DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.chk_asiento_cuadra();
 """
 
 
