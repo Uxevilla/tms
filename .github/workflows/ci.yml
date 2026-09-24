@@ -56,6 +56,9 @@ jobs:
         run: |
           npm ci
           npm run build
+      - name: Comprobar tamaño del bundle (≤ 150 KB gzip)
+        working-directory: tms-frontend
+        run: npm run size-check
 
   e2e:
     name: E2E (Playwright)
@@ -111,6 +114,17 @@ jobs:
             sleep 2
           done
           curl -sf http://localhost:8750/api/health
+
+          # El admin se siembra con debe_cambiar_clave=true; lo desactivamos para que el
+          # login UI del smoke test navegue directo (sin pantalla de cambio de contraseña).
+          python - <<'PY'
+          import psycopg2
+          c = psycopg2.connect(host="localhost", port=5432, user="tms", password="tms", dbname="tms")
+          c.autocommit = True
+          c.cursor().execute("UPDATE sistema.usuarios SET debe_cambiar_clave=false WHERE usuario='admin'")
+          c.close()
+          print("admin debe_cambiar_clave=false")
+          PY
 
           # 2. Frontend: build + preview (con proxy /api y /ws al backend).
           cd ../../tms-frontend

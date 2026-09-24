@@ -38,3 +38,16 @@ export function getRol(): string | null {
     return null;
   }
 }
+
+// Devuelve el nombre de usuario del JWT (para el pie de la barra lateral).
+export function getUsuario(): string | null {
+  const token = getToken();
+  if (!token) return null;
+  try {
+    const base64 = token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
+    const payload = JSON.parse(atob(base64));
+    return payload.usuario ?? payload.sub ?? null;
+  } catch {
+    return null;
+  }
+}
