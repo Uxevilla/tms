@@ -181,6 +181,23 @@ def main() -> None:
         (f"{ayer_r}T08:00", f"{ayer_r}T20:00"),
     )
 
+    # Fase 4 — cliente + direcciones para el e2e de "crear viaje de 2 paradas con teclado".
+    # Ciudades únicas (E2EORIGEN/E2EDESTINO/…) para que el viaje creado sea identificable en la lista.
+    cur.execute("SELECT 1 FROM clientes WHERE cif = 'E2E00000A' LIMIT 1")
+    if not cur.fetchone():
+        cur.execute("INSERT INTO clientes (nombre, cif, direccion, poblacion, cp) VALUES ('CLI-E2E', 'E2E00000A', 'Calle Test 1', 'E2EORIGEN', '28001')")
+    cur.execute("SELECT 1 FROM direcciones WHERE nombre = 'DIR-E2E-ORIGEN' LIMIT 1")
+    if not cur.fetchone():
+        cur.execute("INSERT INTO direcciones (nombre, empresa, ciudad, lat, lng) VALUES ('DIR-E2E-ORIGEN', 'CLI-E2E', 'E2EORIGEN', 40.4, -3.7)")
+        cur.execute("INSERT INTO direcciones (nombre, empresa, ciudad, lat, lng) VALUES ('DIR-E2E-PARADA1', 'CLI-E2E', 'E2EPARADA1', 41.65, -0.88)")
+        cur.execute("INSERT INTO direcciones (nombre, empresa, ciudad, lat, lng) VALUES ('DIR-E2E-PARADA2', 'CLI-E2E', 'E2EPARADA2', 41.62, 0.62)")
+        cur.execute("INSERT INTO direcciones (nombre, empresa, ciudad, lat, lng) VALUES ('DIR-E2E-DESTINO', 'CLI-E2E', 'E2EDESTINO', 41.39, 2.17)")
+    else:
+        cur.execute("UPDATE direcciones SET ciudad='E2EORIGEN' WHERE nombre='DIR-E2E-ORIGEN'")
+        cur.execute("UPDATE direcciones SET ciudad='E2EPARADA1' WHERE nombre='DIR-E2E-PARADA1'")
+        cur.execute("UPDATE direcciones SET ciudad='E2EPARADA2' WHERE nombre='DIR-E2E-PARADA2'")
+        cur.execute("UPDATE direcciones SET ciudad='E2EDESTINO' WHERE nombre='DIR-E2E-DESTINO'")
+
     conn.close()
     print("seed e2e OK")
 

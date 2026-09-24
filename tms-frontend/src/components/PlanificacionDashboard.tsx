@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useSearch } from "@tanstack/react-router";
 import { CalendarDays, CalendarRange, ChevronLeft, ChevronRight, Undo2, X, AlertTriangle } from "lucide-react";
 
 import { api } from "@/api";
@@ -56,6 +57,7 @@ function fmtHora(iso: string): string {
 
 export function PlanificacionDashboard() {
   const qc = useQueryClient();
+  const { viaje: viajeSeleccionado } = useSearch({ from: "/app/planificacion" });
   const [vista, setVista] = useState<Vista>("dia");
   const [pxHora, setPxHora] = useState(48);
   const [anchor, setAnchor] = useState(() => {
@@ -444,7 +446,7 @@ export function PlanificacionDashboard() {
                 key={v.id}
                 data-viaje-pendiente={v.id}
                 onPointerDown={(e) => { e.preventDefault(); iniciarArrastre(v); }}
-                className="mb-1.5 cursor-grab select-none rounded-md border bg-card p-2 shadow-sm active:cursor-grabbing"
+                className={`mb-1.5 cursor-grab select-none rounded-md border bg-card p-2 shadow-sm active:cursor-grabbing ${v.id === viajeSeleccionado ? "ring-2 ring-primary" : ""}`}
                 style={{ pointerEvents: arrastre?.id === v.id ? "none" : undefined }}
               >
                 <div className="truncate text-xs font-medium">{v.id}</div>

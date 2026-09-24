@@ -14,7 +14,7 @@ import { Login } from "./components/Login";
 import { setToken, getToken, getRol, isTokenValid } from "./auth";
 
 // Carga diferida por sección: cada dashboard antiguo se descarga solo al abrirse.
-const OperacionesDashboard = lazy(() => import("./components/OperacionesDashboard").then((m) => ({ default: m.OperacionesDashboard })));
+const ViajesDashboard = lazy(() => import("./components/ViajesDashboard").then((m) => ({ default: m.ViajesDashboard })));
 const ContabilidadDashboard = lazy(() => import("./components/ContabilidadDashboard").then((m) => ({ default: m.ContabilidadDashboard })));
 const KpiDashboard = lazy(() => import("./components/KpiDashboard").then((m) => ({ default: m.KpiDashboard })));
 const VehiculosDashboard = lazy(() => import("./components/VehiculosDashboard").then((m) => ({ default: m.VehiculosDashboard })));
@@ -118,11 +118,28 @@ const planificacionRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "/planificacion",
   component: () => <PlanificacionDashboard />,
+  validateSearch: (search: Record<string, unknown>): { panel?: string; viaje?: string } => ({
+    panel: typeof search.panel === "string" && /^(vehiculo|viaje|conductor):.+$/.test(search.panel) ? search.panel : undefined,
+    viaje: typeof search.viaje === "string" && search.viaje ? search.viaje : undefined,
+  }),
 });
+// Filtros de /viajes en la URL (se comparten y sobreviven a recargar).
+function validateViajesSearch(search: Record<string, unknown>): { estado?: string; cliente?: string; vehiculo?: string; desde?: string; hasta?: string } {
+  const s = (v: unknown) => (typeof v === "string" && v ? v : undefined);
+  return {
+    estado: s(search.estado),
+    cliente: s(search.cliente),
+    vehiculo: s(search.vehiculo),
+    desde: s(search.desde),
+    hasta: s(search.hasta),
+  };
+}
+
 const viajesRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "/viajes",
-  component: () => <OperacionesDashboard />,
+  component: () => <ViajesDashboard />,
+  validateSearch: validateViajesSearch,
 });
 const viajeDetalleRoute = createRoute({
   getParentRoute: () => appRoute,
