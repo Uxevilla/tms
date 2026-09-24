@@ -45,6 +45,14 @@ test("bandeja muestra las 8 clases (datos de prueba)", async ({ page }, testInfo
   }
 });
 
+test("clic en aviso de conducción límite abre el panel con datos", async ({ page }) => {
+  await page.goto("/torre");
+  await page.getByText("Conducción al límite", { exact: false }).first().click();
+  // El panel debe mostrar datos del conductor (pestaña Datos), no un error.
+  await expect(page.getByText("Error al cargar.")).toHaveCount(0);
+  await expect(page.getByText("Nombre", { exact: true })).toBeVisible({ timeout: 10_000 });
+});
+
 test("tiempo real: /torre con WS sin errores de consola", async ({ page }) => {
   const errores: string[] = [];
   page.on("console", (m) => {
