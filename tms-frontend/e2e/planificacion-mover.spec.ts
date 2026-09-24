@@ -124,6 +124,8 @@ test.describe("Planificación — envío manual", () => {
     await fakeReset(page);
     await arrastrar(page, '[data-viaje-pendiente="E2E-PLAN-OK"]', '[data-tractora="E2E-TRAC"]');
     await expect(page.locator('[data-viaje-bloque="E2E-PLAN-OK"]')).toBeVisible({ timeout: 10000 });
+    // Espera el commit del mover antes de enviar (POST /enviar lee el terminal de la BD).
+    await expect.poll(async () => (await tripRow("E2E-PLAN-OK")).terminal).toBe("E2E-TRAC");
 
     await page.locator('[data-viaje-bloque="E2E-PLAN-OK"]').click({ button: "right" });
     await page.getByText("Enviar viaje al terminal").click();
@@ -163,9 +165,8 @@ test.describe("Planificación — envío manual", () => {
 
     await expect.poll(async () => (await fakeCalls(page)).map((c) => c.op), { timeout: 10000 }).toEqual(["unAssignTrips"]);
     await expect(page.locator('[data-viaje-bloque="E2E-PLAN-ENVIADO"]')).toHaveClass(/border-dashed/, { timeout: 10000 });
-    const row = await tripRow("E2E-PLAN-ENVIADO");
-    expect(row.terminal).toBe("E2E-TRAC3");
-    expect(row.estado).toBe("sin_asignar");
+    await expect.poll(async () => (await tripRow("E2E-PLAN-ENVIADO")).terminal).toBe("E2E-TRAC3");
+    await expect.poll(async () => (await tripRow("E2E-PLAN-ENVIADO")).estado).toBe("sin_asignar");
   });
 
   test("f) bloqueo (tractora solapada): no se deja soltar + toast", async ({ page }) => {
@@ -194,7 +195,8 @@ test.describe("Planificación — envío manual", () => {
     await abrirPlanificacion(page);
     await arrastrar(page, '[data-viaje-pendiente="E2E-PLAN-OK"]', '[data-tractora="E2E-TRAC"]');
     await expect(page.locator('[data-viaje-bloque="E2E-PLAN-OK"]')).toBeVisible({ timeout: 10000 });
-    await page.waitForTimeout(500);
+    // Espera el commit del mover (y el push al historial) antes de Ctrl+Z.
+    await expect.poll(async () => (await tripRow("E2E-PLAN-OK")).terminal).toBe("E2E-TRAC");
     await page.keyboard.press("Control+z");
     await expect(page.locator('[data-viaje-pendiente="E2E-PLAN-OK"]')).toBeVisible({ timeout: 10000 });
   });
@@ -217,9 +219,8 @@ test.describe("Planificación — envío manual", () => {
     const x13 = await xDeHora(page, 13);
     await soltarEn(page, '[data-viaje-pendiente="E2E-PLAN-OK"]', '[data-tractora="E2E-TRAC3"]', x13);
     await expect(page.locator('[data-viaje-bloque="E2E-PLAN-OK"]')).toBeVisible({ timeout: 10000 });
-    const row = await tripRow("E2E-PLAN-OK");
-    expect(row.terminal).toBe("E2E-TRAC3");
-    expect((row.fecha_esperada_carga as string).slice(11, 16)).toMatch(/^13:/);
+    await expect.poll(async () => (await tripRow("E2E-PLAN-OK")).terminal).toBe("E2E-TRAC3");
+    await expect.poll(async () => ((await tripRow("E2E-PLAN-OK")).fecha_esperada_carga ?? "").slice(11, 16)).toMatch(/^13:/);
   });
 
   test("k) pendiente soltado a las 12:00 → inicio 12:00", async ({ page }) => {
@@ -227,8 +228,7 @@ test.describe("Planificación — envío manual", () => {
     const x12 = await xDeHora(page, 12);
     await soltarEn(page, '[data-viaje-pendiente="E2E-PLAN-OK"]', '[data-tractora="E2E-TRAC"]', x12);
     await expect(page.locator('[data-viaje-bloque="E2E-PLAN-OK"]')).toBeVisible({ timeout: 10000 });
-    const row = await tripRow("E2E-PLAN-OK");
-    expect((row.fecha_esperada_carga as string).slice(11, 16)).toMatch(/^12:/);
+    await expect.poll(async () => ((await tripRow("E2E-PLAN-OK")).fecha_esperada_carga ?? "").slice(11, 16)).toMatch(/^12:/);
   });
 
   test("l) Esc cancela el arrastre (el viaje vuelve a su sitio)", async ({ page }) => {
