@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import {
@@ -12,7 +12,7 @@ import {
   type FilterFn,
   type SortingState,
 } from "@tanstack/react-table";
-import { Copy, Download, Info, LayoutList, Map as MapIcon, MessageCircle, Plus, Send, Trash2 } from "lucide-react";
+import { Copy, Download, Info, LayoutList, Map as MapIcon, MessageCircle, Pencil, Plus, Send, Trash2, X } from "lucide-react";
 
 import { api, ApiError } from "@/api";
 import { REST_VIAJES, REST_CONDUCTORES, REST_VEHICULOS_DISPONIBLES } from "@/config";
@@ -21,20 +21,48 @@ import { StatusBadge } from "./StatusBadge";
 import { LiveMap } from "./LiveMap";
 import { ChatViaje } from "./ChatViaje";
 import { DetalleViaje } from "./DetalleViaje";
-import { NuevoViajeSheet } from "./NuevoViajeSheet";
 import { panelCell } from "./panelCell";
 
-// Filtro por rango de fecha sobre fecha_esperada_carga (valor compuesto {desde, hasta}).
+// Sheet de creación/edición en chunk aparte (react-leaflet + dnd-kit + react-hook-form).
+const NuevoViajeSheet = lazy(() => import("./NuevoViajeSheet").then((m) => ({ default: m.NuevoViajeSheet })));
+
+// Filtro por rango de fecha sobre fecha_esperada_carga: compara SOLO la fecha (YYYY-MM-DD).
 const filtroFecha: FilterFn<Viaje> = (row, columnId, filterValue) => {
   const { desde, hasta } = (filterValue ?? {}) as { desde?: string; hasta?: string };
   if (!desde && !hasta) return true;
-  const v = (row.getValue(columnId) as string) || "";
+  const v = ((row.getValue(columnId) as string) || "").slice(0, 10);
   if (desde && v < desde) return false;
   if (hasta && v > hasta) return false;
   return true;
 };
 
 type Vista = "lista" | "mapa" | "dividido";
+
+// Celda editable (input/select) con commit optimista en blur/Enter/cambio.
+function CeldaInput({ valor, tipo, onCommit, placeholder, className = "" }: {
+  valor: string;
+  tipo?: "text" | "number" | "date";
+  onCommit: (v: string) => void;
+  placeholder?: string;
+  className?: string;
+}) {
+  const [v, setV] = useState(valor);
+  useEffect(() => setV(valor), [valor]);
+  const commit = () => { if (v !== valor) onCommit(v); };
+  return (
+    <input
+      value={v}
+      type={tipo ?? "text"}
+      placeholder={placeholder}
+      onChange={(e) => setV(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => { if (e.key === "Enter") (e.currentTarget as HTMLInputElement).blur(); }}
+      className={`w-full rounded border border-transparent bg-transparent px-1 py-0.5 text-xs hover:border-slate-200 focus:border-blue-400 focus:outline-none ${className}`}
+    />
+  );
+}
+
+const ESTADOS_PAGO = ["pendiente", "parcial", "pagado"];
 
 export function ViajesDashboard() {
   const search = useSearch({ from: "/app/viajes" });
@@ -60,15 +88,28 @@ export function ViajesDashboard() {
   const [sorting, setSorting] = useState<SortingState>([]);
   const [chatTripId, setChatTripId] = useState<string | null>(null);
   const [tripDetalle, setTripDetalle] = useState<Viaje | null>(null);
-  const [sheetAbierto, setSheetAbierto] = useState(false);
+  const [sheet, setSheet] = useState<{ abierto: boolean; editTripId: string | null }>({ abierto: false, editTripId: null });
+  const [borrarViaje, setBorrarViaje] = useState<Viaje | null>(null);
   const [banner, setBanner] = useState<{ tipo: "ok" | "error"; texto: string } | null>(null);
+  const debounceRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
 
-  const setFilter = (key: "estado" | "cliente" | "vehiculo" | "desde" | "hasta", value: string) => {
-    const next = { ...search };
-    if (value) next[key] = value;
-    else delete next[key];
-    navigate({ to: "/viajes", search: next });
-  };
+  // Filtros: replace:true (no ensucia el historial) + debounce en los de texto.
+  const setFilter = useCallback(
+    (key: "estado" | "cliente" | "vehiculo" | "desde" | "hasta", value: string) => {
+      const next: Record<string, string> = { ...search };
+      if (value) next[key] = value;
+      else delete next[key];
+      navigate({ to: "/viajes", search: next, replace: true });
+    },
+    [search, navigate],
+  );
+  const setFilterDebounced = useCallback(
+    (key: "cliente" | "vehiculo", value: string) => {
+      if (debounceRef.current[key]) clearTimeout(debounceRef.current[key]);
+      debounceRef.current[key] = setTimeout(() => setFilter(key, value), 300);
+    },
+    [setFilter],
+  );
 
   // Filtros de columna derivados de la URL.
   const columnFilters = useMemo(() => {
@@ -80,106 +121,123 @@ export function ViajesDashboard() {
     return f;
   }, [search]);
 
-  const onCellPATCH = useCallback(
-    async (id: string, body: Record<string, unknown>, fieldLabel: string) => {
+  // Edición optimista con reversión: actualiza ['viajes'] y revierte si el PATCH falla.
+  const editarCelda = useCallback(
+    async (id: string, campo: keyof Viaje, valor: unknown, body: Record<string, unknown>, label: string) => {
+      const key = ["viajes"];
+      const prev = qc.getQueryData<Viaje[]>(key);
+      if (prev) qc.setQueryData<Viaje[]>(key, prev.map((v) => (v.id === id ? { ...v, [campo]: valor } : v)));
       try {
         await api(`/api/trips/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(body) });
       } catch (e) {
-        setBanner({ tipo: "error", texto: e instanceof ApiError ? `No se pudo guardar «${fieldLabel}»: ${e.message}` : `No se pudo guardar «${fieldLabel}».` });
+        if (prev) qc.setQueryData<Viaje[]>(key, prev);
+        setBanner({ tipo: "error", texto: e instanceof ApiError ? `No se pudo guardar «${label}»: ${e.message}` : `No se pudo guardar «${label}».` });
       }
     },
-    [],
+    [qc],
   );
 
   const columnas = useMemo<ColumnDef<Viaje>[]>(
-    () => [
-      { accessorKey: "referencia", header: "Ref.", size: 90 },
-      { accessorKey: "id", header: "ID", size: 150, cell: (c) => panelCell<Viaje>("viaje")({ value: c.getValue(), data: c.row.original }) },
-      {
-        accessorKey: "matricula",
-        header: "Matrícula",
-        size: 140,
-        cell: (c) => {
-          const v = c.row.original;
-          const tractoras = (vehiculos.data ?? []).filter((x) => x.categoria === "tractora");
-          return (
-            <span className="flex items-center gap-1">
-              <select
-                data-campo="matricula"
-                value={v.matricula ?? ""}
-                onChange={(e) => {
-                  const veh = tractoras.find((x) => x.matricula === e.target.value);
-                  if (veh) onCellPATCH(v.id, { terminal: veh.id }, "matrícula");
-                }}
-                className="min-w-0 flex-1 rounded border border-transparent bg-transparent px-1 py-0.5 text-xs hover:border-slate-200"
-              >
-                <option value="">—</option>
-                {tractoras.map((x) => (
-                  <option key={x.id} value={x.matricula}>{x.matricula}</option>
-                ))}
+    () => {
+      const tractoras = (vehiculos.data ?? []).filter((x) => x.categoria === "tractora");
+      const conds = conductores.data ?? [];
+      const inputCls = "w-full rounded border border-transparent bg-transparent px-1 py-0.5 text-xs hover:border-slate-200 focus:border-blue-400 focus:outline-none";
+      return [
+        { accessorKey: "referencia", header: "Ref.", size: 90 },
+        { accessorKey: "id", header: "ID", size: 140, cell: (c) => panelCell<Viaje>("viaje")({ value: c.getValue(), data: c.row.original }) },
+        {
+          accessorKey: "matricula",
+          header: "Matrícula",
+          size: 130,
+          cell: (c) => {
+            const v = c.row.original;
+            return (
+              <span className="flex items-center gap-1">
+                <select
+                  data-campo="matricula"
+                  value={v.matricula ?? ""}
+                  onChange={(e) => {
+                    const veh = tractoras.find((x) => x.matricula === e.target.value);
+                    if (veh) editarCelda(v.id, "matricula", e.target.value, { terminal: veh.id }, "matrícula");
+                  }}
+                  className={inputCls}
+                >
+                  <option value="">—</option>
+                  {tractoras.map((x) => <option key={x.id} value={x.matricula}>{x.matricula}</option>)}
+                </select>
+                {v.matricula ? panelCell<Viaje>("vehiculo", () => tractoras.find((x) => x.matricula === v.matricula)?.id, { icono: true })({ value: "", data: v }) : null}
+              </span>
+            );
+          },
+        },
+        {
+          accessorKey: "conductor",
+          header: "Conductor",
+          size: 150,
+          cell: (c) => {
+            const v = c.row.original;
+            const conductorId = conds.find((x) => x.nombre === v.conductor)?.id;
+            return (
+              <span className="flex items-center gap-1">
+                <select data-campo="conductor" value={v.conductor ?? ""} onChange={(e) => editarCelda(v.id, "conductor", e.target.value, { conductor: e.target.value }, "conductor")} className={inputCls}>
+                  <option value="">—</option>
+                  {conds.map((x) => <option key={x.id} value={x.nombre}>{x.nombre}</option>)}
+                </select>
+                {conductorId != null ? panelCell<Viaje>("conductor", () => conductorId, { icono: true })({ value: "", data: v }) : null}
+              </span>
+            );
+          },
+        },
+        { accessorKey: "origen", header: "Origen", size: 140, cell: (c) => <CeldaInput valor={c.row.original.origen ?? ""} onCommit={(v) => editarCelda(c.row.original.id, "origen", v, { origen: v }, "origen")} /> },
+        { accessorKey: "destino", header: "Destino", size: 140, cell: (c) => <CeldaInput valor={c.row.original.destino ?? ""} onCommit={(v) => editarCelda(c.row.original.id, "destino", v, { destino: v }, "destino")} /> },
+        { accessorKey: "cliente", header: "Cliente", size: 130, cell: (c) => <CeldaInput valor={c.row.original.cliente ?? ""} onCommit={(v) => editarCelda(c.row.original.id, "cliente", v, { cliente: v }, "cliente")} /> },
+        { accessorKey: "precio", header: "Precio (€)", size: 95, cell: (c) => <CeldaInput tipo="number" valor={c.row.original.precio != null ? String(c.row.original.precio) : ""} onCommit={(v) => editarCelda(c.row.original.id, "precio", Number(v), { precio: Number(v) }, "precio")} /> },
+        { accessorKey: "km_total", header: "Km", size: 75, cell: (c) => (c.getValue() ? `${Number(c.getValue()).toFixed(0)} km` : "—") },
+        { accessorKey: "peaje_estimado", header: "Peaje (€)", size: 90, cell: (c) => (c.getValue() ? Number(c.getValue()).toLocaleString("es-ES", { style: "currency", currency: "EUR" }) : "—") },
+        { accessorKey: "tiempo_min", header: "Tiempo", size: 85, cell: (c) => (c.getValue() ? `${Math.round(Number(c.getValue()))} min` : "—") },
+        { accessorKey: "fecha_esperada_carga", header: "Carga", size: 130, filterFn: filtroFecha, cell: (c) => <CeldaInput tipo="date" valor={(c.row.original.fecha_esperada_carga ?? "").slice(0, 10)} onCommit={(v) => editarCelda(c.row.original.id, "fecha_esperada_carga", v, { fecha_esperada_carga: v }, "fecha de carga")} /> },
+        { accessorKey: "fecha_esperada_descarga", header: "Descarga", size: 130, cell: (c) => <CeldaInput tipo="date" valor={(c.row.original.fecha_esperada_descarga ?? "").slice(0, 10)} onCommit={(v) => editarCelda(c.row.original.id, "fecha_esperada_descarga", v, { fecha_esperada_descarga: v }, "fecha de descarga")} /> },
+        {
+          accessorKey: "estado_pago",
+          header: "Pago",
+          size: 110,
+          cell: (c) => {
+            const v = c.row.original;
+            return (
+              <select data-campo="estado_pago" value={v.estado_pago ?? "pendiente"} onChange={(e) => editarCelda(v.id, "estado_pago", e.target.value, { estado_pago: e.target.value }, "estado de pago")} className={inputCls}>
+                {ESTADOS_PAGO.map((s) => <option key={s} value={s}>{s}</option>)}
               </select>
-              {v.matricula ? panelCell<Viaje>("vehiculo", () => tractoras.find((x) => x.matricula === v.matricula)?.id, { icono: true })({ value: "", data: v }) : null}
-            </span>
-          );
+            );
+          },
         },
-      },
-      {
-        accessorKey: "conductor",
-        header: "Conductor",
-        size: 160,
-        cell: (c) => {
-          const v = c.row.original;
-          const conds = conductores.data ?? [];
-          const conductorId = conds.find((x) => x.nombre === v.conductor)?.id;
-          return (
-            <span className="flex items-center gap-1">
-              <select
-                data-campo="conductor"
-                value={v.conductor ?? ""}
-                onChange={(e) => onCellPATCH(v.id, { conductor: e.target.value }, "conductor")}
-                className="min-w-0 flex-1 rounded border border-transparent bg-transparent px-1 py-0.5 text-xs hover:border-slate-200"
-              >
-                <option value="">—</option>
-                {conds.map((x) => (
-                  <option key={x.id} value={x.nombre}>{x.nombre}</option>
-                ))}
-              </select>
-              {conductorId != null ? panelCell<Viaje>("conductor", () => conductorId, { icono: true })({ value: "", data: v }) : null}
-            </span>
-          );
+        { accessorKey: "estado", header: "Estado", size: 120, cell: (c) => <StatusBadge value={c.getValue() as ViajeEstado} /> },
+        { accessorKey: "progreso", header: "Prog.", size: 70, cell: (c) => `${Number(c.getValue() || 0)}%` },
+        { accessorKey: "velocidad", header: "Km/h", size: 65, cell: (c) => (c.getValue() == null ? "—" : `${Math.round(Number(c.getValue()))}`) },
+        { accessorKey: "eta", header: "ETA", size: 120, cell: (c) => (c.getValue() ? String(c.getValue()).slice(0, 16) : "—") },
+        { accessorKey: "itinerario", header: "Itinerario", size: 180, cell: (c) => c.getValue() ? String(c.getValue()) : "—" },
+        { accessorKey: "n_documentos", header: "Docs", size: 60, cell: (c) => (c.getValue() ?? "—") },
+        {
+          id: "acciones",
+          header: "",
+          size: 230,
+          cell: (c) => {
+            const v = c.row.original;
+            const boton = "inline-flex items-center justify-center rounded-md p-1.5 transition";
+            return (
+              <div className="flex items-center gap-0.5">
+                <button title="Enviar viaje al terminal Trimble" onClick={() => enviarTrip(v)} className={`${boton} bg-emerald-50 text-emerald-600 hover:bg-emerald-100`}><Send size={14} /></button>
+                <button title="Editar viaje" onClick={() => setSheet({ abierto: true, editTripId: v.id })} className={`${boton} bg-slate-100 text-slate-600 hover:bg-amber-50 hover:text-amber-600`}><Pencil size={14} /></button>
+                <button title="Informes del chofer y archivos" onClick={() => setTripDetalle(v)} className={`${boton} bg-slate-100 text-slate-600 hover:bg-amber-50 hover:text-amber-600`}><Info size={14} /></button>
+                <button title="Duplicar viaje (sin asignar)" onClick={() => duplicarViaje(v.id)} className={`${boton} bg-slate-100 text-slate-600 hover:bg-violet-50 hover:text-violet-600`}><Copy size={14} /></button>
+                <button title="Mensajería con el terminal" onClick={() => setChatTripId(v.id)} className={`${boton} bg-slate-100 text-slate-600 hover:bg-blue-50 hover:text-blue-600`}><MessageCircle size={14} /></button>
+                <button title="Eliminar viaje" onClick={() => setBorrarViaje(v)} className={`${boton} bg-slate-100 text-slate-600 hover:bg-red-50 hover:text-red-600`}><Trash2 size={14} /></button>
+              </div>
+            );
+          },
         },
-      },
-      { accessorKey: "origen", header: "Origen", size: 150 },
-      { accessorKey: "destino", header: "Destino", size: 150 },
-      { accessorKey: "cliente", header: "Cliente", size: 140 },
-      { accessorKey: "precio", header: "Precio (€)", size: 100, cell: (c) => (c.getValue() == null ? "—" : Number(c.getValue()).toLocaleString("es-ES", { style: "currency", currency: "EUR" })) },
-      { accessorKey: "km_total", header: "Km", size: 80, cell: (c) => (c.getValue() ? `${Number(c.getValue()).toFixed(0)} km` : "—") },
-      { accessorKey: "peaje_estimado", header: "Peaje (€)", size: 95, cell: (c) => (c.getValue() ? Number(c.getValue()).toLocaleString("es-ES", { style: "currency", currency: "EUR" }) : "—") },
-      { accessorKey: "tiempo_min", header: "Tiempo", size: 90, cell: (c) => (c.getValue() ? `${Math.round(Number(c.getValue()))} min` : "—") },
-      { accessorKey: "fecha_esperada_carga", header: "Carga", size: 140, filterFn: filtroFecha },
-      { accessorKey: "fecha_esperada_descarga", header: "Descarga", size: 140 },
-      { accessorKey: "estado", header: "Estado", size: 130, cell: (c) => <StatusBadge value={c.getValue() as ViajeEstado} /> },
-      { accessorKey: "progreso", header: "Progreso", size: 90, cell: (c) => `${Number(c.getValue() || 0)}%` },
-      {
-        id: "acciones",
-        header: "",
-        size: 200,
-        cell: (c) => {
-          const v = c.row.original;
-          const boton = "inline-flex items-center justify-center rounded-md p-1.5 transition";
-          return (
-            <div className="flex items-center gap-0.5">
-              <button title="Enviar viaje al terminal Trimble" onClick={() => enviarTrip(v)} className={`${boton} bg-emerald-50 text-emerald-600 hover:bg-emerald-100`}><Send size={14} /></button>
-              <button title="Informes del chofer y archivos" onClick={() => setTripDetalle(v)} className={`${boton} bg-slate-100 text-slate-600 hover:bg-amber-50 hover:text-amber-600`}><Info size={14} /></button>
-              <button title="Duplicar viaje (sin asignar)" onClick={() => duplicarViaje(v.id)} className={`${boton} bg-slate-100 text-slate-600 hover:bg-violet-50 hover:text-violet-600`}><Copy size={14} /></button>
-              <button title="Mensajería con el terminal" onClick={() => setChatTripId(v.id)} className={`${boton} bg-slate-100 text-slate-600 hover:bg-blue-50 hover:text-blue-600`}><MessageCircle size={14} /></button>
-              <button title="Eliminar viaje" onClick={() => eliminarViaje(v)} className={`${boton} bg-slate-100 text-slate-600 hover:bg-red-50 hover:text-red-600`}><Trash2 size={14} /></button>
-            </div>
-          );
-        },
-      },
-    ],
-    [vehiculos.data, conductores.data, onCellPATCH],
+      ];
+    },
+    [vehiculos.data, conductores.data, editarCelda],
   );
 
   const table = useReactTable({
@@ -203,6 +261,7 @@ export function ViajesDashboard() {
     try {
       await api(`/api/trips/${encodeURIComponent(id)}/duplicar`, { method: "POST" });
       notificar("Viaje duplicado (sin asignar).");
+      qc.invalidateQueries({ queryKey: ["viajes"] });
     } catch (e) {
       notificar(e instanceof ApiError ? e.message : "Error al duplicar.", "error");
     }
@@ -217,24 +276,41 @@ export function ViajesDashboard() {
     }
   }
 
-  async function eliminarViaje(v: Viaje) {
-    if (!window.confirm(`¿Eliminar el viaje ${v.referencia || v.id}? No se puede deshacer.`)) return;
+  async function confirmarBorrado() {
+    if (!borrarViaje) return;
+    const id = borrarViaje.id;
+    setBorrarViaje(null);
     try {
-      await api(`/api/trips/${encodeURIComponent(v.id)}`, { method: "DELETE" });
+      await api(`/api/trips/${encodeURIComponent(id)}`, { method: "DELETE" });
       notificar("Viaje eliminado.");
+      qc.invalidateQueries({ queryKey: ["viajes"] });
     } catch (e) {
       notificar(e instanceof ApiError ? e.message : "Error al eliminar.", "error");
     }
   }
 
+  // Atajo "n" (fuera de inputs) → nuevo viaje.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      const enInput = t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT");
+      if (!enInput && !e.ctrlKey && !e.metaKey && !e.altKey && e.key.toLowerCase() === "n") {
+        e.preventDefault();
+        setSheet({ abierto: true, editTripId: null });
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   // Exportación CSV de las filas filtradas + ordenadas (sin paginación).
   function exportarCsv() {
     const filas = table.getFilteredRowModel().rows.map((r) => r.original);
-    const encabezados = ["ref", "id", "matricula", "conductor", "origen", "destino", "cliente", "precio", "km", "peaje", "tiempo_min", "carga", "descarga", "estado"];
+    const encabezados = ["ref", "id", "matricula", "conductor", "origen", "destino", "cliente", "precio", "km", "peaje", "tiempo_min", "carga", "descarga", "estado_pago", "estado", "velocidad", "eta", "itinerario", "docs"];
     const lineas = [encabezados.join(",")];
     for (const v of filas) {
       lineas.push(
-        [v.referencia, v.id, v.matricula, v.conductor, v.origen, v.destino, v.cliente, v.precio, v.km_total, v.peaje_estimado, v.tiempo_min, v.fecha_esperada_carga, v.fecha_esperada_descarga, v.estado]
+        [v.referencia, v.id, v.matricula, v.conductor, v.origen, v.destino, v.cliente, v.precio, v.km_total, v.peaje_estimado, v.tiempo_min, v.fecha_esperada_carga, v.fecha_esperada_descarga, v.estado_pago, v.estado, v.velocidad, v.eta, v.itinerario, v.n_documentos]
           .map((x) => (x == null ? "" : `"${String(x).replace(/"/g, '""')}"`))
           .join(","),
       );
@@ -261,8 +337,8 @@ export function ViajesDashboard() {
           <button onClick={() => setVista("mapa")} className={`flex items-center gap-1 rounded px-2 py-1 text-xs ${vista === "mapa" ? "bg-primary text-primary-foreground" : "text-muted-foreground"}`}><MapIcon size={14} /> Mapa</button>
         </div>
 
-        <input value={search.cliente ?? ""} onChange={(e) => setFilter("cliente", e.target.value)} placeholder="Cliente…" className="h-8 w-36 rounded border px-2 text-xs" />
-        <input value={search.vehiculo ?? ""} onChange={(e) => setFilter("vehiculo", e.target.value)} placeholder="Vehículo…" className="h-8 w-32 rounded border px-2 text-xs" />
+        <input value={search.cliente ?? ""} onChange={(e) => setFilterDebounced("cliente", e.target.value)} placeholder="Cliente…" className="h-8 w-36 rounded border px-2 text-xs" />
+        <input value={search.vehiculo ?? ""} onChange={(e) => setFilterDebounced("vehiculo", e.target.value)} placeholder="Vehículo…" className="h-8 w-32 rounded border px-2 text-xs" />
         <select value={search.estado ?? ""} onChange={(e) => setFilter("estado", e.target.value)} className="h-8 rounded border px-2 text-xs">
           <option value="">Todos los estados</option>
           {["sin_asignar", "enviado", "Llegada_Origen", "Cargando", "En_Transito", "Llegada_Destino", "Descargando", "Entregado", "error"].map((s) => <option key={s} value={s}>{s}</option>)}
@@ -272,7 +348,7 @@ export function ViajesDashboard() {
 
         <div className="ml-auto flex items-center gap-2">
           <button onClick={exportarCsv} className="flex items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-medium hover:bg-muted"><Download size={15} /> Exportar CSV</button>
-          <button onClick={() => setSheetAbierto(true)} className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground hover:opacity-90"><Plus size={15} /> Nuevo viaje</button>
+          <button onClick={() => setSheet({ abierto: true, editTripId: null })} className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground hover:opacity-90"><Plus size={15} /> Nuevo viaje (N)</button>
         </div>
       </div>
 
@@ -324,9 +400,36 @@ export function ViajesDashboard() {
       {banner && (
         <div className={`fixed bottom-4 right-4 z-[3000] rounded-lg px-4 py-2 text-sm font-semibold text-white shadow-lg ${banner.tipo === "ok" ? "bg-emerald-600" : "bg-red-600"}`}>{banner.texto}</div>
       )}
+
+      {/* Confirmación de borrado dentro de la página */}
+      {borrarViaje && (
+        <div className="fixed inset-0 z-[2100] flex items-center justify-center bg-black/40" onClick={() => setBorrarViaje(null)}>
+          <div className="w-full max-w-sm rounded-lg border bg-card p-4 shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-sm font-semibold">Eliminar viaje</h3>
+            <p className="mt-2 text-sm text-muted-foreground">¿Eliminar el viaje {borrarViaje.referencia || borrarViaje.id}? No se puede deshacer.</p>
+            <div className="mt-4 flex justify-end gap-2">
+              <button onClick={() => setBorrarViaje(null)} className="rounded border px-3 py-2 text-xs hover:bg-muted">Cancelar</button>
+              <button onClick={confirmarBorrado} className="rounded bg-red-600 px-3 py-2 text-xs font-semibold text-white hover:bg-red-700">Eliminar</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {chatTripId && <ChatViaje tripId={chatTripId} onClose={() => setChatTripId(null)} />}
       {tripDetalle && <DetalleViaje trip={tripDetalle} onClose={() => setTripDetalle(null)} />}
-      {sheetAbierto && <NuevoViajeSheet onClose={() => setSheetAbierto(false)} onCreado={(id, abrirPlanificacion) => { setSheetAbierto(false); qc.invalidateQueries({ queryKey: ["viajes"] }); if (id && abrirPlanificacion) navigate({ to: "/planificacion", search: { viaje: id } }); }} />}
+      {sheet.abierto && (
+        <Suspense fallback={null}>
+          <NuevoViajeSheet
+            editTripId={sheet.editTripId}
+            onClose={() => setSheet({ abierto: false, editTripId: null })}
+            onGuardado={(id, abrirPlanificacion) => {
+              setSheet({ abierto: false, editTripId: null });
+              qc.invalidateQueries({ queryKey: ["viajes"] });
+              if (id && abrirPlanificacion) navigate({ to: "/planificacion", search: { viaje: id } });
+            }}
+          />
+        </Suspense>
+      )}
     </div>
   );
 }

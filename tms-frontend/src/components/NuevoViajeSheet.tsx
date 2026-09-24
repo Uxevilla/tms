@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Controller, useFieldArray, useForm } from "react-hook-form";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useFieldArray, useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import {
@@ -10,15 +10,20 @@ import {
   useSensors,
   type DragEndEvent,
 } from "@dnd-kit/core";
-import { SortableContext, arrayMove, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
+import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { GripVertical, Plus, Trash2, X, Copy } from "lucide-react";
+import { GripVertical, Plus, Trash2, Copy, Paperclip } from "lucide-react";
 import { MapContainer, TileLayer, Marker, Polyline, useMapEvents } from "react-leaflet";
 import L from "leaflet";
 
 import { api, ApiError } from "@/api";
-import { REST_CLIENTES, REST_DIRECCIONES, REST_TARIFAS, REST_CONDUCTORES, REST_VEHICULOS_DISPONIBLES, RUTA, CREAR_VIAJE } from "@/config";
+import {
+  REST_CLIENTES, REST_DIRECCIONES, REST_TARIFAS, REST_CONDUCTORES,
+  REST_VEHICULOS_DISPONIBLES, REST_PROVEEDORES, REST_ACTIVITY_TYPES,
+  REST_REVERSE_GEOCODE, RUTA, CREAR_VIAJE, REST_TRIP,
+} from "@/config";
 import { BuscadorDireccion, type Sugerencia } from "./BuscadorDireccion";
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 
 // ---- Esquema zod (validación en vivo) ----
 const paradaSchema = z.object({
@@ -28,41 +33,68 @@ const paradaSchema = z.object({
   comentario: z.string(),
 });
 
-const esquema = z.object({
-  cliente_id: z.string().min(1, "Selecciona un cliente"),
-  cliente_nombre: z.string(),
-  origen_id: z.string().min(1, "Selecciona el origen"),
-  destino_id: z.string().min(1, "Selecciona el destino"),
-  fecha_carga: z.string().min(1, "Indica la fecha de carga"),
-  fecha_descarga: z.string().min(1, "Indica la fecha de descarga"),
-  tarifa_id: z.string(),
-  precio: z.string(),
-  kilos: z.string(),
-  subcontratado: z.boolean(),
-  proveedor_id: z.string(),
-  coste: z.string(),
-  terminal: z.string(),
-  conductor_id: z.string(),
-  semirremolque_id: z.string(),
-  paradas: z.array(paradaSchema),
-});
+const esquema = z
+  .object({
+    cliente_id: z.string().min(1, "Selecciona un cliente"),
+    cliente_nombre: z.string(),
+    origen_id: z.string().min(1, "Selecciona el origen"),
+    destino_id: z.string().min(1, "Selecciona el destino"),
+    actividad_origen: z.string(),
+    actividad_destino: z.string(),
+    fecha_carga: z.string().min(1, "Indica la fecha de carga"),
+    fecha_descarga: z.string().min(1, "Indica la fecha de descarga"),
+    tarifa_id: z.string(),
+    precio: z.string(),
+    kilos: z.string(),
+    subcontratado: z.boolean(),
+    proveedor_id: z.string(),
+    coste: z.string(),
+    terminal: z.string(),
+    conductor_id: z.string(),
+    semirremolque_id: z.string(),
+    paradas: z.array(paradaSchema),
+  })
+  .superRefine((v, ctx) => {
+    if (v.fecha_carga && v.fecha_descarga && v.fecha_descarga < v.fecha_carga) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["fecha_descarga"],
+        message: "La descarga no puede ser anterior a la carga",
+      });
+    }
+  });
 
 type FormViaje = z.infer<typeof esquema>;
 
 interface Cliente { id: number; nombre: string; }
 interface Direccion { id: string; nombre?: string; empresa?: string; ciudad?: string; lat: number | null; lng: number | null; }
 interface Tarifa { id: number; nombre: string; tipo: string; precio: number; cliente_id: number | null; activo: boolean; }
+interface Proveedor { id: number; nombre: string; }
 
 interface RespuestaRuta {
   ptv?: { polyline?: string; distance_km?: number; travel_time_min?: number; toll?: number | null };
   total_km?: number;
 }
 
-interface ParadaPayload { nombre?: string; ciudad?: string; lat?: number | null; lng?: number | null; actividad?: string; comentario?: string; }
+interface ParadaPayload { nombre?: string; ciudad?: string; calle?: string; cp?: string; lat?: number | null; lng?: number | null; actividad?: string; comentario?: string; }
+interface DireccionPayload { nombre?: string; ciudad?: string; calle?: string; cp?: string; lat?: number | null; lng?: number | null; actividad?: string; }
 interface PayloadTrip {
-  origen?: { nombre?: string; ciudad?: string; lat?: number | null; lng?: number | null };
-  destino?: { nombre?: string; ciudad?: string; lat?: number | null; lng?: number | null };
+  origen?: DireccionPayload;
+  destino?: DireccionPayload;
   paradas?: ParadaPayload[];
+  cliente?: string;
+  cliente_id?: number;
+  conductor_id?: number | null;
+  terminal?: string;
+  semirremolque_id?: string;
+  fecha_esperada_carga?: string;
+  fecha_esperada_descarga?: string;
+  tarifa_id?: number | null;
+  precio?: number;
+  kilos?: number;
+  subcontratado?: boolean;
+  proveedor_id?: number | null;
+  coste?: number;
 }
 
 // Convierte la Sugerencia del BuscadorDireccion a la Direccion que manejamos (id string).
@@ -108,22 +140,32 @@ function FilaParada({ id, index, onQuitar, children }: { id: string; index: numb
   );
 }
 
-export function NuevoViajeSheet({ onClose, onCreado }: { onClose: () => void; onCreado: (id: string | null, abrirPlanificacion: boolean) => void }) {
+export function NuevoViajeSheet({ onClose, onGuardado, editTripId = null }: {
+  onClose: () => void;
+  onGuardado: (id: string | null, abrirPlanificacion: boolean) => void;
+  editTripId?: string | null;
+}) {
   const [clientes, setClientes] = useState<Cliente[]>([]);
   const [direcciones, setDirecciones] = useState<Direccion[]>([]);
   const [tarifas, setTarifas] = useState<Tarifa[]>([]);
   const [conductores, setConductores] = useState<{ id: number; nombre: string }[]>([]);
   const [vehiculos, setVehiculos] = useState<{ id: string; matricula: string; categoria: string }[]>([]);
+  const [proveedores, setProveedores] = useState<Proveedor[]>([]);
+  const [actividades, setActividades] = useState<Record<string, string>>({});
+  const [documentos, setDocumentos] = useState<{ nombre: string; b64: string }[]>([]);
   const [buscandoCliente, setBuscandoCliente] = useState("");
   const [clienteAbierto, setClienteAbierto] = useState(false);
   const [servidor, setServidor] = useState<Record<string, string>>({});
   const [ruta, setRuta] = useState<{ polyline: [number, number][]; km: number; min: number; peaje: number | null; calculando: boolean }>({ polyline: [], km: 0, min: 0, peaje: null, calculando: false });
+  const [cargandoEdicion, setCargandoEdicion] = useState(!!editTripId);
 
-  const { register, control, handleSubmit, watch, setValue, getValues, reset, setError, clearErrors, trigger, formState: { errors, isValid, isSubmitting } } = useForm<FormViaje>({
+  const { register, control, handleSubmit, watch, setValue, getValues, reset, clearErrors, trigger, formState: { errors, isValid } } = useForm<FormViaje>({
     resolver: zodResolver(esquema),
     mode: "onChange",
     defaultValues: {
-      cliente_id: "", cliente_nombre: "", origen_id: "", destino_id: "", fecha_carga: "", fecha_descarga: "",
+      cliente_id: "", cliente_nombre: "", origen_id: "", destino_id: "",
+      actividad_origen: "CARGA", actividad_destino: "DESCARGA",
+      fecha_carga: "", fecha_descarga: "",
       tarifa_id: "", precio: "", kilos: "", subcontratado: false, proveedor_id: "", coste: "",
       terminal: "", conductor_id: "", semirremolque_id: "", paradas: [],
     },
@@ -140,28 +182,79 @@ export function NuevoViajeSheet({ onClose, onCreado }: { onClose: () => void; on
     }
   };
 
-  // Carga de opciones (clientes, direcciones, tarifas, conductores, vehículos).
-  // Cada opción es independiente: un fallo puntual (p. ej. pool de BD) no vacía el resto.
+  // Carga de opciones (cada una independiente).
   useEffect(() => {
     (async () => {
-      const [cli, dir, tar, con, veh] = await Promise.allSettled([
+      const [cli, dir, tar, con, veh, prov, act] = await Promise.allSettled([
         api<{ clientes: Cliente[] }>(REST_CLIENTES),
         api<{ direcciones: Direccion[] }>(REST_DIRECCIONES),
         api<{ tarifas: Tarifa[] }>(REST_TARIFAS),
         api<{ conductores: { id: number; nombre: string }[] }>(REST_CONDUCTORES),
         api<{ vehiculos: { id: string; matricula: string; categoria: string }[] }>(REST_VEHICULOS_DISPONIBLES),
+        api<{ proveedores: Proveedor[] }>(REST_PROVEEDORES),
+        api<{ actividades: Record<string, string> }>(REST_ACTIVITY_TYPES),
       ]);
       if (cli.status === "fulfilled") setClientes(cli.value.clientes);
       if (dir.status === "fulfilled") setDirecciones(dir.value.direcciones);
       if (tar.status === "fulfilled") setTarifas(tar.value.tarifas.filter((t) => t.activo !== false));
       if (con.status === "fulfilled") setConductores(con.value.conductores);
       if (veh.status === "fulfilled") setVehiculos(veh.value.vehiculos);
-      const fallos = [["clientes", cli], ["direcciones", dir], ["tarifas", tar], ["conductores", con], ["vehiculos", veh]] as const;
+      if (prov.status === "fulfilled") setProveedores(prov.value.proveedores);
+      if (act.status === "fulfilled") setActividades(act.value.actividades);
+      const fallos = [["clientes", cli], ["direcciones", dir], ["tarifas", tar], ["conductores", con], ["vehiculos", veh], ["proveedores", prov], ["actividades", act]] as const;
       for (const [nombre, r] of fallos) {
         if (r.status === "rejected") console.error(`[viajes] error cargando ${nombre}:`, r.reason);
       }
     })();
   }, []);
+
+  // Precarga en modo edición desde GET /api/trips/{id}.
+  useEffect(() => {
+    if (!editTripId) { setCargandoEdicion(false); return; }
+    (async () => {
+      try {
+        const r = await api<{ payload?: PayloadTrip }>(REST_TRIP(editTripId));
+        const p = r.payload ?? {};
+        const synth = (d?: DireccionPayload): string => {
+          if (!d?.nombre) return "";
+          const id = `_edit_${Math.random().toString(36).slice(2, 8)}`;
+          setDirecciones((prev) => (prev.some((x) => String(x.id) === id) ? prev : [...prev, { id, nombre: d.nombre, ciudad: d.ciudad, lat: d.lat ?? null, lng: d.lng ?? null }]));
+          return id;
+        };
+        reset({
+          cliente_id: p.cliente_id ? String(p.cliente_id) : "",
+          cliente_nombre: p.cliente || "",
+          origen_id: synth(p.origen),
+          destino_id: synth(p.destino),
+          actividad_origen: p.origen?.actividad || "CARGA",
+          actividad_destino: p.destino?.actividad || "DESCARGA",
+          fecha_carga: p.fecha_esperada_carga || "",
+          fecha_descarga: p.fecha_esperada_descarga || "",
+          tarifa_id: p.tarifa_id ? String(p.tarifa_id) : "",
+          precio: p.precio ? String(p.precio) : "",
+          kilos: p.kilos ? String(p.kilos) : "",
+          subcontratado: !!p.subcontratado,
+          proveedor_id: p.proveedor_id ? String(p.proveedor_id) : "",
+          coste: p.coste ? String(p.coste) : "",
+          terminal: p.terminal || "",
+          conductor_id: p.conductor_id ? String(p.conductor_id) : "",
+          semirremolque_id: p.semirremolque_id || "",
+          paradas: (p.paradas ?? []).map((par) => ({
+            id: `_edit_p_${Math.random().toString(36).slice(2, 8)}`,
+            dirId: synth(par),
+            actividad: par.actividad || "DESCARGA",
+            comentario: par.comentario || "",
+          })),
+        });
+        if (p.cliente) setBuscandoCliente(p.cliente);
+      } catch (e) {
+        console.error("[viajes] error precargando viaje:", e);
+      } finally {
+        setCargandoEdicion(false);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editTripId]);
 
   const clienteSeleccionado = watch("cliente_id");
   const origenId = watch("origen_id");
@@ -169,6 +262,7 @@ export function NuevoViajeSheet({ onClose, onCreado }: { onClose: () => void; on
   const paradas = watch("paradas");
   const tarifaId = watch("tarifa_id");
   const kilos = watch("kilos");
+  const subcontratado = watch("subcontratado");
 
   // Puntos de la ruta: origen + paradas + destino (para el minimapa + recalculo).
   const puntosRuta = useMemo(() => {
@@ -216,26 +310,27 @@ export function NuevoViajeSheet({ onClose, onCreado }: { onClose: () => void; on
     setValue("cliente_nombre", c.nombre);
     setBuscandoCliente(c.nombre);
     setClienteAbierto(false);
-    // Tarifa del cliente.
     const tarifa = tarifas.find((t) => t.cliente_id === c.id);
     if (tarifa) setValue("tarifa_id", String(tarifa.id));
-    // Direcciones habituales del cliente (empresa = nombre del cliente).
     const hab = direcciones.filter((d) => d.empresa === c.nombre);
     if (hab.length >= 2) {
       setValue("origen_id", String(hab[0].id));
       setValue("destino_id", String(hab[1].id));
     }
-    trigger(); // revalida todo el formulario (validación en vivo).
+    trigger();
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
   };
 
-  // "Duplicar último viaje de este cliente": rellena origen/destino/paradas desde el último viaje.
+  // "Duplicar último viaje de este cliente": el más reciente por fecha de descarga.
   async function duplicarUltimo() {
     if (!clienteSeleccionado) return;
     try {
-      const viajes = await api<{ viajes: { id: string; cliente: string }[] }>(`/api/viajes`);
-      const ultimo = viajes.viajes.find((v) => v.cliente === getValues("cliente_nombre"));
+      const viajes = await api<{ viajes: { id: string; cliente: string; fecha_esperada_descarga?: string }[] }>(`/api/viajes`);
+      const delCliente = viajes.viajes.filter((v) => v.cliente === getValues("cliente_nombre"));
+      delCliente.sort((a, b) => (b.fecha_esperada_descarga || "").localeCompare(a.fecha_esperada_descarga || ""));
+      const ultimo = delCliente[0];
       if (!ultimo) return;
-      const t = await api<{ payload?: PayloadTrip }>(`/api/trips/${encodeURIComponent(ultimo.id)}`);
+      const t = await api<{ payload?: PayloadTrip }>(REST_TRIP(ultimo.id));
       const p = t.payload ?? {};
       const synth = (nombre: string, lat: number | null, lng: number | null, ciudad = "") => {
         const id = `_dup_${Math.random().toString(36).slice(2, 8)}`;
@@ -258,7 +353,33 @@ export function NuevoViajeSheet({ onClose, onCreado }: { onClose: () => void; on
     }
   }
 
-  const addParada = () => append({ id: `_p_${Math.random().toString(36).slice(2, 8)}`, dirId: "", actividad: "DESCARGA", comentario: "" });
+  const addParada = (dirId = "", actividad = "DESCARGA", comentario = "") =>
+    append({ id: `_p_${Math.random().toString(36).slice(2, 8)}`, dirId, actividad, comentario });
+
+  // Clic en el minimapa → nueva parada con geocodificación inversa.
+  async function onMapClick(lat: number, lng: number) {
+    try {
+      const r = await api<{ resultado?: { nombre?: string; calle?: string; ciudad?: string; lat?: number; lng?: number } }>(
+        `${REST_REVERSE_GEOCODE}?lat=${lat}&lng=${lng}`,
+      );
+      const res = r.resultado;
+      const nombre = res?.nombre || res?.calle || `${lat.toFixed(4)}, ${lng.toFixed(4)}`;
+      const id = `_map_${Math.random().toString(36).slice(2, 8)}`;
+      setDirecciones((prev) => [...prev, { id, nombre, ciudad: res?.ciudad || "", lat, lng }]);
+      addParada(id, "DESCARGA", "");
+    } catch (e) {
+      console.error("[viajes] error geocodificando:", e);
+    }
+  }
+
+  function onFiles(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(e.target.files ?? []);
+    for (const file of files) {
+      const reader = new FileReader();
+      reader.onload = () => setDocumentos((p) => [...p, { nombre: file.name, b64: String(reader.result) }]);
+      reader.readAsDataURL(file);
+    }
+  }
 
   // Precio estimado según tarifa (km o kilos o viaje).
   const precioEstimado = useMemo(() => {
@@ -286,8 +407,8 @@ export function NuevoViajeSheet({ onClose, onCreado }: { onClose: () => void; on
     };
     const tarifa = tarifas.find((x) => String(x.id) === f.tarifa_id);
     const payload = {
-      origen: { ...dir(f.origen_id), actividad: "CARGA" },
-      destino: { ...dir(f.destino_id), actividad: "DESCARGA" },
+      origen: { ...dir(f.origen_id), actividad: f.actividad_origen || "CARGA" },
+      destino: { ...dir(f.destino_id), actividad: f.actividad_destino || "DESCARGA" },
       paradas: f.paradas.map((p) => {
         const d = direcciones.find((x) => String(x.id) === p.dirId);
         return { nombre: d?.nombre || "Parada", ciudad: d?.ciudad || "", calle: "", cp: "", pais: "ES", lat: d?.lat ?? null, lng: d?.lng ?? null, actividad: p.actividad, comentario: p.comentario };
@@ -313,14 +434,15 @@ export function NuevoViajeSheet({ onClose, onCreado }: { onClose: () => void; on
       gastos: 0,
       iva: 21,
       estado_pago: "pendiente",
-      documentos: [],
+      documentos,
     };
     try {
-      const r = await api<{ trip_id?: string }>(CREAR_VIAJE, { method: "POST", body: JSON.stringify(payload) });
-      onCreado(r.trip_id ?? null, abrirPlanificacion);
+      const url = editTripId ? REST_TRIP(editTripId) : CREAR_VIAJE;
+      const method = editTripId ? "PUT" : "POST";
+      const r = await api<{ trip_id?: string }>(url, { method, body: JSON.stringify(payload) });
+      onGuardado(editTripId ?? r.trip_id ?? null, abrirPlanificacion);
     } catch (e) {
       if (e instanceof ApiError && e.status === 422) {
-        // Errores de validación por campo (detail de FastAPI).
         const det = (e.detail as { detail?: unknown })?.detail;
         if (Array.isArray(det)) {
           const mapa: Record<string, string> = {};
@@ -332,17 +454,22 @@ export function NuevoViajeSheet({ onClose, onCreado }: { onClose: () => void; on
           return;
         }
       }
-      console.error("[viajes] error creando viaje:", e);
-      setServidor({ general: e instanceof ApiError ? e.message : "Error de red al crear el viaje." });
+      console.error("[viajes] error guardando viaje:", e);
+      setServidor({ general: e instanceof ApiError ? e.message : "Error de red al guardar el viaje." });
     }
   }
 
-  // Atajos: Ctrl+Enter guarda; Ctrl+Shift+Enter guarda y abre /planificacion.
+  // Atajos: Ctrl+Enter guarda; Ctrl+Shift+Enter guarda y abre /planificacion; "p" añade parada.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      const enInput = t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT");
       if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
         e.preventDefault();
         guardar(e.shiftKey);
+      } else if (!enInput && !e.ctrlKey && !e.metaKey && !e.altKey && e.key.toLowerCase() === "p") {
+        e.preventDefault();
+        addParada();
       }
     };
     window.addEventListener("keydown", onKey);
@@ -350,21 +477,22 @@ export function NuevoViajeSheet({ onClose, onCreado }: { onClose: () => void; on
   });
 
   const clientesFiltrados = clientes.filter((c) => c.nombre.toLowerCase().includes(buscandoCliente.toLowerCase())).slice(0, 8);
+  const listaActividades = Object.entries(actividades);
 
   return (
-    <div className="fixed inset-0 z-[2000]">
-      <div className="absolute inset-0 bg-black/40" onClick={onClose} />
-      <div className="absolute inset-y-0 right-0 flex w-full max-w-xl flex-col border-l bg-card shadow-2xl">
-        <header className="flex items-center justify-between border-b px-4 py-3">
-          <h3 className="text-sm font-semibold">Nuevo viaje</h3>
-          <button onClick={onClose} className="rounded p-1 text-muted-foreground hover:bg-muted"><X size={18} /></button>
-        </header>
+    <Sheet open onOpenChange={(o) => { if (!o) onClose(); }}>
+      <SheetContent side="right" className="flex w-full flex-col gap-0 p-0 sm:max-w-xl">
+        <SheetHeader className="border-b px-4 py-3">
+          <SheetTitle className="text-sm font-semibold">{editTripId ? "Editar viaje" : "Nuevo viaje"}</SheetTitle>
+        </SheetHeader>
 
         <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4 text-sm">
+          {cargandoEdicion && <div className="text-xs text-muted-foreground">Cargando viaje…</div>}
+
           {/* Cliente con autocompletado */}
           <div className="relative">
             <label className="mb-0.5 block text-xs text-muted-foreground">Cliente *</label>
-            <input value={buscandoCliente} onChange={(e) => { setBuscandoCliente(e.target.value); setClienteAbierto(true); }} onFocus={() => setClienteAbierto(true)} onKeyDown={(e) => { if (e.key === "Enter" && clienteAbierto && clientesFiltrados.length > 0) { e.preventDefault(); elegirCliente(clientesFiltrados[0]); } }} placeholder="Buscar cliente…" className="w-full rounded-md border px-2 py-1.5 text-sm" />
+            <input autoFocus value={buscandoCliente} onChange={(e) => { setBuscandoCliente(e.target.value); setClienteAbierto(true); }} onFocus={() => setClienteAbierto(true)} onKeyDown={(e) => { if (e.key === "Enter" && clienteAbierto && clientesFiltrados.length > 0) { e.preventDefault(); elegirCliente(clientesFiltrados[0]); } }} placeholder="Buscar cliente…" className="w-full rounded-md border px-2 py-1.5 text-sm" />
             {servidor.cliente_id && <div className="text-[11px] text-red-500">{servidor.cliente_id}</div>}
             {errors.cliente_id?.message && <div className="text-[11px] text-red-500">{errors.cliente_id.message}</div>}
             {clienteAbierto && clientesFiltrados.length > 0 && (
@@ -402,34 +530,55 @@ export function NuevoViajeSheet({ onClose, onCreado }: { onClose: () => void; on
             </div>
           </div>
 
-          <div>
-            <label className="mb-0.5 block text-xs text-muted-foreground">Origen *</label>
-            <BuscadorDireccion placeholder="Buscar origen…" value={dirNombre(origenId)} onSelect={(d) => { setDirecciones((p) => (p.some((x) => String(x.id) === String(d.id)) ? p : [...p, aDireccion(d)])); setValue("origen_id", String(d.id), { shouldValidate: true }); }} onClear={() => setValue("origen_id", "")} />
-            {errors.origen_id?.message && <div className="text-[11px] text-red-500">{errors.origen_id.message}</div>}
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="mb-0.5 block text-xs text-muted-foreground">Origen *</label>
+              <BuscadorDireccion placeholder="Buscar origen…" value={dirNombre(origenId)} onSelect={(d) => { setDirecciones((p) => (p.some((x) => String(x.id) === String(d.id)) ? p : [...p, aDireccion(d)])); setValue("origen_id", String(d.id), { shouldValidate: true }); }} onClear={() => setValue("origen_id", "")} />
+              {errors.origen_id?.message && <div className="text-[11px] text-red-500">{errors.origen_id.message}</div>}
+            </div>
+            <div>
+              <label className="mb-0.5 block text-xs text-muted-foreground">Actividad</label>
+              <select {...register("actividad_origen")} className="w-full rounded-md border px-2 py-1.5 text-sm">
+                {listaActividades.map(([nombre]) => <option key={nombre} value={nombre}>{nombre}</option>)}
+              </select>
+            </div>
           </div>
 
           {/* Paradas reordenables */}
           <div className="space-y-2">
             <div className="flex items-center justify-between">
               <span className="text-xs font-semibold uppercase text-muted-foreground">Paradas</span>
-              <button type="button" onClick={addParada} className="flex items-center gap-1 rounded border border-dashed px-2 py-0.5 text-[11px] hover:bg-muted"><Plus size={12} /> Añadir parada</button>
+              <button type="button" onClick={() => addParada()} className="flex items-center gap-1 rounded border border-dashed px-2 py-0.5 text-[11px] hover:bg-muted"><Plus size={12} /> Añadir parada (P)</button>
             </div>
             <DndContext sensors={sensores} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
               <SortableContext items={fields.map((f) => f.id)} strategy={verticalListSortingStrategy}>
                 {fields.map((f, i) => (
                   <FilaParada key={f.id} id={f.id} index={i} onQuitar={() => remove(i)}>
                     <BuscadorDireccion placeholder="Buscar parada…" value={dirNombre(f.dirId)} onSelect={(d) => { setDirecciones((p) => (p.some((x) => String(x.id) === String(d.id)) ? p : [...p, aDireccion(d)])); setValue(`paradas.${i}.dirId`, String(d.id)); }} onClear={() => setValue(`paradas.${i}.dirId`, "")} />
-                    <input {...register(`paradas.${i}.comentario`)} placeholder="Comentarios…" className="mt-1 w-full rounded-md border px-2 py-1 text-xs" />
+                    <div className="mt-1 flex gap-1">
+                      <select {...register(`paradas.${i}.actividad`)} className="w-full rounded-md border px-2 py-1 text-xs">
+                        {listaActividades.map(([nombre]) => <option key={nombre} value={nombre}>{nombre}</option>)}
+                      </select>
+                      <input {...register(`paradas.${i}.comentario`)} placeholder="Comentarios…" className="w-full rounded-md border px-2 py-1 text-xs" />
+                    </div>
                   </FilaParada>
                 ))}
               </SortableContext>
             </DndContext>
           </div>
 
-          <div>
-            <label className="mb-0.5 block text-xs text-muted-foreground">Destino *</label>
-            <BuscadorDireccion placeholder="Buscar destino…" value={dirNombre(destinoId)} onSelect={(d) => { setDirecciones((p) => (p.some((x) => String(x.id) === String(d.id)) ? p : [...p, aDireccion(d)])); setValue("destino_id", String(d.id), { shouldValidate: true }); }} onClear={() => setValue("destino_id", "")} />
-            {errors.destino_id?.message && <div className="text-[11px] text-red-500">{errors.destino_id.message}</div>}
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="mb-0.5 block text-xs text-muted-foreground">Destino *</label>
+              <BuscadorDireccion placeholder="Buscar destino…" value={dirNombre(destinoId)} onSelect={(d) => { setDirecciones((p) => (p.some((x) => String(x.id) === String(d.id)) ? p : [...p, aDireccion(d)])); setValue("destino_id", String(d.id), { shouldValidate: true }); }} onClear={() => setValue("destino_id", "")} />
+              {errors.destino_id?.message && <div className="text-[11px] text-red-500">{errors.destino_id.message}</div>}
+            </div>
+            <div>
+              <label className="mb-0.5 block text-xs text-muted-foreground">Actividad</label>
+              <select {...register("actividad_destino")} className="w-full rounded-md border px-2 py-1.5 text-sm">
+                {listaActividades.map(([nombre]) => <option key={nombre} value={nombre}>{nombre}</option>)}
+              </select>
+            </div>
           </div>
 
           <div className="grid grid-cols-2 gap-2">
@@ -447,12 +596,39 @@ export function NuevoViajeSheet({ onClose, onCreado }: { onClose: () => void; on
             {conductores.map((c) => <option key={c.id} value={c.id}>{c.nombre}</option>)}
           </select>
 
+          {/* Subcontratado */}
+          <div className="rounded-md border p-2">
+            <label className="flex items-center gap-2 text-xs font-medium">
+              <input type="checkbox" {...register("subcontratado")} className="h-4 w-4" /> Subcontratado
+            </label>
+            {subcontratado && (
+              <div className="mt-2 grid grid-cols-2 gap-2">
+                <select {...register("proveedor_id")} className="rounded-md border px-2 py-1.5 text-sm">
+                  <option value="">— Proveedor —</option>
+                  {proveedores.map((p) => <option key={p.id} value={p.id}>{p.nombre}</option>)}
+                </select>
+                <input {...register("coste")} type="number" step="0.01" placeholder="Coste (€)" className="w-full rounded-md border px-2 py-1.5 text-sm" />
+              </div>
+            )}
+          </div>
+
+          {/* Documentos */}
+          <div>
+            <label className="mb-0.5 flex items-center gap-1.5 text-xs text-muted-foreground"><Paperclip size={13} /> Documentos</label>
+            <input type="file" multiple accept=".pdf,image/*" onChange={onFiles} className="w-full text-xs" />
+            {documentos.length > 0 && (
+              <ul className="mt-1 space-y-0.5">
+                {documentos.map((d, i) => <li key={i} className="flex items-center justify-between text-xs text-muted-foreground"><span className="truncate">{d.nombre}</span><button type="button" onClick={() => setDocumentos((p) => p.filter((_, j) => j !== i))} className="text-red-500"><Trash2 size={12} /></button></li>)}
+              </ul>
+            )}
+          </div>
+
           {/* Minimapa + métricas */}
           <div className="rounded-lg border p-2">
             <div className="h-48 w-full overflow-hidden rounded-md">
               <MapContainer center={puntosRuta[0] ? [puntosRuta[0].lat, puntosRuta[0].lng] : [40, -3]} zoom={6} className="h-full w-full">
                 <TileLayer attribution='&copy; OpenStreetMap' url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
-                <MapaClick onAdd={() => {}} />
+                <MapaClick onAdd={onMapClick} />
                 {puntosRuta.map((p, i) => <Marker key={p.id} position={[p.lat, p.lng]} icon={L.divIcon({ className: "bg-transparent", html: `<svg width="16" height="22" viewBox="0 0 24 32"><path d="M12 0C5.4 0 0 5.4 0 12c0 8 12 20 12 20s12-12 12-20C24 5.4 18.6 0 12 0z" fill="${i === 0 ? "#10b981" : i === puntosRuta.length - 1 ? "#ef4444" : "#2563eb"}"/></svg>`, iconSize: [16, 22], iconAnchor: [8, 22] })} />)}
                 {ruta.polyline.length > 1 && <Polyline positions={ruta.polyline} pathOptions={{ color: "#2563eb", weight: 4 }} />}
               </MapContainer>
@@ -472,10 +648,10 @@ export function NuevoViajeSheet({ onClose, onCreado }: { onClose: () => void; on
           <span className="text-[11px] text-muted-foreground">Ctrl+Enter guarda · Ctrl+Shift+Enter guarda y abre Planificación</span>
           <div className="flex gap-2">
             <button onClick={onClose} className="rounded border px-3 py-2 text-xs hover:bg-muted">Cancelar</button>
-            <button onClick={() => guardar(false)} disabled={!isValid} className="rounded bg-primary px-4 py-2 text-xs font-semibold text-primary-foreground hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50">Crear viaje</button>
+            <button onClick={() => guardar(false)} disabled={!isValid} className="rounded bg-primary px-4 py-2 text-xs font-semibold text-primary-foreground hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50">{editTripId ? "Guardar" : "Crear viaje"}</button>
           </div>
         </footer>
-      </div>
-    </div>
+      </SheetContent>
+    </Sheet>
   );
 }

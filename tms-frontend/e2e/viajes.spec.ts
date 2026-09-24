@@ -1,80 +1,145 @@
 import { test, expect, type Page } from "@playwright/test";
+import { Client } from "pg";
 
-// Auth via storageState (global-setup); solo navegar.
+// Auth vía storageState (global-setup); solo navegar.
 async function abrirViajes(page: Page) {
   await page.goto("/viajes");
-  await expect(page).toHaveURL(/\/viajes/);
   await expect(page.getByRole("button", { name: /Nuevo viaje/i })).toBeVisible();
 }
 
-// Abre el Sheet de creación con reintento (el dashboard puede re-renderizar y perder el clic).
-async function abrirSheet(page: Page) {
-  await expect(async () => {
-    await page.getByRole("button", { name: /Nuevo viaje/i }).click({ force: true });
-    await expect(page.getByPlaceholder("Buscar cliente…")).toBeVisible({ timeout: 3000 });
-  }).toPass({ timeout: 20_000 });
+// Conteo de viajes en BD (verificación del "crear viaje" por total, no por texto).
+async function countTrips(): Promise<number> {
+  const c = new Client({
+    host: process.env.DB_HOST ?? "127.0.0.1",
+    port: Number(process.env.DB_PORT ?? 5432),
+    user: process.env.DB_USER ?? "tms",
+    password: process.env.DB_PASSWORD ?? "tms",
+    database: process.env.DB_NAME ?? "tms",
+  });
+  await c.connect();
+  const r = await c.query("SELECT count(*)::int AS n FROM operaciones.trips");
+  await c.end();
+  return r.rows[0].n;
+}
+
+// Fecha de HOY en local (misma lógica que `datetime.date.today()` del seed).
+function hoyLocal(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
 test.describe("Viajes (Fase 4)", () => {
-  // Rellena un autocompletado y elige la primera sugerencia con Enter (solo teclado).
-  async function elegir(page: Page, placeholder: string, texto: string) {
-    const input = page.getByPlaceholder(placeholder).last(); // .last() = la parada recién añadida
-    await input.fill(texto);
+  // Rellena un autocompletado con teclado: foco + type + Enter (selecciona la primera sugerencia).
+  async function elegirTeclado(page: Page, placeholder: string, texto: string) {
+    const input = page.getByPlaceholder(placeholder).last();
+    await input.focus();
+    await page.keyboard.press("Control+A"); // selecciona el valor precargado (si lo hay)
+    await page.keyboard.type(texto);
     // Espera a que la sugerencia esté disponible (la búsqueda terminó) antes de pulsar Enter.
     await expect(page.getByRole("button", { name: new RegExp(texto.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")) }).first()).toBeVisible({ timeout: 8000 });
-    await input.press("Enter");
+    await page.keyboard.press("Enter");
+    await page.waitForTimeout(300); // deja que el blur + el estado de React se apliquen
   }
 
   test("crear un viaje de 2 paradas solo con teclado en < 30 s", async ({ page }) => {
+    const antes = await countTrips();
     await abrirViajes(page);
     const t0 = Date.now();
 
-    await abrirSheet(page);
+    // 1. Abrir el Sheet con el atajo "n" (sin click).
+    await page.keyboard.press("n");
+    await expect(page.getByPlaceholder("Buscar cliente…")).toBeVisible();
 
-    // 1. Cliente (autocompletado → Enter).
-    await elegir(page, "Buscar cliente…", "CLI-E2E");
-    await expect(page.getByPlaceholder("Buscar cliente…")).toHaveValue(/CLI-E2E/);
+    // 2. Cliente (autoFocus) → type + Enter.
+    await page.keyboard.type("CLI-E2E");
+    await expect(page.getByRole("button", { name: /CLI-E2E/ }).first()).toBeVisible({ timeout: 8000 });
+    await page.keyboard.press("Enter");
 
-    // 2. Fechas (carga / descarga).
+    // 3. Fechas (datetime-local no se puede "teclear" con fiabilidad: se rellena el valor).
     await page.locator('input[type="datetime-local"]').nth(0).fill("2026-09-25T08:00");
     await page.locator('input[type="datetime-local"]').nth(1).fill("2026-09-25T18:00");
 
-    // 3. Origen.
-    await elegir(page, "Buscar origen…", "DIR-E2E-ORIGEN");
+    // 4. Origen → foco + type + Enter.
+    await elegirTeclado(page, "Buscar origen…", "DIR-E2E-ORIGEN");
 
-    // 4. Dos paradas.
-    await page.getByRole("button", { name: /Añadir parada|parada/i }).click({ force: true });
-    await elegir(page, "Buscar parada…", "DIR-E2E-PARADA1");
+    // 5. Dos paradas con el atajo "p" (fuera de inputs, tras el blur de la selección).
+    await page.keyboard.press("p");
+    await expect(page.locator('[placeholder="Buscar parada…"]')).toHaveCount(1);
+    await elegirTeclado(page, "Buscar parada…", "DIR-E2E-PARADA1");
 
-    await page.getByRole("button", { name: /Añadir parada|parada/i }).click({ force: true });
-    await elegir(page, "Buscar parada…", "DIR-E2E-PARADA2");
+    await page.keyboard.press("p");
+    await expect(page.locator('[placeholder="Buscar parada…"]')).toHaveCount(2);
+    await elegirTeclado(page, "Buscar parada…", "DIR-E2E-PARADA2");
 
-    // 5. Destino.
-    await elegir(page, "Buscar destino…", "DIR-E2E-DESTINO");
+    // 6. Destino.
+    await elegirTeclado(page, "Buscar destino…", "DIR-E2E-DESTINO");
 
-    // 6. Guardar con atajo (Ctrl+Enter) — sin tocar el botón.
+    // 7. Guardar con Ctrl+Enter.
     await page.keyboard.press("Control+Enter");
 
-    // El viaje aparece en la lista (destino E2EDESTINO) sin recargar.
-    await expect(page.getByText("E2EDESTINO", { exact: false }).first()).toBeVisible({ timeout: 15_000 });
+    // El total de viajes aumenta en 1 (verificado por BD, no por texto).
+    await expect.poll(() => countTrips(), { timeout: 15_000 }).toBe(antes + 1);
     const elapsed = (Date.now() - t0) / 1000;
     expect(elapsed).toBeLessThan(30);
   });
 
+  test("edición en línea de matrícula: optimista y persiste al recargar", async ({ page }) => {
+    await abrirViajes(page);
+
+    const matricula = page.locator('[data-campo="matricula"]').first();
+    await matricula.waitFor({ timeout: 20_000 });
+
+    await matricula.selectOption({ label: "0003-TST" });
+    // Optimista: el select muestra la nueva matrícula sin recargar.
+    await expect(matricula).toHaveValue("0003-TST");
+
+    // Recargar: la edición persiste (el PATCH llegó al servidor).
+    await page.reload();
+    await expect(page.locator('[data-campo="matricula"]').first()).toHaveValue("0003-TST", { timeout: 15_000 });
+  });
+
+  test("filtro de texto con debounce: no añade más de 1 entrada al historial", async ({ page }) => {
+    await abrirViajes(page);
+    await page.waitForTimeout(500);
+    const antes = await page.evaluate(() => history.length);
+
+    const filtro = page.getByPlaceholder("Cliente…");
+    await filtro.pressSequentially("CLI-E2E", { delay: 40 });
+    await page.waitForTimeout(600); // deja pasar el debounce
+
+    const despues = await page.evaluate(() => history.length);
+    expect(despues - antes).toBeLessThanOrEqual(1);
+  });
+
+  test("filtro de fechas desde=hasta=día de carga → el viaje aparece", async ({ page }) => {
+    const hoy = hoyLocal();
+    await abrirViajes(page);
+
+    await page.locator('input[type="date"]').nth(0).fill(hoy);
+    await page.locator('input[type="date"]').nth(1).fill(hoy);
+
+    // E2E-PLAN-OK carga HOY → aparece; E2E-PLAN-OTRO carga ayer → no aparece.
+    await expect(page.getByText("E2E-PLAN-OK")).toBeVisible();
+    await expect(page.getByText("E2E-PLAN-OTRO")).toBeHidden();
+  });
+
   test("validación en vivo: el botón se habilita solo con los obligatorios", async ({ page }) => {
     await abrirViajes(page);
-    await abrirSheet(page);
+    await page.keyboard.press("n");
+    await expect(page.getByPlaceholder("Buscar cliente…")).toBeVisible();
 
-    // Sin rellenar nada, el botón de guardar debe estar deshabilitado.
+    // Sin rellenar nada, el botón de guardar está deshabilitado.
     const guardar = page.getByRole("button", { name: /Crear viaje/i });
     await expect(guardar).toBeDisabled();
 
-    // Al elegir cliente se precargan origen/destino (direcciones habituales); faltan las fechas.
-    await elegir(page, "Buscar cliente…", "CLI-E2E");
+    // Al elegir cliente se precargan origen/destino; faltan las fechas.
+    await page.keyboard.type("CLI-E2E");
+    await expect(page.getByRole("button", { name: /CLI-E2E/ }).first()).toBeVisible({ timeout: 8000 });
+    await page.keyboard.press("Enter");
     await expect(guardar).toBeDisabled();
     await expect(page.getByText(/Indica la fecha de carga/i)).toBeVisible();
 
-    // Al rellenar las fechas, el botón se habilita (cliente + origen + destino + fechas listos).
+    // Al rellenar las fechas, el botón se habilita.
     await page.locator('input[type="datetime-local"]').nth(0).fill("2026-09-25T08:00");
     await page.locator('input[type="datetime-local"]').nth(1).fill("2026-09-25T18:00");
     await expect(guardar).toBeEnabled();

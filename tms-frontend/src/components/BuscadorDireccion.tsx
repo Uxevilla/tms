@@ -84,6 +84,8 @@ export function BuscadorDireccion({ placeholder = "Buscar empresa o lugar…", v
     setSug([]);
     setAbierto(false);
     onSelect({ ...s, id: id as number });
+    // Suelta el foco para que los atajos de teclado globales (p. ej. "p" añadir parada) funcionen.
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
   }
 
   function limpiar() {

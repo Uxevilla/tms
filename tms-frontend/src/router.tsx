@@ -1,4 +1,4 @@
-import { lazy } from "react";
+import { lazy, useEffect } from "react";
 import {
   createRootRoute,
   createRoute,
@@ -6,6 +6,7 @@ import {
   Outlet,
   redirect,
   useNavigate,
+  useParams,
   useSearch,
 } from "@tanstack/react-router";
 
@@ -34,6 +35,16 @@ function Placeholder({ titulo, fase }: { titulo: string; fase: string }) {
       <div className="text-sm">En construcción — {fase}</div>
     </div>
   );
+}
+
+// /viajes/$codigo → abre el panel de entidad del viaje en la lista (no placeholder).
+function ViajeDetalleRedirect() {
+  const { codigo } = useParams({ from: "/app/viajes/$codigo" });
+  const navigate = useNavigate();
+  useEffect(() => {
+    navigate({ to: "/viajes", search: { panel: `viaje:${codigo}` }, replace: true });
+  }, [codigo, navigate]);
+  return null;
 }
 
 // Guards
@@ -144,7 +155,7 @@ const viajesRoute = createRoute({
 const viajeDetalleRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "/viajes/$codigo",
-  component: () => <Placeholder titulo="Detalle de viaje" fase="Fase 4" />,
+  component: () => <ViajeDetalleRedirect />,
 });
 const mensajesRoute = createRoute({
   getParentRoute: () => appRoute,
