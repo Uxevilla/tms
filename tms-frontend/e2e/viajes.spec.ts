@@ -56,14 +56,23 @@ test.describe("Viajes (Fase 4)", () => {
     await page.waitForTimeout(300); // deja que el blur + el estado de React se apliquen
   }
 
+  // Abre el Sheet con el atajo "n". Se despacha vía evaluate: el settle de Playwright tras
+  // `keyboard.press("n")` se cuelga en CI (montaje del Sheet: leaflet + opciones + Radix),
+  // aunque la tecla sí abre el Sheet. El relleno del formulario SÍ usa keyboard.press/type.
+  async function abrirSheetConN(page: Page) {
+    await page.evaluate(() =>
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "n", bubbles: true })),
+    );
+    await expect(page.getByPlaceholder("Buscar cliente…")).toBeVisible({ timeout: 15000 });
+  }
+
   test("crear un viaje de 2 paradas solo con teclado en < 30 s", async ({ page }) => {
     const antes = await countTrips();
     await abrirViajes(page);
     const t0 = Date.now();
 
     // 1. Abrir el Sheet con el atajo "n".
-    await page.keyboard.press("n");
-    await expect(page.getByPlaceholder("Buscar cliente…")).toBeVisible({ timeout: 15000 });
+    await abrirSheetConN(page);
 
     // 2. Cliente → focus + type + Enter.
     await page.getByPlaceholder("Buscar cliente…").focus();
@@ -141,8 +150,7 @@ test.describe("Viajes (Fase 4)", () => {
 
   test("validación en vivo: el botón se habilita solo con los obligatorios", async ({ page }) => {
     await abrirViajes(page);
-    await page.keyboard.press("n");
-    await expect(page.getByPlaceholder("Buscar cliente…")).toBeVisible({ timeout: 15000 });
+    await abrirSheetConN(page);
 
     // Sin rellenar nada, el botón de guardar está deshabilitado.
     const guardar = page.getByRole("button", { name: /Crear viaje/i });
