@@ -6,8 +6,18 @@ Uso: python scripts/seed_e2e.py  (con DB_HOST/DB_PORT/DB_USER/DB_PASSWORD/DB_NAM
 import datetime
 import os
 import sys
+import zoneinfo
 
 import psycopg2
+
+# "hoy" en la zona LOCAL de España (no UTC): el contenedor puede ir en UTC y el test
+# (Node, en el host) usa la hora local; si divergen, los viajes caen fuera del rango
+# visible entre las 00:00 y las 02:00 en España.
+_ZONA = zoneinfo.ZoneInfo("Europe/Madrid")
+
+
+def _hoy() -> str:
+    return datetime.datetime.now(_ZONA).date().isoformat()
 
 
 def main() -> None:
@@ -129,8 +139,8 @@ def main() -> None:
 
     # Fase 3 — arrastre/validación/reasignación. Fechas relativas a HOY para que aparezcan
     # en la vista del día actual y los casos de solapamiento/caducidad sean deterministas.
-    hoy = datetime.date.today().isoformat()
-    ayer_r = (datetime.date.today() - datetime.timedelta(days=1)).isoformat()
+    hoy = _hoy()
+    ayer_r = (datetime.datetime.now(_ZONA).date() - datetime.timedelta(days=1)).isoformat()
 
     # Tractoras de test adicionales (bloqueo por solapamiento + reasignación + auto-scroll).
     for i, (codigo, matricula) in enumerate((("E2E-TRAC2", "0004-TST"), ("E2E-TRAC3", "0005-TST")), start=0):

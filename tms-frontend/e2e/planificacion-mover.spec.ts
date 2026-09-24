@@ -50,6 +50,9 @@ test.beforeEach(async () => {
     "UPDATE operaciones.trips SET terminal='E2E-TRAC', estado='enviado', fecha_esperada_carga=$1, fecha_esperada_descarga=$2 WHERE codigo='E2E-FAIL-1'",
     [hoy + "T18:00", hoy + "T20:00"],
   );
+  // Limpiar viajes ajenos al test (p. ej. demo VIAJE-*) de las tractoras de test:
+  // el seed corre contra la BD compartida y esos viajes (08:00–18:00) solapan con los movimientos.
+  await c.query("UPDATE operaciones.trips SET terminal=NULL WHERE terminal IN ('E2E-TRAC','E2E-TRAC2','E2E-TRAC3') AND codigo LIKE 'VIAJE-%'");
   await c.end();
 });
 
@@ -227,13 +230,14 @@ test.describe("Planificación — envío manual", () => {
     }
   });
 
-  test("j) diagonal: otra tractora +3 h → BD con la nueva tractora y la hora nueva", async ({ page }) => {
+  test("j) diagonal: otra tractora +2 h → BD con la nueva tractora y la hora nueva", async ({ page }) => {
     await abrirPlanificacion(page);
-    const x13 = await xDeHora(page, 13);
-    await soltarEn(page, '[data-viaje-pendiente="E2E-PLAN-OK"]', '[data-tractora="E2E-TRAC3"]', x13);
+    // 11:00 (no 13:00): 13:00 queda a <40 px del borde derecho y el auto-scroll lo desplaza.
+    const x11 = await xDeHora(page, 11);
+    await soltarEn(page, '[data-viaje-pendiente="E2E-PLAN-OK"]', '[data-tractora="E2E-TRAC3"]', x11);
     await expect(page.locator('[data-viaje-bloque="E2E-PLAN-OK"]')).toBeVisible({ timeout: 10000 });
     await expect.poll(async () => (await tripRow("E2E-PLAN-OK")).terminal).toBe("E2E-TRAC3");
-    await expect.poll(async () => ((await tripRow("E2E-PLAN-OK")).fecha_esperada_carga ?? "").slice(11, 16)).toMatch(/^13:/);
+    await expect.poll(async () => ((await tripRow("E2E-PLAN-OK")).fecha_esperada_carga ?? "").slice(11, 16)).toMatch(/^11:/);
   });
 
   test("k) pendiente soltado a las 12:00 → inicio 12:00", async ({ page }) => {
@@ -276,11 +280,12 @@ test.describe("Planificación — envío manual", () => {
     await abrirPlanificacion(page);
     const bloque = page.locator('[data-viaje-bloque="E2E-PLAN-ENVIADO"]');
     await expect(bloque).toBeVisible({ timeout: 10000 });
+    await bloque.hover(); // lo centra en el viewport del eje (el bloque está en 16:00, fuera del área visible)
     const box = await bloque.boundingBox();
-    // Arrastrar en horizontal dentro de la MISMA fila (cambio de hora, sin cambiar de tractora).
-    await page.mouse.move(box!.x + 10, box!.y + box!.height / 2);
+    // Coger por el centro y arrastrar 2 h a la izquierda (→ 15:00) en la MISMA fila:
+    // cambia la hora sin cambiar de tractora y no solapa con E2E-FAIL-1 (18:00–20:00).
     await page.mouse.down();
-    await page.mouse.move(box!.x + 10 + 48, box!.y + box!.height / 2, { steps: 4 });
+    await page.mouse.move(box!.x + box!.width / 2 - 96, box!.y + box!.height / 2, { steps: 4 });
     await page.mouse.up();
     // Ámbar = cambios sin enviar al terminal; el estado se mantiene 'enviado'.
     await expect(bloque).toHaveClass(/border-amber/, { timeout: 10000 });

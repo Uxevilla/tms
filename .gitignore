@@ -36,3 +36,6 @@
 **/test-results/
 **/playwright-report/
 **/.auth/
+
+# Override solo para e2e local (activa TMS_TRIMBLE_FAKE); no va al repo
+tms-stack/docker-compose.fake-e2e.yml
