@@ -1,23 +1,25 @@
 import { test, expect, type Page } from "@playwright/test";
 
-// Smoke test de Fase 0: recorrido por todas las secciones visibles por rol,
-// 0 errores de consola y 0 respuestas HTTP >= 400.
-// El login se hace UNA sola vez por rol en global-setup.ts (storageState),
-// para no chocar con el límite de 8 logins/5 min del backend.
-// Credenciales por variable de entorno (nunca hardcodeadas): E2E_ADMIN_USER,
-// E2E_ADMIN_PASSWORD, E2E_DISPATCHER_USER, E2E_DISPATCHER_PASSWORD.
+// Smoke test (Fase 1): recorrido por todas las secciones visibles del sidebar,
+// 0 errores de consola y 0 respuestas HTTP >= 400; recargar conserva la ruta y
+// "Atrás" funciona. El login se hace UNA vez por rol en global-setup.ts.
+// Credenciales por variable de entorno, nunca hardcodeadas.
 
-// Etiquetas visibles del ribbon por rol (antes del rediseño "Torre de control").
 const SECCIONES: Record<string, string[]> = {
   admin: [
-    "Operaciones", "Vehículos", "RRHH", "Contabilidad", "Gastos",
-    "Documentos", "KPIs", "Mensajería", "Configuración",
+    "Torre de control", "Planificación", "Viajes", "Mensajes",
+    "Vehículos", "Conductores", "Taller",
+    "Facturación", "Gastos", "Contabilidad", "KPIs",
+    "RRHH", "Documentos", "Configuración",
   ],
-  dispatcher: ["Operaciones", "Vehículos", "Gastos", "Documentos", "KPIs", "Mensajería"],
+  dispatcher: [
+    "Torre de control", "Planificación", "Viajes", "Mensajes",
+    "Vehículos", "Conductores", "Taller",
+    "Gastos", "KPIs", "Documentos",
+  ],
 };
 
-// Mosaicos de mapa externos (única excepción de recursos de terceros): se simulan
-// con page.route para que el test no dependa de la red externa.
+// Mosaicos de mapa externos: se simulan para no depender de la red externa.
 const TILE_HOSTS = ["tile.openstreetmap.org", "server.arcgisonline.com"];
 const TILE_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256"></svg>';
 
@@ -46,13 +48,31 @@ test("recorrido sin errores", async ({ page }, testInfo) => {
   const { erroresConsola, respuestas400 } = track(page);
 
   await page.goto("/");
-  await page.getByRole("button", { name: "Operaciones", exact: true }).waitFor({ timeout: 20_000 });
+  await page.getByRole("link", { name: "Torre de control", exact: true }).waitFor({ timeout: 20_000 });
 
   for (const seccion of SECCIONES[rol]) {
-    await page.getByRole("button", { name: seccion, exact: true }).click();
-    await page.waitForTimeout(600);
+    await page.getByRole("link", { name: seccion, exact: true }).click();
+    await page.waitForTimeout(500);
   }
 
   expect(erroresConsola, "errores de consola").toEqual([]);
   expect(respuestas400, "respuestas HTTP >= 400").toEqual([]);
+});
+
+test("recargar conserva la ruta y Atrás funciona", async ({ page }) => {
+  await page.goto("/vehiculos");
+  await page.getByRole("link", { name: "Vehículos", exact: true }).waitFor({ timeout: 20_000 });
+
+  // Recargar conserva la ruta (sin hash).
+  await page.reload();
+  await page.waitForTimeout(800);
+  expect(new URL(page.url()).pathname).toBe("/vehiculos");
+
+  // Navegar a Gastos y volver con "Atrás".
+  await page.getByRole("link", { name: "Gastos", exact: true }).click();
+  await page.waitForTimeout(500);
+  expect(new URL(page.url()).pathname).toBe("/gastos");
+  await page.goBack();
+  await page.waitForTimeout(500);
+  expect(new URL(page.url()).pathname).toBe("/vehiculos");
 });

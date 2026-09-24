@@ -2,17 +2,61 @@
 @tailwind components;
 @tailwind utilities;
 
-html,
-body,
-#root {
-  height: 100%;
-  margin: 0;
+/* ------------------------------------------------------------------ */
+/* Tokens de diseño (spec §4.1). Claro en :root, oscuro en .dark.      */
+/* El conmutador manual añade/elimina `.dark` en <html> y lo guarda en  */
+/* localStorage; sin preferencia manual se sigue prefers-color-scheme.  */
+/* ------------------------------------------------------------------ */
+:root {
+  --bg: 216 27% 97%;            /* #F7F8FA */
+  --surface: 0 0% 100%;         /* #FFFFFF */
+  --surface-2: 216 22% 95%;     /* #F1F3F6 */
+  --border: 217 17% 91%;        /* #E4E7EC */
+  --text: 221 39% 11%;          /* #111827 */
+  --text-muted: 220 9% 46%;     /* #6B7280 */
+  --accent: 221 83% 53%;        /* #2563EB */
+  --estado-en-ruta: 221 83% 53%;
+  --estado-libre: 142 76% 36%;
+  --estado-aviso: 32 95% 44%;
+  --estado-critico: 0 72% 51%;
+  --estado-parado: 220 9% 46%;
 }
 
-/* "Efecto ventana": fondo oscuro sólido detrás de las vistas blancas flotantes.
-   El AppShell pinta bg-slate-900; esto cubre cualquier hueco/scroll del body. */
-body {
-  background-color: #0f172a; /* slate-900 */
+.dark {
+  --bg: 214 19% 7%;             /* #0F1216 */
+  --surface: 216 18% 11%;       /* #171B21 */
+  --surface-2: 217 17% 15%;     /* #1E232B */
+  --border: 217 15% 17%;        /* #262B33 */
+  --text: 216 12% 91%;          /* #E6E8EB */
+  --text-muted: 213 11% 64%;    /* #9AA3AE */
+  --accent: 217 91% 60%;        /* #3B82F6 */
+  --estado-en-ruta: 213 94% 68%;
+  --estado-libre: 152 68% 57%;
+  --estado-aviso: 45 93% 56%;
+  --estado-critico: 0 91% 71%;
+  --estado-parado: 220 9% 64%;
+}
+
+@layer base {
+  * {
+    border-color: hsl(var(--border));
+  }
+  html,
+  body,
+  #root {
+    height: 100%;
+    margin: 0;
+  }
+  body {
+    background-color: hsl(var(--bg));
+    color: hsl(var(--text));
+    font-feature-settings: "tnum" 1, "cv03" 1, "cv04" 1;
+  }
+  /* Cifras alineadas (tablas, importes, fechas). */
+  .tabular-nums,
+  table {
+    font-variant-numeric: tabular-nums;
+  }
 }
 
 /* ---------------------------------------------------------------- */

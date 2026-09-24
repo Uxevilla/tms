@@ -1,39 +1,101 @@
-import type { ReactNode } from "react";
-import type { Seccion, WsStatus } from "../types";
-import { TopToolbar } from "./TopToolbar";
+import { Suspense, useEffect, useState } from "react";
+import { Outlet, useNavigate, useRouterState } from "@tanstack/react-router";
 
-interface AppShellProps {
-  seccion: Seccion;
-  onSeccion: (s: Seccion) => void;
-  wsStatus: WsStatus;
-  onLogout: () => void;
-  children: ReactNode;
-}
+import { SocketProvider, useSocketStatus } from "../context/SocketContext";
+import { Sidebar } from "./Sidebar";
+import { Header } from "./Header";
+import { CommandPalette } from "./CommandPalette";
+import { WsQueryAdapter } from "./WsQueryAdapter";
+import { TooltipProvider } from "./ui/tooltip";
+import { clearToken, getToken } from "../auth";
 
 /**
- * Layout principal — Ribbon + "efecto ventana".
- *
- * - Fondo oscuro sólido (bg-slate-900) en la raíz.
- * - Ribbon de navegación (TopToolbar) fijo arriba, sin sidebar.
- * - El contenido se renderiza dentro de una "ventana" blanca flotante
- *   (bg-white rounded-md shadow-xl p-2) que simula una app de escritorio.
- * - La ventana recibe `min-h-0 flex-1` para que AG Grid ocupe todo el alto
- *   restante sin scroll de página (clave en monitores ultrawide).
+ * Layout autenticado (esqueleto nuevo): barra lateral plegable + cabecera +
+ * contenido. Sustituye al ribbon + "efecto ventana" anterior.
  */
-export function AppShell({ seccion, onSeccion, wsStatus, onLogout, children }: AppShellProps) {
+export function AppShell() {
+  const token = getToken();
+  if (!token) return null; // no debería ocurrir (guard), por seguridad
   return (
-    <div className="flex h-screen w-screen flex-col overflow-hidden bg-slate-900 text-slate-100 antialiased">
-      <TopToolbar
-        seccion={seccion}
-        onSeccion={onSeccion}
-        wsStatus={wsStatus}
-        onLogout={onLogout}
-      />
-      <main className="min-h-0 flex-1 p-2">
-        <div className="flex h-full flex-col overflow-hidden rounded-md bg-white p-2 text-slate-900 shadow-xl">
-          {children}
+    <SocketProvider token={token}>
+      <AppShellInner />
+    </SocketProvider>
+  );
+}
+
+function AppShellInner() {
+  const wsStatus = useSocketStatus();
+  const navigate = useNavigate();
+  const [paleta, setPaleta] = useState(false);
+  const pathname = useRouterState({ select: (s) => s.location.pathname });
+  const [mostrarAviso, setMostrarAviso] = useState(false);
+
+  // Ctrl/⌘+K abre/cierra la paleta de comandos.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setPaleta((v) => !v);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  // Aviso de ruta sin permiso (redirigida desde un guard de rol).
+  useEffect(() => {
+    const aviso = sessionStorage.getItem("tms_aviso");
+    if (aviso) {
+      sessionStorage.removeItem("tms_aviso");
+      setMostrarAviso(true);
+      const t = window.setTimeout(() => setMostrarAviso(false), 4000);
+      return () => window.clearTimeout(t);
+    }
+  }, [pathname]);
+
+  // Sesión caducada en caliente (WS 1008 o fetch 401) → logout + login.
+  useEffect(() => {
+    const onCaducada = () => {
+      clearToken();
+      navigate({ to: "/login" });
+    };
+    window.addEventListener("tms:sesion-caducada", onCaducada);
+    return () => window.removeEventListener("tms:sesion-caducada", onCaducada);
+  }, [navigate]);
+
+  const logout = () => {
+    clearToken();
+    navigate({ to: "/login" });
+  };
+
+  return (
+    <TooltipProvider delayDuration={300}>
+      <div className="flex h-screen w-screen overflow-hidden bg-background text-foreground antialiased">
+        <Sidebar wsStatus={wsStatus} onLogout={logout} />
+        <div className="flex min-w-0 flex-1 flex-col">
+          <Header onOpenPalette={() => setPaleta(true)} />
+          <main className="relative min-h-0 flex-1 overflow-hidden">
+            {mostrarAviso && (
+              <div className="absolute left-1/2 top-3 z-40 -translate-x-1/2 rounded-md border border-estado-aviso/40 bg-estado-aviso/10 px-4 py-2 text-sm text-estado-aviso">
+                No tienes permiso para esa sección.
+              </div>
+            )}
+            <Suspense fallback={<Cargando />}>
+              <Outlet />
+            </Suspense>
+          </main>
         </div>
-      </main>
+        <CommandPalette open={paleta} onOpenChange={setPaleta} />
+        <WsQueryAdapter />
+      </div>
+    </TooltipProvider>
+  );
+}
+
+function Cargando() {
+  return (
+    <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+      Cargando…
     </div>
   );
 }

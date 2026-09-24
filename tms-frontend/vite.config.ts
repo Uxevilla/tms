@@ -9,6 +9,11 @@ const proxy = {
 
 export default defineConfig({
   plugins: [react()],
+  resolve: {
+    alias: {
+      "@": "/src",
+    },
+  },
   server: {
     host: true,
     port: 5173,
