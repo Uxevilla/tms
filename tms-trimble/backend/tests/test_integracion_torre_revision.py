@@ -85,6 +85,29 @@ def test_buscar_sin_recorte_global(scratch_db):
 
 
 @pytest.mark.integration
+def test_buscar_insensible_acentos(scratch_db):
+    tok, conn = _conn(scratch_db)
+    try:
+        casos = [("EMP-MU", "Muñoz"), ("EMP-GU", "Güell"), ("EMP-CA", "Çàrcel")]
+        for eid, nombre in casos:
+            conn.execute("INSERT INTO empleados (id, nombre, apellidos) VALUES (?, ?, '')", (eid, nombre))
+            conn.execute(
+                "INSERT INTO rrhh.conductores (empleado_id, tarjeta_tacografo) VALUES (?, ?)",
+                (eid, f"DID-{eid}"),
+            )
+
+        def busca(q):
+            return [r for r in torre.buscar(q=q, user={"rol": "admin"}, conn=conn)["resultados"] if r["tipo"] == "conductor"]
+
+        assert any(r["titulo"] == "Muñoz" for r in busca("munoz")), "munoz encuentra Muñoz"
+        assert any(r["titulo"] == "Güell" for r in busca("guell")), "guell encuentra Güell"
+        assert any(r["titulo"] == "Çàrcel" for r in busca("carcel")), "carcel encuentra Çàrcel"
+    finally:
+        conn.close()
+        main._tenant_ctx.reset(tok)
+
+
+@pytest.mark.integration
 def test_atencion_8_clases(scratch_db):
     tok, conn = _conn(scratch_db)
     try:

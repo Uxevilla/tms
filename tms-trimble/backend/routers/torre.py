@@ -22,8 +22,12 @@ _MAX_DIA_CONDUCCION_MIN = 540.0
 _ORDEN_SEVERIDAD = {"critico": 0, "aviso": 1, "info": 2}
 
 # Búsqueda insensible a acentos SIN la extensión `unaccent` (translate + lower en SQL).
+# `translate(x, from, to)` exige que from y to tengan la MISMA longitud (1 a 1).
 _ACCENT_FROM = "áéíóúüñàèìòùâêîôûç"
-_ACCENT_TO = "aeiounaeiouaeiouc"
+_ACCENT_TO = "aeiouunaeiouaeiouc"
+assert len(_ACCENT_FROM) == len(_ACCENT_TO) == 18, (
+    "_ACCENT_FROM y _ACCENT_TO deben tener la misma longitud (18) para translate()"
+)
 
 
 # ---------------------------------------------------------------- modelos de respuesta

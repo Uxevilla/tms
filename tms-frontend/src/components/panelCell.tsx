@@ -36,7 +36,7 @@ export function panelCell<T = Record<string, unknown>>(
 ) {
   return (params: { value?: unknown; data?: T }) => {
     const val = params.value;
-    const id = getId ? getId(params.data as T) : val;
+    const id = getId && params.data != null ? getId(params.data as T) : val;
     const txt = val == null || val === "" ? "" : String(val);
     if (id == null || id === "") return <span>{txt}</span>;
 
