@@ -25,6 +25,9 @@ import { panelCell } from "./panelCell";
 
 // Sheet de creación/edición en chunk aparte (react-leaflet + dnd-kit + react-hook-form).
 const NuevoViajeSheet = lazy(() => import("./NuevoViajeSheet").then((m) => ({ default: m.NuevoViajeSheet })));
+// Prefetch del chunk: al abrir el Sheet con el atajo "n" el módulo ya está en caché,
+// sin petición pendiente que retrase el settle del `keyboard.press` (sobre todo en CI).
+void import("./NuevoViajeSheet");
 
 // Filtro por rango de fecha sobre fecha_esperada_carga: compara SOLO la fecha (YYYY-MM-DD).
 const filtroFecha: FilterFn<Viaje> = (row, columnId, filterValue) => {
