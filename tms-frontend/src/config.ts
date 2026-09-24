@@ -39,6 +39,14 @@ export const REST_GASTOS_VEHICULOS = "/api/gastos/vehiculos";
 export const REST_GASTOS_OCR = "/api/gastos/ocr";
 export const REST_RENTABILIDAD = "/api/kpis/rentabilidad-flota";
 export const REST_DOCUMENTOS = "/api/documentos";
+export const REST_CONFIG_PROVEEDORES = "/api/configuracion/proveedores";
+export const REST_CONFIG_PROVEEDOR = (codigo: string) => `/api/configuracion/proveedores/${codigo}`;
+export const REST_CONFIG_VALORES = (codigo: string) => `/api/configuracion/proveedores/${codigo}/valores`;
+export const REST_CONFIG_ACTIVIDADES = (codigo: string) => `/api/configuracion/proveedores/${codigo}/actividades`;
+export const REST_CONFIG_ACTIVIDAD = (codigo: string, id: number) => `/api/configuracion/proveedores/${codigo}/actividades/${id}`;
+export const REST_CONFIG_USUARIOS = "/api/configuracion/usuarios";
+export const REST_CONFIG_USUARIO = (id: number) => `/api/configuracion/usuarios/${id}`;
+export const REST_CONFIG_ROLES = "/api/configuracion/roles";
 
 export const WS_OPERACIONES = (() => {
   const proto =

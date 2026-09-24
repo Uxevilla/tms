@@ -9,6 +9,7 @@ import { RrhhDashboard } from "./components/RrhhDashboard";
 import { GastosDashboard } from "./components/GastosDashboard";
 import { DocumentosDashboard } from "./components/DocumentosDashboard";
 import { MensajeriaDashboard } from "./components/MensajeriaDashboard";
+import { ConfiguracionDashboard } from "./components/ConfiguracionDashboard";
 import { Login } from "./components/Login";
 import { getToken, setToken, clearToken, isTokenValid } from "./auth";
 import type { Seccion } from "./types";
@@ -22,6 +23,7 @@ const TITULOS: Record<Seccion, string> = {
   documentos: "Documentos",
   kpi: "KPIs",
   mensajeria: "Mensajería",
+  configuracion: "Configuración",
 };
 
 export default function App() {
@@ -78,6 +80,8 @@ function AppInner({ onLogout }: { onLogout: () => void }) {
         <DocumentosDashboard />
       ) : seccion === "mensajeria" ? (
         <MensajeriaDashboard />
+      ) : seccion === "configuracion" ? (
+        <ConfiguracionDashboard />
       ) : (
         <div className="flex h-full items-center justify-center text-sm text-slate-400">
           {TITULOS[seccion]} — pendiente de implementar

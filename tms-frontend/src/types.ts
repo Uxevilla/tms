@@ -85,4 +85,4 @@ export type ViajeEvent =
 
 export type WsStatus = "conectando" | "conectado" | "desconectado";
 
-export type Seccion = "operaciones" | "vehiculos" | "rrhh" | "contabilidad" | "kpi" | "gastos" | "documentos" | "mensajeria";
+export type Seccion = "operaciones" | "vehiculos" | "rrhh" | "contabilidad" | "kpi" | "gastos" | "documentos" | "mensajeria" | "configuracion";

@@ -2,7 +2,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 
 from db import get_conn
-from security import require_role
+from security import require_role, _hash_password
 from services.configuracion import _invalida_actividades
 
 router = APIRouter(dependencies=[Depends(require_role(["admin"]))])
@@ -30,6 +30,22 @@ def listar_proveedores(conn=Depends(get_conn)):
             "campos": [dict(c) for c in campos],
         })
     return {"proveedores": out}
+
+
+@router.put("/api/configuracion/proveedores/{codigo}")
+def editar_proveedor(codigo: str, body: dict, conn=Depends(get_conn)):
+    """Activa/desactiva un proveedor (activo: bool)."""
+    b = body or {}
+    if "activo" not in b:
+        raise HTTPException(status_code=400, detail={"error": "Falta 'activo'"})
+    cur = conn.execute(
+        "UPDATE integracion_proveedores SET activo=? WHERE codigo=? RETURNING id",
+        (bool(b["activo"]), codigo),
+    )
+    if not cur.fetchone():
+        raise HTTPException(status_code=404, detail={"error": "Proveedor no encontrado"})
+    conn.commit()
+    return {"ok": True}
 
 
 @router.put("/api/configuracion/proveedores/{codigo}/valores")
@@ -116,4 +132,73 @@ def borrar_actividad(codigo: str, act_id: int, conn=Depends(get_conn)):
     conn.execute("DELETE FROM actividades WHERE id=? AND proveedor_id=?", (act_id, prov["id"]))
     conn.commit()
     _invalida_actividades()
+    return {"ok": True}
+
+
+# --- Usuarios y roles (RBAC) ---
+
+@router.get("/api/configuracion/roles")
+def listar_roles(conn=Depends(get_conn)):
+    rows = conn.execute("SELECT id, nombre, descripcion FROM config.roles ORDER BY id").fetchall()
+    return {"roles": [dict(r) for r in rows]}
+
+
+@router.get("/api/configuracion/usuarios")
+def listar_usuarios(conn=Depends(get_conn)):
+    rows = conn.execute(
+        "SELECT id, usuario, rol, nombre, activo, creado_en FROM config.usuarios ORDER BY id"
+    ).fetchall()
+    return {"usuarios": [dict(r) for r in rows]}
+
+
+@router.post("/api/configuracion/usuarios")
+def crear_usuario(body: dict, conn=Depends(get_conn)):
+    b = body or {}
+    usuario = (b.get("usuario") or "").strip()
+    password = b.get("password") or ""
+    rol = (b.get("rol") or "").strip()
+    nombre = (b.get("nombre") or "").strip()
+    if not usuario or not password or not rol:
+        raise HTTPException(status_code=400, detail={"error": "usuario, password y rol son obligatorios"})
+    if not conn.execute("SELECT nombre FROM config.roles WHERE nombre=?", (rol,)).fetchone():
+        raise HTTPException(status_code=400, detail={"error": "Rol no existe"})
+    try:
+        conn.execute(
+            "INSERT INTO config.usuarios (usuario, password_hash, rol, nombre) VALUES (?,?,?,?)",
+            (usuario, _hash_password(password), rol, nombre),
+        )
+    except Exception:
+        raise HTTPException(status_code=409, detail={"error": "Ese usuario ya existe"})
+    conn.commit()
+    return {"ok": True}
+
+
+@router.put("/api/configuracion/usuarios/{uid}")
+def editar_usuario(uid: int, body: dict, conn=Depends(get_conn)):
+    b = body or {}
+    if "rol" in b and not conn.execute("SELECT nombre FROM config.roles WHERE nombre=?", (b["rol"],)).fetchone():
+        raise HTTPException(status_code=400, detail={"error": "Rol no existe"})
+    sets, params = [], []
+    for k in ("rol", "nombre"):
+        if k in b:
+            sets.append(f"{k}=?")
+            params.append(b[k])
+    if "activo" in b:
+        sets.append("activo=?")
+        params.append(bool(b["activo"]))
+    if b.get("password"):
+        sets.append("password_hash=?")
+        params.append(_hash_password(b["password"]))
+    if not sets:
+        raise HTTPException(status_code=400, detail={"error": "Sin cambios"})
+    params.append(uid)
+    conn.execute(f"UPDATE config.usuarios SET {', '.join(sets)} WHERE id=?", params)
+    conn.commit()
+    return {"ok": True}
+
+
+@router.delete("/api/configuracion/usuarios/{uid}")
+def borrar_usuario(uid: int, conn=Depends(get_conn)):
+    conn.execute("DELETE FROM config.usuarios WHERE id=?", (uid,))
+    conn.commit()
     return {"ok": True}

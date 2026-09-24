@@ -11,6 +11,7 @@ import {
   Loader2,
   LogOut,
   MessageCircle,
+  Settings,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import type { Seccion, WsStatus } from "../types";
@@ -24,6 +25,7 @@ const ITEMS: { id: Seccion; label: string; icon: LucideIcon }[] = [
   { id: "documentos", label: "Documentos", icon: FolderOpen },
   { id: "kpi", label: "KPIs", icon: BarChart3 },
   { id: "mensajeria", label: "Mensajería", icon: MessageCircle },
+  { id: "configuracion", label: "Configuración", icon: Settings },
 ];
 
 interface TopToolbarProps {

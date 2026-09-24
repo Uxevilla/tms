@@ -53,6 +53,24 @@ CAMPOS = {
         ("password", "Contraseña", "password", False),
         ("from", "Remitente (From)", "texto", False),
     ],
+    "geotab": [
+        ("database", "Database", "texto", True),
+        ("user", "Usuario", "texto", True),
+        ("password", "Contraseña", "password", True),
+    ],
+    "webfleet": [
+        ("account", "Cuenta", "texto", True),
+        ("username", "Usuario", "texto", True),
+        ("password", "Contraseña", "password", True),
+        ("api_key", "API Key", "password", True),
+    ],
+    "samsara": [
+        ("api_token", "API Token", "password", True),
+    ],
+    "verizon": [
+        ("username", "Usuario", "texto", True),
+        ("password", "Contraseña", "password", True),
+    ],
 }
 
 # --- Tipos de actividad de Trimble (nombre -> referencia). Seed inicial editable por cuenta. ---
