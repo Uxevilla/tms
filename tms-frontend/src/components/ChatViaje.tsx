@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { X, Send, FileQuestion, MessageCircle, Loader2 } from "lucide-react";
 import { CREAR_VIAJE } from "../config";
-import { getToken } from "../auth";
+import { api } from "../api";
 
 interface Mensaje {
   id: string;
@@ -36,12 +36,10 @@ export function ChatViaje({ tripId, onClose }: { tripId: string; onClose: () => 
   const [messagetypes, setMessagetypes] = useState<string[]>([]);
   const listRef = useRef<HTMLDivElement>(null);
 
-  const headers = () => ({ Authorization: `Bearer ${getToken() ?? ""}` });
-
   async function cargar() {
     try {
-      const r = await fetch(`${CREAR_VIAJE}/${encodeURIComponent(tripId)}/mensajes`, { headers: headers() });
-      if (r.ok) setMensajes((await r.json()).mensajes ?? []);
+      const data = await api<any>(`${CREAR_VIAJE}/${encodeURIComponent(tripId)}/mensajes`);
+      setMensajes(data.mensajes ?? []);
     } catch {
       /* sin conexión: se reintenta en el siguiente poll */
     }
@@ -50,7 +48,7 @@ export function ChatViaje({ tripId, onClose }: { tripId: string; onClose: () => 
   useEffect(() => {
     cargar();
     const t = setInterval(async () => {
-      try { await fetch("/api/sync/mensajes", { method: "POST", headers: headers() }); } catch { /* noop */ }
+      try { await api("/api/sync/mensajes", { method: "POST" }); } catch { /* noop */ }
       cargar();
     }, 8000);
     return () => clearInterval(t);
@@ -60,8 +58,8 @@ export function ChatViaje({ tripId, onClose }: { tripId: string; onClose: () => 
   useEffect(() => {
     (async () => {
       try {
-        const r = await fetch("/api/messagetypes", { headers: headers() });
-        if (r.ok) setMessagetypes((await r.json()).messagetypes ?? []);
+        const data = await api<any>("/api/messagetypes");
+        setMessagetypes(data.messagetypes ?? []);
       } catch { /* noop */ }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -78,12 +76,10 @@ export function ChatViaje({ tripId, onClose }: { tripId: string; onClose: () => 
     setEnviando(true);
     setError("");
     try {
-      const r = await fetch(`${CREAR_VIAJE}/${encodeURIComponent(tripId)}/mensajes`, {
+      const d = await api<any>(`${CREAR_VIAJE}/${encodeURIComponent(tripId)}/mensajes`, {
         method: "POST",
-        headers: { ...headers(), "Content-Type": "application/json" },
         body: JSON.stringify({ subject: s, body: b, needreply: false }),
       });
-      const d = await r.json();
       if (d.ok) {
         setAsunto("");
         setCuerpo("");
@@ -103,12 +99,10 @@ export function ChatViaje({ tripId, onClose }: { tripId: string; onClose: () => 
     setEnviandoQP(true);
     setError("");
     try {
-      const r = await fetch(`${CREAR_VIAJE}/${encodeURIComponent(tripId)}/questionpath`, {
+      const d = await api<any>(`${CREAR_VIAJE}/${encodeURIComponent(tripId)}/questionpath`, {
         method: "POST",
-        headers: { ...headers(), "Content-Type": "application/json" },
         body: JSON.stringify({ subject: qpSubject.trim(), body, messagetype: qpType.trim() || "question" }),
       });
-      const d = await r.json();
       if (d.ok) {
         setQpSubject("");
         setQpBody("");

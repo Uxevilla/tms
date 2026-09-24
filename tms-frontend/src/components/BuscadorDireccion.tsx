@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Search, MapPin, Building2, Loader2, X, Globe } from "lucide-react";
 import { REST_DIRECCIONES_BUSCAR, REST_DIRECCIONES } from "../config";
-import { getToken } from "../auth";
+import { api } from "../api";
 
 export interface Sugerencia {
   id: number | null;
@@ -40,13 +40,11 @@ export function BuscadorDireccion({ placeholder = "Buscar empresa o lugar…", v
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const caja = useRef<HTMLDivElement>(null);
 
-  const headers = () => ({ Authorization: `Bearer ${getToken() ?? ""}` });
-
   async function buscar(q: string) {
     setBuscando(true);
     try {
-      const r = await fetch(`${REST_DIRECCIONES_BUSCAR}?q=${encodeURIComponent(q)}`, { headers: headers() });
-      if (r.ok) setSug((await r.json()).sugerencias ?? []);
+      const data = await api<{ sugerencias?: Sugerencia[] }>(`${REST_DIRECCIONES_BUSCAR}?q=${encodeURIComponent(q)}`);
+      setSug(data.sugerencias ?? []);
     } catch (err) {
       console.error("Error buscando direcciones:", err);
     } finally {
@@ -71,13 +69,15 @@ export function BuscadorDireccion({ placeholder = "Buscar empresa o lugar…", v
     let id = s.id;
     if (id == null) {
       // Persistir el resultado externo/cliente como nueva dirección del maestro
-      const r = await fetch(REST_DIRECCIONES, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...headers() },
-        body: JSON.stringify({ nombre: s.nombre, empresa: s.empresa, calle: s.calle, numero: s.numero, ciudad: s.ciudad, cp: s.cp, pais: s.pais, lat: s.lat, lng: s.lng }),
-      });
-      if (!r.ok) return;
-      id = (await r.json()).id;
+      try {
+        const data = await api<{ id: number }>(REST_DIRECCIONES, {
+          method: "POST",
+          body: JSON.stringify({ nombre: s.nombre, empresa: s.empresa, calle: s.calle, numero: s.numero, ciudad: s.ciudad, cp: s.cp, pais: s.pais, lat: s.lat, lng: s.lng }),
+        });
+        id = data.id;
+      } catch {
+        return; // no se pudo persistir → no seleccionar
+      }
     }
     setSeleccionado([s.nombre || s.calle, s.ciudad].filter(Boolean).join(" · "));
     setTexto("");

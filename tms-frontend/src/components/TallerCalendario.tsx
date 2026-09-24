@@ -5,7 +5,7 @@ import { es } from "date-fns/locale";
 import "react-big-calendar/lib/css/react-big-calendar.css";
 import { X, Save, Trash2, Loader2, Plus } from "lucide-react";
 import { REST_MANTENIMIENTOS } from "../config";
-import { getToken } from "../auth";
+import { api } from "../api";
 
 const locales = { es };
 const localizer = dateFnsLocalizer({ format, parse, startOfWeek, getDay, locales });
@@ -67,13 +67,9 @@ export function TallerCalendario({ vehiculos }: { vehiculos: Vehiculo[] }) {
   const [pFin, setPFin] = useState("");
   const [pNotas, setPNotas] = useState("");
 
-  const headers = () => ({ Authorization: `Bearer ${getToken() ?? ""}` });
-
   async function cargar() {
     try {
-      const r = await fetch(REST_MANTENIMIENTOS, { headers: headers() });
-      if (!r.ok) throw new Error(String(r.status));
-      const d = await r.json();
+      const d = await api<any>(REST_MANTENIMIENTOS);
       const lista: MantenimientoEvento[] = (d.mantenimientos ?? []).map((m: any) => ({
         id: m.id,
         title: `${m.matricula || m.vehiculo_id} - ${m.tipo}`,
@@ -139,9 +135,8 @@ export function TallerCalendario({ vehiculos }: { vehiculos: Vehiculo[] }) {
     }
     setGuardando(true);
     try {
-      const r = await fetch(REST_MANTENIMIENTOS, {
+      const d = await api<any>(REST_MANTENIMIENTOS, {
         method: "POST",
-        headers: { ...headers(), "Content-Type": "application/json" },
         body: JSON.stringify({
           vehiculo_id: pVehiculo,
           tipo: pTipo,
@@ -153,13 +148,12 @@ export function TallerCalendario({ vehiculos }: { vehiculos: Vehiculo[] }) {
           hecho: false,
         }),
       });
-      const d = await r.json().catch(() => ({}));
-      if (r.ok && d.ok) {
+      if (d.ok) {
         setBanner({ tipo: "ok", texto: "Cita de taller registrada." });
         setDrawer(null);
         cargar();
       } else {
-        setBanner({ tipo: "error", texto: d?.detail?.error || d?.error || `Error ${r.status}` });
+        setBanner({ tipo: "error", texto: d?.detail?.error || d?.error || "Error" });
       }
     } catch {
       setBanner({ tipo: "error", texto: "Error de red al registrar." });
@@ -172,14 +166,10 @@ export function TallerCalendario({ vehiculos }: { vehiculos: Vehiculo[] }) {
     if (!detalle) return;
     setBorrando(true);
     try {
-      const r = await fetch(`${REST_MANTENIMIENTOS}/${detalle.id}`, { method: "DELETE", headers: headers() });
-      if (r.ok) {
-        setBanner({ tipo: "ok", texto: "Cita eliminada." });
-        setDetalle(null);
-        cargar();
-      } else {
-        setBanner({ tipo: "error", texto: `No se pudo eliminar (${r.status}).` });
-      }
+      await api(`${REST_MANTENIMIENTOS}/${detalle.id}`, { method: "DELETE" });
+      setBanner({ tipo: "ok", texto: "Cita eliminada." });
+      setDetalle(null);
+      cargar();
     } catch {
       setBanner({ tipo: "error", texto: "Error de red al eliminar." });
     } finally {

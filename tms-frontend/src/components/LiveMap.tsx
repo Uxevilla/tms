@@ -4,7 +4,7 @@ import MarkerClusterGroup from "react-leaflet-cluster";
 import L from "leaflet";
 import { useSocketSubscribe } from "../context/SocketContext";
 import { REST_TELEMETRIA, REST_TRAYECTORIAS, REST_TACOGRAFO } from "../config";
-import { getToken } from "../auth";
+import { api } from "../api";
 import type { TelemetriaActiva, ViajeEvent } from "../types";
 
 // ---------------------------------------------------------------- tipos
@@ -190,11 +190,8 @@ function PanelVehiculo({ v, onClose }: { v: MapaVehiculo; onClose: () => void })
     let cancel = false;
     (async () => {
       try {
-        const res = await fetch(REST_TACOGRAFO(encodeURIComponent(v.matricula)), {
-          headers: { Authorization: `Bearer ${getToken() ?? ""}` },
-        });
-        if (!res.ok || cancel) return;
-        const d = await res.json();
+        const d = await api<any>(REST_TACOGRAFO(encodeURIComponent(v.matricula)));
+        if (cancel) return;
         if (d.ok && !cancel) setDstat(d);
       } catch {
         /* sin tacógrafo: se deja vacío */
@@ -306,11 +303,8 @@ export function LiveMap({ focus }: { focus: FocusMapa | null }) {
     let cancelado = false;
     const cargar = async () => {
       try {
-        const res = await fetch(REST_TELEMETRIA, {
-          headers: { Authorization: `Bearer ${getToken() ?? ""}` },
-        });
-        if (!res.ok || cancelado) return;
-        const data = await res.json();
+        const data = await api<{ telemetria?: TelemetriaActiva[] }>(REST_TELEMETRIA);
+        if (cancelado) return;
         const lista: TelemetriaActiva[] = data?.telemetria ?? [];
         const mapa = new Map<string, MapaVehiculo>();
         for (const t of lista) {
@@ -351,11 +345,8 @@ export function LiveMap({ focus }: { focus: FocusMapa | null }) {
     let cancelado = false;
     (async () => {
       try {
-        const res = await fetch(REST_TRAYECTORIAS, {
-          headers: { Authorization: `Bearer ${getToken() ?? ""}` },
-        });
-        if (!res.ok || cancelado) return;
-        const data = await res.json();
+        const data = await api<{ trayectorias?: Record<string, [number, number][]> }>(REST_TRAYECTORIAS);
+        if (cancelado) return;
         const mapa = new Map<string, [number, number][]>();
         for (const [k, pts] of Object.entries(data?.trayectorias ?? {})) {
           const arr = (pts as unknown[])

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { X, FileText, Download, ClipboardList, Split } from "lucide-react";
-import { getToken } from "../auth";
+import { api } from "../api";
 import type { Viaje } from "../types";
 
 interface Mensaje {
@@ -43,13 +43,12 @@ export function DetalleViaje({ trip, onClose }: { trip: Viaje; onClose: () => vo
   const [cargando, setCargando] = useState(true);
 
   useEffect(() => {
-    const h = { Authorization: `Bearer ${getToken() ?? ""}` };
     (async () => {
       try {
         const [m, d, tr] = await Promise.all([
-          fetch(`/api/trips/${encodeURIComponent(trip.id)}/mensajes`, { headers: h }).then((r) => r.json()),
-          fetch(`/api/trips/${encodeURIComponent(trip.id)}/documentos`, { headers: h }).then((r) => r.json()),
-          fetch(`/api/trips/${encodeURIComponent(trip.id)}/tramos`, { headers: h }).then((r) => r.json()),
+          api<any>(`/api/trips/${encodeURIComponent(trip.id)}/mensajes`),
+          api<any>(`/api/trips/${encodeURIComponent(trip.id)}/documentos`),
+          api<any>(`/api/trips/${encodeURIComponent(trip.id)}/tramos`),
         ]);
         setMensajes(m.mensajes ?? []);
         setDocs(d.documentos ?? []);

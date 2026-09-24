@@ -16,7 +16,7 @@ import { REST_VIAJES, REST_CLIENTES, REST_CONDUCTORES, REST_DIRECCIONES, REST_VE
 import { BuscadorDireccion } from "./BuscadorDireccion";
 import { ChatViaje } from "./ChatViaje";
 import { DetalleViaje } from "./DetalleViaje";
-import { getToken, clearToken } from "../auth";
+import { api, ApiError } from "../api";
 import { MapContainer, TileLayer, Marker, Polyline, useMapEvents } from "react-leaflet";
 import L from "leaflet";
 import { Plus, X, MapPin, Trash2, MessageCircle, FileText, RotateCcw, Download, Split, Copy, Send, Info, Pencil, Gauge, AlertTriangle } from "lucide-react";
@@ -234,10 +234,7 @@ export function OperacionesDashboard() {
   useEffect(() => {
     if (!terminal) { setDstat(null); return; }
     let cancel = false;
-    fetch(`/api/tacografo/${encodeURIComponent(terminal)}/dstat`, {
-      headers: { Authorization: `Bearer ${getToken() ?? ""}` },
-    })
-      .then((r) => r.json())
+    api(`/api/tacografo/${encodeURIComponent(terminal)}/dstat`)
       .then((d) => { if (!cancel) setDstat(d); })
       .catch(() => { if (!cancel) setDstat(null); });
     return () => { cancel = true; };
@@ -307,12 +304,10 @@ export function OperacionesDashboard() {
     }
     let cancel = false;
     setRuta((p) => ({ ...p, calculando: true }));
-    fetch(RUTA, {
+    api<any>(RUTA, {
       method: "POST",
-      headers: { Authorization: `Bearer ${getToken() ?? ""}`, "Content-Type": "application/json" },
       body: JSON.stringify({ puntos: puntosRuta, terminal: terminal || "" }),
     })
-      .then((r) => r.json())
       .then((d) => {
         if (cancel) return;
         const ptv = d.ptv;
@@ -333,13 +328,12 @@ export function OperacionesDashboard() {
   async function cargarOpciones() {
     setCargandoOpciones(true);
     try {
-      const h = { Authorization: `Bearer ${getToken() ?? ""}` };
       const [cli, dir, act, tar, prov] = await Promise.all([
-        fetch(REST_CLIENTES, { headers: h }).then((r) => r.json()),
-        fetch(REST_DIRECCIONES, { headers: h }).then((r) => r.json()),
-        fetch("/api/activity-types", { headers: h }).then((r) => r.json()),
-        fetch(REST_TARIFAS, { headers: h }).then((r) => r.json()),
-        fetch(REST_PROVEEDORES, { headers: h }).then((r) => r.json()),
+        api<any>(REST_CLIENTES),
+        api<any>(REST_DIRECCIONES),
+        api<any>("/api/activity-types"),
+        api<any>(REST_TARIFAS),
+        api<any>(REST_PROVEEDORES),
       ]);
       setClientes(cli.clientes ?? []);
       setDirecciones(dir.direcciones ?? []);
@@ -355,10 +349,8 @@ export function OperacionesDashboard() {
 
   async function cargarConductores(fecha?: string) {
     try {
-      const h = { Authorization: `Bearer ${getToken() ?? ""}` };
       const q = fecha ? `?fecha_esperada_carga=${encodeURIComponent(fecha)}` : "";
-      const r = await fetch(`${REST_CONDUCTORES}${q}`, { headers: h });
-      const d = await r.json();
+      const d = await api<any>(`${REST_CONDUCTORES}${q}`);
       const lista = d.conductores ?? [];
       setConductores(lista);
       setConductorId((prev) => {
@@ -378,10 +370,8 @@ export function OperacionesDashboard() {
 
   async function cargarVehiculos(fecha?: string) {
     try {
-      const h = { Authorization: `Bearer ${getToken() ?? ""}` };
       const q = fecha ? `?fecha_esperada_carga=${encodeURIComponent(fecha)}` : "";
-      const r = await fetch(`${REST_VEHICULOS_DISPONIBLES}${q}`, { headers: h });
-      const d = await r.json();
+      const d = await api<any>(`${REST_VEHICULOS_DISPONIBLES}${q}`);
       const lista = d.vehiculos ?? [];
       setVehiculos(lista);
       setTerminal((prev) => {
@@ -461,7 +451,7 @@ export function OperacionesDashboard() {
     // Precarga ruta + asignación desde el payload completo del viaje.
     (async () => {
       try {
-        const t = await fetch(`/api/trips/${encodeURIComponent(v.id)}`, { headers: { Authorization: `Bearer ${getToken() ?? ""}` } }).then((r) => r.json());
+        const t = await api<any>(`/api/trips/${encodeURIComponent(v.id)}`);
         const p = (t.payload ?? {}) as Record<string, any>;
         const newDirs: Record<string, any>[] = [];
         const synth = (nombre: string, lat: any, lng: any, ciudad = "") => {
@@ -506,8 +496,7 @@ export function OperacionesDashboard() {
   }
 
   function recargar() {
-    fetch(REST_VIAJES, { headers: { Authorization: `Bearer ${getToken() ?? ""}` } })
-      .then((r) => r.json())
+    api<any>(REST_VIAJES)
       .then((data) => {
         const lista: Viaje[] = Array.isArray(data) ? data : data?.viajes ?? [];
         rowsRef.current = new Map(lista.map((v) => [v.id, v]));
@@ -518,34 +507,23 @@ export function OperacionesDashboard() {
 
   async function duplicarViaje(id: string) {
     try {
-      const r = await fetch(`/api/trips/${encodeURIComponent(id)}/duplicar`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${getToken() ?? ""}` },
-      });
-      if (r.ok) {
-        setBanner({ tipo: "ok", texto: "Viaje duplicado (sin asignar)." });
-        recargar();
-      } else {
-        const d = await r.json().catch(() => ({}));
-        setBanner({ tipo: "error", texto: d?.detail?.error || d?.error || `Error ${r.status}` });
-      }
-    } catch {
-      setBanner({ tipo: "error", texto: "Error de red al duplicar." });
+      await api(`/api/trips/${encodeURIComponent(id)}/duplicar`, { method: "POST" });
+      setBanner({ tipo: "ok", texto: "Viaje duplicado (sin asignar)." });
+      recargar();
+    } catch (err) {
+      setBanner({ tipo: "error", texto: err instanceof ApiError ? err.message : "Error de red al duplicar." });
     }
   }
 
   async function enviarTrip(id: string, force = false) {
     try {
-      const r = await fetch(`/api/trips/${encodeURIComponent(id)}/enviar${force ? "?force=true" : ""}`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${getToken() ?? ""}` },
-      });
-      if (r.ok) {
-        setBanner({ tipo: "ok", texto: "Viaje enviado al terminal Trimble." });
-        recargar();
-      } else {
-        const d = await r.json().catch(() => ({}));
-        const err = d?.detail?.error || d?.error || `Error ${r.status}`;
+      await api(`/api/trips/${encodeURIComponent(id)}/enviar${force ? "?force=true" : ""}`, { method: "POST" });
+      setBanner({ tipo: "ok", texto: "Viaje enviado al terminal Trimble." });
+      recargar();
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 400) {
+        const d = e.detail as any;
+        const err = d?.detail?.error || e.message;
         if (d?.detail?.forzar) {
           const rest = d.detail.conduccion_restante_min;
           const dur = d.detail.duracion_viaje_min;
@@ -555,28 +533,20 @@ export function OperacionesDashboard() {
           }
         }
         setBanner({ tipo: "error", texto: err });
+      } else {
+        setBanner({ tipo: "error", texto: "Error de red al enviar." });
       }
-    } catch {
-      setBanner({ tipo: "error", texto: "Error de red al enviar." });
     }
   }
 
   async function eliminarViaje(v: Viaje) {
     if (!window.confirm(`¿Eliminar el viaje ${v.referencia || v.id} (${v.origen || "—"} → ${v.destino || "—"})? No se puede deshacer.`)) return;
     try {
-      const r = await fetch(`/api/trips/${encodeURIComponent(v.id)}`, {
-        method: "DELETE",
-        headers: { Authorization: `Bearer ${getToken() ?? ""}` },
-      });
-      if (r.ok) {
-        setBanner({ tipo: "ok", texto: "Viaje eliminado." });
-        recargar();
-      } else {
-        const d = await r.json().catch(() => ({}));
-        setBanner({ tipo: "error", texto: d?.detail?.error || d?.error || `Error ${r.status}` });
-      }
-    } catch {
-      setBanner({ tipo: "error", texto: "Error de red al eliminar." });
+      await api(`/api/trips/${encodeURIComponent(v.id)}`, { method: "DELETE" });
+      setBanner({ tipo: "ok", texto: "Viaje eliminado." });
+      recargar();
+    } catch (err) {
+      setBanner({ tipo: "error", texto: err instanceof ApiError ? err.message : "Error de red al eliminar." });
     }
   }
 
@@ -615,8 +585,7 @@ export function OperacionesDashboard() {
     setGeocodificando(true);
     let nombre = `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
     try {
-      const r = await fetch(`/api/reverse-geocode?lat=${lat}&lng=${lng}`, { headers: { Authorization: `Bearer ${getToken() ?? ""}` } });
-      const d = await r.json();
+      const d = await api<any>(`/api/reverse-geocode?lat=${lat}&lng=${lng}`);
       const res = d.resultado;
       if (res) nombre = [res.nombre || res.calle, res.ciudad].filter(Boolean).join(", ") || res.display_name || nombre;
     } catch {
@@ -758,19 +727,13 @@ export function OperacionesDashboard() {
         documentos,
       };
       const url = editTripId ? `/api/trips/${encodeURIComponent(editTripId)}` : CREAR_VIAJE;
-      const r = await fetch(url, {
+      await api(url, {
         method: editTripId ? "PUT" : "POST",
-        headers: { Authorization: `Bearer ${getToken() ?? ""}`, "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-      if (r.ok) {
-        setMsg({ tipo: "ok", texto: editTripId ? "Viaje actualizado correctamente." : "Viaje creado correctamente." });
-        setFormAbierto(false);
-        recargar();
-      } else {
-        const d = await r.json().catch(() => ({}));
-        setMsg({ tipo: "error", texto: d?.detail?.error || d?.error || `Error ${r.status}` });
-      }
+      setMsg({ tipo: "ok", texto: editTripId ? "Viaje actualizado correctamente." : "Viaje creado correctamente." });
+      setFormAbierto(false);
+      recargar();
     } catch (err) {
       console.error(editTripId ? "Error actualizando viaje:" : "Error creando viaje:", err);
       setMsg({ tipo: "error", texto: editTripId ? "Error de red al actualizar el viaje." : "Error de red al crear el viaje." });
@@ -784,15 +747,7 @@ export function OperacionesDashboard() {
     let cancelado = false;
     (async () => {
       try {
-        const res = await fetch(REST_VIAJES, {
-          headers: { Authorization: `Bearer ${getToken() ?? ""}` },
-        });
-        if (res.status === 401) {
-          clearToken();
-          window.location.reload();
-          return;
-        }
-        const data = await res.json();
+        const data = await api<any>(REST_VIAJES);
         const lista: Viaje[] = Array.isArray(data) ? data : (data?.viajes ?? []);
         if (cancelado) return;
         rowsRef.current = new Map(lista.map((v) => [v.id, v]));
@@ -1008,12 +963,10 @@ export function OperacionesDashboard() {
       } else {
         body = { [field]: newValue };
       }
-      const r = await fetch(`/api/trips/${data.id}`, {
+      await api(`/api/trips/${data.id}`, {
         method: "PATCH",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${getToken() ?? ""}` },
         body: JSON.stringify(body),
       });
-      if (!r.ok) throw new Error(String(r.status));
     } catch {
       revertiendoRef.current = true;
       event.node.setDataValue(field, oldValue); // rollback automático

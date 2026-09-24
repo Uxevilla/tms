@@ -22,13 +22,11 @@ import {
   REST_CONFIG_USUARIO,
   REST_CONFIG_ROLES,
 } from "../config";
-import { getToken } from "../auth";
+import { api } from "../api";
 import { Modal } from "./Modal";
 import { gridTheme, GRID_ROW_HEIGHT, GRID_HEADER_HEIGHT } from "../gridConfig";
 
 ModuleRegistry.registerModules([AllCommunityModule]);
-
-const headers = () => ({ Authorization: `Bearer ${getToken() ?? ""}` });
 
 // ------------------------------------------------------------------ tipos
 interface Campo {
@@ -87,9 +85,8 @@ function ActivoToggle({ data, onCambio }: { data: Proveedor; onCambio: () => voi
       type="checkbox"
       checked={data.activo}
       onChange={async () => {
-        await fetch(REST_CONFIG_PROVEEDOR(data.codigo), {
+        await api(REST_CONFIG_PROVEEDOR(data.codigo), {
           method: "PUT",
-          headers: { ...headers(), "Content-Type": "application/json" },
           body: JSON.stringify({ activo: !data.activo }),
         });
         onCambio();
@@ -125,9 +122,9 @@ export function ConfiguracionDashboard() {
   const cargar = useCallback(async () => {
     try {
       const [pr, us, ro] = await Promise.all([
-        fetch(REST_CONFIG_PROVEEDORES, { headers: headers() }).then((r) => r.json()),
-        fetch(REST_CONFIG_USUARIOS, { headers: headers() }).then((r) => r.json()),
-        fetch(REST_CONFIG_ROLES, { headers: headers() }).then((r) => r.json()),
+        api<any>(REST_CONFIG_PROVEEDORES),
+        api<any>(REST_CONFIG_USUARIOS),
+        api<any>(REST_CONFIG_ROLES),
       ]);
       setProveedores(pr.proveedores ?? []);
       setUsuarios(us.usuarios ?? []);
@@ -194,7 +191,7 @@ export function ConfiguracionDashboard() {
             type="button"
             onClick={async () => {
               if (!window.confirm(`¿Borrar al usuario "${p.data.usuario}"?`)) return;
-              await fetch(REST_CONFIG_USUARIO(p.data.id), { method: "DELETE", headers: headers() });
+              await api(REST_CONFIG_USUARIO(p.data.id), { method: "DELETE" });
               cargar();
             }}
             className="rounded-md px-2 py-1 text-[11px] font-semibold text-red-600 hover:bg-red-50"
@@ -362,8 +359,7 @@ function ProviderModal({
   const [guardando, setGuardando] = useState(false);
 
   const cargarAct = useCallback(async () => {
-    const r = await fetch(REST_CONFIG_ACTIVIDADES(proveedor.codigo), { headers: headers() });
-    const d = await r.json();
+    const d = await api<any>(REST_CONFIG_ACTIVIDADES(proveedor.codigo));
     setActividades(d.actividades ?? []);
   }, [proveedor.codigo]);
 
@@ -374,9 +370,8 @@ function ProviderModal({
   const guardarValores = async () => {
     setGuardando(true);
     try {
-      await fetch(REST_CONFIG_VALORES(proveedor.codigo), {
+      await api(REST_CONFIG_VALORES(proveedor.codigo), {
         method: "PUT",
-        headers: { ...headers(), "Content-Type": "application/json" },
         body: JSON.stringify(valores),
       });
       onGuardado();
@@ -387,9 +382,8 @@ function ProviderModal({
 
   const crearActividad = async () => {
     if (!nueva.nombre || !nueva.referencia) return;
-    await fetch(REST_CONFIG_ACTIVIDADES(proveedor.codigo), {
+    await api(REST_CONFIG_ACTIVIDADES(proveedor.codigo), {
       method: "POST",
-      headers: { ...headers(), "Content-Type": "application/json" },
       body: JSON.stringify(nueva),
     });
     setNueva({ nombre: "", referencia: "" });
@@ -497,9 +491,8 @@ function ActividadRow({
   const [referencia, setReferencia] = useState(act.referencia);
 
   const guardar = async () => {
-    await fetch(REST_CONFIG_ACTIVIDAD(codigo, act.id), {
+    await api(REST_CONFIG_ACTIVIDAD(codigo, act.id), {
       method: "PUT",
-      headers: { ...headers(), "Content-Type": "application/json" },
       body: JSON.stringify({ nombre, referencia }),
     });
     onCambio();
@@ -507,7 +500,7 @@ function ActividadRow({
 
   const borrar = async () => {
     if (!window.confirm(`¿Borrar la actividad "${act.nombre}"?`)) return;
-    await fetch(REST_CONFIG_ACTIVIDAD(codigo, act.id), { method: "DELETE", headers: headers() });
+    await api(REST_CONFIG_ACTIVIDAD(codigo, act.id), { method: "DELETE" });
     onCambio();
   };
 
@@ -570,9 +563,8 @@ function UsuarioModal({
     setGuardando(true);
     try {
       if (esNuevo) {
-        await fetch(REST_CONFIG_USUARIOS, {
+        await api(REST_CONFIG_USUARIOS, {
           method: "POST",
-          headers: { ...headers(), "Content-Type": "application/json" },
           body: JSON.stringify(form),
         });
       } else {
@@ -582,9 +574,8 @@ function UsuarioModal({
           activo: form.activo,
         };
         if (form.password) body.password = form.password;
-        await fetch(REST_CONFIG_USUARIO(usuario!.id), {
+        await api(REST_CONFIG_USUARIO(usuario!.id), {
           method: "PUT",
-          headers: { ...headers(), "Content-Type": "application/json" },
           body: JSON.stringify(body),
         });
       }

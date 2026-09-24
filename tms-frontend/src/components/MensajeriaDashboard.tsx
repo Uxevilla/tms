@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Send, Paperclip, MessageCircle, Loader2 } from "lucide-react";
-import { getToken } from "../auth";
+import { api } from "../api";
 
 interface Terminal {
   id: string;
@@ -15,10 +15,6 @@ interface Mensaje {
   time: string;
 }
 
-function authHeaders(extra: Record<string, string> = {}) {
-  return { Authorization: `Bearer ${getToken() ?? ""}`, ...extra };
-}
-
 export function MensajeriaDashboard() {
   const [terminales, setTerminales] = useState<Terminal[]>([]);
   const [terminal, setTerminal] = useState<string>("");
@@ -31,8 +27,7 @@ export function MensajeriaDashboard() {
 
   // Terminales APP disponibles.
   useEffect(() => {
-    fetch("/api/mensajeria/terminales", { headers: authHeaders() })
-      .then((r) => r.json())
+    api<any>("/api/mensajeria/terminales")
       .then((d) => {
         if (d.ok) {
           setTerminales(d.terminales ?? []);
@@ -47,8 +42,7 @@ export function MensajeriaDashboard() {
     if (!terminal) return;
     let cancel = false;
     const cargar = () =>
-      fetch(`/api/mensajeria/${encodeURIComponent(terminal)}/mensajes`, { headers: authHeaders() })
-        .then((r) => r.json())
+      api<any>(`/api/mensajeria/${encodeURIComponent(terminal)}/mensajes`)
         .then((d) => { if (!cancel && d.ok) setMensajes(d.mensajes ?? []); })
         .catch(() => {});
     cargar();
@@ -63,7 +57,7 @@ export function MensajeriaDashboard() {
 
   async function recargar() {
     if (!terminal) return;
-    const d = await fetch(`/api/mensajeria/${encodeURIComponent(terminal)}/mensajes`, { headers: authHeaders() }).then((r) => r.json());
+    const d = await api<any>(`/api/mensajeria/${encodeURIComponent(terminal)}/mensajes`);
     if (d.ok) setMensajes(d.mensajes ?? []);
   }
 
@@ -71,14 +65,12 @@ export function MensajeriaDashboard() {
     if (!terminal || !texto.trim()) return;
     setEnviando(true);
     try {
-      const r = await fetch(`/api/mensajeria/${encodeURIComponent(terminal)}/mensajes`, {
+      const d = await api<any>(`/api/mensajeria/${encodeURIComponent(terminal)}/mensajes`, {
         method: "POST",
-        headers: authHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify({ subject: "", body: texto.trim(), needreply: false }),
       });
-      const d = await r.json();
       if (d.ok) { setTexto(""); await recargar(); }
-      else setBanner({ tipo: "error", texto: d.error || `Error ${r.status}` });
+      else setBanner({ tipo: "error", texto: d.error || "Error" });
     } catch {
       setBanner({ tipo: "error", texto: "Error de red al enviar." });
     } finally {
@@ -101,12 +93,10 @@ export function MensajeriaDashboard() {
         r.onerror = () => rej(new Error("lectura"));
         r.readAsDataURL(file);
       });
-      const r = await fetch(`/api/mensajeria/${encodeURIComponent(terminal)}/adjuntos`, {
+      const d = await api<any>(`/api/mensajeria/${encodeURIComponent(terminal)}/adjuntos`, {
         method: "POST",
-        headers: authHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify({ nombre: file.name, contenido: b64 }),
       });
-      const d = await r.json();
       setBanner({ tipo: d.ok ? "ok" : "error", texto: d.ok ? `«${file.name}» enviado.` : (d.error || "Error al adjuntar") });
     } catch {
       setBanner({ tipo: "error", texto: "Error al adjuntar el archivo." });

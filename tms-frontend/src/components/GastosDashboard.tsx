@@ -4,7 +4,7 @@ import { AllCommunityModule, ModuleRegistry } from "ag-grid-community";
 import type { ColDef, CellValueChangedEvent } from "ag-grid-community";
 import { FileUp, X, Save, Loader2, Plus, Download, RotateCcw } from "lucide-react";
 import { REST_GASTOS_VEHICULOS, REST_GASTOS_OCR, REST_VEHICULOS, REST_PROVEEDORES } from "../config";
-import { getToken } from "../auth";
+import { api } from "../api";
 import { useAgGridState } from "../hooks/useAgGridState";
 import { VisorDocumentos } from "./VisorDocumentos";
 
@@ -83,8 +83,6 @@ export function GastosDashboard() {
 
   const fileRef = useRef<HTMLInputElement>(null);
 
-  const headers = () => ({ Authorization: `Bearer ${getToken() ?? ""}` });
-
   useEffect(() => {
     if (!banner) return;
     const t = setTimeout(() => setBanner(null), 4000);
@@ -93,14 +91,11 @@ export function GastosDashboard() {
 
   async function cargar() {
     try {
-      const [g, v, p] = await Promise.all([
-        fetch(REST_GASTOS_VEHICULOS, { headers: headers() }),
-        fetch(REST_VEHICULOS, { headers: headers() }),
-        fetch(REST_PROVEEDORES, { headers: headers() }),
+      const [gd, vd, pd] = await Promise.all([
+        api<any>(REST_GASTOS_VEHICULOS),
+        api<any>(REST_VEHICULOS),
+        api<any>(REST_PROVEEDORES),
       ]);
-      const gd = await g.json();
-      const vd = await v.json();
-      const pd = await p.json();
       setGastos(gd.gastos ?? []);
       setVehiculos(vd.vehiculos ?? []);
       setProveedores(pd.proveedores ?? []);
@@ -129,13 +124,10 @@ export function GastosDashboard() {
         fr.onerror = () => reject(fr.error);
         fr.readAsDataURL(file);
       });
-      const r = await fetch(REST_GASTOS_OCR, {
+      const d = await api<any>(REST_GASTOS_OCR, {
         method: "POST",
-        headers: { ...headers(), "Content-Type": "application/json" },
         body: JSON.stringify({ archivo_base64: base64 }),
       });
-      if (!r.ok) throw new Error(`OCR ${r.status}`);
-      const d = await r.json();
       // auto-relleno del formulario con el borrador extraído por el OCR
       setDrawer({ base64: d.archivo_base64 || base64, nombre: file.name });
       const b = d.borrador ?? {};
@@ -168,9 +160,8 @@ export function GastosDashboard() {
     }
     setGuardando(true);
     try {
-      const r = await fetch(REST_GASTOS_VEHICULOS, {
+      const d = await api<any>(REST_GASTOS_VEHICULOS, {
         method: "POST",
-        headers: { ...headers(), "Content-Type": "application/json" },
         body: JSON.stringify({
           vehiculo_id: fVehiculo,
           proveedor_id: fProveedor ? Number(fProveedor) : null,
@@ -182,13 +173,12 @@ export function GastosDashboard() {
           archivo_base64: drawer.base64,
         }),
       });
-      const d = await r.json().catch(() => ({}));
-      if (r.ok && d.ok) {
+      if (d.ok) {
         setBanner({ tipo: "ok", texto: "Gasto contabilizado correctamente." });
         setDrawer(null);
         cargar();
       } else {
-        setBanner({ tipo: "error", texto: d?.detail?.error || d?.error || `Error ${r.status}` });
+        setBanner({ tipo: "error", texto: d?.detail?.error || d?.error || "Error" });
       }
     } catch (err) {
       console.error("Error contabilizando gasto:", err);
@@ -217,9 +207,8 @@ export function GastosDashboard() {
     }
     setGuardando(true);
     try {
-      const r = await fetch(REST_GASTOS_VEHICULOS, {
+      const d = await api<any>(REST_GASTOS_VEHICULOS, {
         method: "POST",
-        headers: { ...headers(), "Content-Type": "application/json" },
         body: JSON.stringify({
           vehiculo_id: mVehiculo,
           proveedor_id: mProveedor ? Number(mProveedor) : null,
@@ -233,13 +222,12 @@ export function GastosDashboard() {
           estado_pago: "Pendiente",
         }),
       });
-      const d = await r.json().catch(() => ({}));
-      if (r.ok && d.ok) {
+      if (d.ok) {
         setBanner({ tipo: "ok", texto: "Gasto creado y contabilizado." });
         setDrawerManual(false);
         cargar();
       } else {
-        setBanner({ tipo: "error", texto: d?.detail?.error || d?.error || `Error ${r.status}` });
+        setBanner({ tipo: "error", texto: d?.detail?.error || d?.error || "Error" });
       }
     } catch (err) {
       console.error("Error creando gasto:", err);
@@ -254,12 +242,10 @@ export function GastosDashboard() {
     const field = colDef.field;
     if (!field || !data || revertiendoRef.current) return;
     try {
-      const r = await fetch(`${REST_GASTOS_VEHICULOS}/${data.id}`, {
+      await api(`${REST_GASTOS_VEHICULOS}/${data.id}`, {
         method: "PATCH",
-        headers: { ...headers(), "Content-Type": "application/json" },
         body: JSON.stringify({ [field]: newValue }),
       });
-      if (!r.ok) throw new Error(String(r.status));
     } catch {
       revertiendoRef.current = true;
       event.node.setDataValue(field, oldValue);

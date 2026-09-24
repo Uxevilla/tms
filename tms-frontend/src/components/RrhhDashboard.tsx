@@ -5,6 +5,7 @@ import type { ColDef, ValueFormatterParams, CellValueChangedEvent } from "ag-gri
 import { Users, Receipt, CalendarDays, CalendarRange, X, Plus, FilePlus2, Save, UserPlus, RotateCcw, Download, FileDown } from "lucide-react";
 import { REST_EMPLEADOS, REST_NOMINAS, REST_AUSENCIAS } from "../config";
 import { getToken } from "../auth";
+import { api, ApiError } from "../api";
 import { useAgGridState } from "../hooks/useAgGridState";
 import { PlanningCalendario } from "./PlanningCalendario";
 import { CaducidadRenderer } from "./CaducidadRenderer";
@@ -129,19 +130,14 @@ export function RrhhDashboard() {
     return () => clearTimeout(t);
   }, [banner]);
 
-  const headers = () => ({ Authorization: `Bearer ${getToken() ?? ""}` });
-
   useEffect(() => {
     let cancel = false;
-    const get = async (url: string) => {
-      const r = await fetch(url, { headers: headers() });
-      if (!r.ok) throw new Error(String(r.status));
-      return r.json();
-    };
     (async () => {
       try {
         const [e, n, a] = await Promise.all([
-          get(REST_EMPLEADOS), get(REST_NOMINAS), get(REST_AUSENCIAS),
+          api<{ empleados?: Empleado[] }>(REST_EMPLEADOS),
+          api<{ nominas?: Nomina[] }>(REST_NOMINAS),
+          api<{ ausencias?: Ausencia[] }>(REST_AUSENCIAS),
         ]);
         if (!cancel) {
           setEmpleados(e.empleados ?? []);
@@ -283,12 +279,10 @@ export function RrhhDashboard() {
     // Para columnas con valueSetter (estado → fecha_baja), el valor resuelto está en data[field].
     const valor = field === "fecha_baja" ? data.fecha_baja : newValue;
     try {
-      const r = await fetch(`${REST_EMPLEADOS}/${data.id}`, {
+      await api(`${REST_EMPLEADOS}/${data.id}`, {
         method: "PATCH",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${getToken() ?? ""}` },
         body: JSON.stringify({ [field]: valor }),
       });
-      if (!r.ok) throw new Error(String(r.status));
     } catch {
       revertiendoRef.current = true;
       event.node.setDataValue(field, oldValue); // rollback automático
@@ -352,25 +346,21 @@ export function RrhhDashboard() {
     };
     try {
       const url = editando ? `${REST_EMPLEADOS}/${fichaId}` : REST_EMPLEADOS;
-      const r = await fetch(url, {
-        method: editando ? "PATCH" : "POST",
-        headers: { ...headers(), "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      if (r.ok) {
-        setBanner({ tipo: "ok", texto: editando ? "Ficha del empleado actualizada." : "Empleado dado de alta correctamente." });
-        setCreando(false);
-        setEditando(false);
-        const e = await fetch(REST_EMPLEADOS, { headers: headers() });
-        if (e.ok) setEmpleados((await e.json()).empleados ?? []);
-        setFicha({ ...EMPLEADO_VACIO });
-      } else {
-        const d = await r.json().catch(() => ({}));
-        setBanner({ tipo: "error", texto: d?.detail?.error || d?.error || `Error ${r.status}` });
-      }
+      await api(url, { method: editando ? "PATCH" : "POST", body: JSON.stringify(payload) });
+      setBanner({ tipo: "ok", texto: editando ? "Ficha del empleado actualizada." : "Empleado dado de alta correctamente." });
+      setCreando(false);
+      setEditando(false);
+      const e = await api<{ empleados?: Empleado[] }>(REST_EMPLEADOS);
+      setEmpleados(e.empleados ?? []);
+      setFicha({ ...EMPLEADO_VACIO });
     } catch (err) {
-      console.error("Error guardando empleado:", err);
-      setBanner({ tipo: "error", texto: "Error de red al guardar el empleado." });
+      if (err instanceof ApiError) {
+        const d = err.detail as { detail?: { error?: string }; error?: string } | null;
+        setBanner({ tipo: "error", texto: d?.detail?.error || d?.error || err.message });
+      } else {
+        console.error("Error guardando empleado:", err);
+        setBanner({ tipo: "error", texto: "Error de red al guardar el empleado." });
+      }
     } finally {
       setGuardandoFicha(false);
     }
@@ -382,20 +372,19 @@ export function RrhhDashboard() {
     setMsg("");
     try {
       const periodo = new Date().toISOString().slice(0, 7);
-      const r = await fetch(REST_NOMINAS, {
+      await api(REST_NOMINAS, {
         method: "POST",
-        headers: { ...headers(), "Content-Type": "application/json" },
         body: JSON.stringify({ empleado_id: selected.id, periodo, salario_bruto: 0, irpf_pct: 0 }),
       });
-      if (r.ok) {
-        setMsg(`Nómina de ${periodo} generada (bruto ${eur(selected.salario_bruto)}).`);
-        const n = await fetch(REST_NOMINAS, { headers: headers() });
-        if (n.ok) setNominas((await n.json()).nominas ?? []);
-      } else {
-        setMsg("No se pudo generar (¿ya existe la nómina del periodo?).");
-      }
+      setMsg(`Nómina de ${periodo} generada (bruto ${eur(selected.salario_bruto)}).`);
+      const n = await api<{ nominas?: Nomina[] }>(REST_NOMINAS);
+      setNominas(n.nominas ?? []);
     } catch (err) {
-      console.error("Error generando nómina:", err);
+      if (err instanceof ApiError) {
+        setMsg("No se pudo generar (¿ya existe la nómina del periodo?).");
+      } else {
+        console.error("Error generando nómina:", err);
+      }
     } finally {
       setGuardando(false);
     }
@@ -406,20 +395,17 @@ export function RrhhDashboard() {
     setGuardando(true);
     setMsg("");
     try {
-      const r = await fetch(REST_AUSENCIAS, {
+      await api(REST_AUSENCIAS, {
         method: "POST",
-        headers: { ...headers(), "Content-Type": "application/json" },
         body: JSON.stringify({
           empleado_id: selected.id, tipo: aTipo, fecha_inicio: aInicio, fecha_fin: aFin,
           dias: Number(aDias) || 0, estado: "Pendiente", nota: "",
         }),
       });
-      if (r.ok) {
-        setMsg("Ausencia registrada.");
-        setAInicio(""); setAFin(""); setADias("");
-        const a = await fetch(REST_AUSENCIAS, { headers: headers() });
-        if (a.ok) setAusencias((await a.json()).ausencias ?? []);
-      }
+      setMsg("Ausencia registrada.");
+      setAInicio(""); setAFin(""); setADias("");
+      const a = await api<{ ausencias?: Ausencia[] }>(REST_AUSENCIAS);
+      setAusencias(a.ausencias ?? []);
     } catch (err) {
       console.error("Error registrando ausencia:", err);
     } finally {

@@ -4,7 +4,7 @@ import { AllCommunityModule, ModuleRegistry } from "ag-grid-community";
 import type { ColDef, CellValueChangedEvent } from "ag-grid-community";
 import { Search, Eye, X, Download, RotateCcw } from "lucide-react";
 import { REST_DOCUMENTOS } from "../config";
-import { getToken } from "../auth";
+import { api } from "../api";
 import { useAgGridState } from "../hooks/useAgGridState";
 import { VisorDocumentos } from "./VisorDocumentos";
 
@@ -39,12 +39,10 @@ export function DocumentosDashboard() {
   const revertiendoRef = useRef(false);
   const { resetColumnState, exportToCsv, ...gridHandlers } = useAgGridState("tms_documentos_grid");
 
-  const headers = () => ({ Authorization: `Bearer ${getToken() ?? ""}` });
-
   async function cargar() {
     try {
-      const r = await fetch(REST_DOCUMENTOS, { headers: headers() });
-      if (r.ok) setDocs((await r.json()).documentos ?? []);
+      const data = await api<any>(REST_DOCUMENTOS);
+      setDocs(data.documentos ?? []);
     } catch (err) {
       console.error("Error cargando documentos:", err);
     }
@@ -65,12 +63,10 @@ export function DocumentosDashboard() {
     const field = e.colDef.field;
     if (field !== "nombre" || !e.data || revertiendoRef.current) return;
     try {
-      const r = await fetch(`${REST_DOCUMENTOS}/${e.data.id}/renombrar`, {
+      await api(`${REST_DOCUMENTOS}/${e.data.id}/renombrar`, {
         method: "PATCH",
-        headers: { ...headers(), "Content-Type": "application/json" },
         body: JSON.stringify({ nombre: e.newValue }),
       });
-      if (!r.ok) throw new Error(String(r.status));
     } catch {
       revertiendoRef.current = true;
       e.node.setDataValue(field, e.oldValue);

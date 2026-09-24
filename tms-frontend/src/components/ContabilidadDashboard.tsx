@@ -4,7 +4,8 @@ import { AllCommunityModule, ModuleRegistry } from "ag-grid-community";
 import type { ColDef, ValueFormatterParams, CellValueChangedEvent } from "ag-grid-community";
 import { FileText, HandCoins, X, Check, Users, Truck, BookOpen, Plus, Trash2, TrendingUp, RotateCcw, Download, ShieldCheck, Package, Tags } from "lucide-react";
 import { EMITIR_BORRADOR, REST_BORRADORES, REST_LIQUIDACIONES, REST_CLIENTES, REST_PROVEEDORES, REST_TARIFAS, REST_ASIENTOS, REST_PYG, REST_BALANCE, REST_RECONCILIACION, REST_AUDITORIA } from "../config";
-import { getToken, getRol } from "../auth";
+import { getRol } from "../auth";
+import { api, ApiError } from "../api";
 import { useAgGridState } from "../hooks/useAgGridState";
 
 // Registro único de los módulos Community (master/detail incluido).
@@ -261,8 +262,7 @@ export function ContabilidadDashboard() {
     setPalesCliente(c);
     setPalesData(null);
     try {
-      const r = await fetch(`/api/clientes/${c.id}/pales`, { headers: { Authorization: `Bearer ${getToken() ?? ""}` } });
-      const d = await r.json();
+      const d = await api<any>(`/api/clientes/${c.id}/pales`);
       setPalesData(d.ok ? d : { saldo: 0, movimientos: [] });
     } catch {
       setPalesData({ saldo: 0, movimientos: [] });
@@ -279,12 +279,10 @@ export function ContabilidadDashboard() {
   // Carga inicial: borradores y liquidaciones en paralelo.
   useEffect(() => {
     let cancel = false;
-    const headers = { Authorization: `Bearer ${getToken() ?? ""}` };
     (async () => {
       try {
-        const res = await fetch(REST_BORRADORES, { headers });
-        if (!res.ok) throw new Error(String(res.status));
-        const data = ((await res.json()).borradores ?? []).map(mapBorrador);
+        const d = await api<any>(REST_BORRADORES);
+        const data = (d.borradores ?? []).map(mapBorrador);
         if (!cancel) setBorradores(data);
       } catch (err) {
         console.error("Error cargando borradores:", err);
@@ -292,9 +290,8 @@ export function ContabilidadDashboard() {
     })();
     (async () => {
       try {
-        const res = await fetch(REST_LIQUIDACIONES, { headers });
-        if (!res.ok) throw new Error(String(res.status));
-        const data = ((await res.json()).liquidaciones ?? []).map(mapLiquidacion);
+        const d = await api<any>(REST_LIQUIDACIONES);
+        const data = (d.liquidaciones ?? []).map(mapLiquidacion);
         if (!cancel) setLiquidaciones(data);
       } catch (err) {
         console.error("Error cargando liquidaciones:", err);
@@ -308,15 +305,14 @@ export function ContabilidadDashboard() {
   // Carga inicial: clientes, proveedores y asientos en paralelo.
   useEffect(() => {
     let cancel = false;
-    const headers = { Authorization: `Bearer ${getToken() ?? ""}` };
-    const get = async (url: string) => {
-      const res = await fetch(url, { headers });
-      if (!res.ok) throw new Error(String(res.status));
-      return res.json();
-    };
     (async () => {
       try {
-        const [cli, prov, tar, asientosRes] = await Promise.all([get(REST_CLIENTES), get(REST_PROVEEDORES), get(REST_TARIFAS), get(REST_ASIENTOS)]);
+        const [cli, prov, tar, asientosRes] = await Promise.all([
+          api<any>(REST_CLIENTES),
+          api<any>(REST_PROVEEDORES),
+          api<any>(REST_TARIFAS),
+          api<any>(REST_ASIENTOS),
+        ]);
         if (cancel) return;
         setClientes(cli.clientes ?? []);
         setProveedores(prov.proveedores ?? []);
@@ -338,13 +334,12 @@ export function ContabilidadDashboard() {
     if (desde) params.set("desde", desde);
     if (hasta) params.set("hasta", hasta);
     const qs = params.toString() ? `?${params.toString()}` : "";
-    const headers = { Authorization: `Bearer ${getToken() ?? ""}` };
     (async () => {
       try {
         const [pygRes, balanceRes, reconcRes] = await Promise.all([
-          fetch(`${REST_PYG}${qs}`, { headers }).then((r) => r.json()),
-          fetch(`${REST_BALANCE}${qs}`, { headers }).then((r) => r.json()),
-          fetch(`${REST_RECONCILIACION}${qs}`, { headers }).then((r) => r.json()),
+          api<any>(`${REST_PYG}${qs}`),
+          api<any>(`${REST_BALANCE}${qs}`),
+          api<any>(`${REST_RECONCILIACION}${qs}`),
         ]);
         if (cancel) return;
         setPyg(mapPyg(pygRes));
@@ -661,12 +656,9 @@ export function ContabilidadDashboard() {
     const r = getRol();
     setRol(r);
     if (r !== "admin" && r !== "superadmin") return;
-    const headers = { Authorization: `Bearer ${getToken() ?? ""}` };
     (async () => {
       try {
-        const res = await fetch(`${REST_AUDITORIA}?limite=500`, { headers });
-        if (!res.ok) throw new Error(String(res.status));
-        const data = await res.json();
+        const data = await api<any>(`${REST_AUDITORIA}?limite=500`);
         setAuditoria(data.auditoria ?? []);
       } catch (err) {
         console.error("Error cargando auditoría:", err);
@@ -713,15 +705,10 @@ export function ContabilidadDashboard() {
       const field = colDef.field;
       if (!field || !data || revertGuard.current) return;
       try {
-        const res = await fetch(`${base}/${data.id}`, {
+        await api(`${base}/${data.id}`, {
           method: "PATCH",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${getToken() ?? ""}`,
-          },
           body: JSON.stringify({ [field]: newValue }),
         });
-        if (!res.ok) throw new Error(String(res.status));
       } catch {
         revertGuard.current = true;
         event.node.setDataValue(field, oldValue);
@@ -737,16 +724,9 @@ export function ContabilidadDashboard() {
     if (selected) {
       setEmitiendo(true);
       try {
-        const res = await fetch(EMITIR_BORRADOR(selected.id), {
-          method: "POST",
-          headers: { Authorization: `Bearer ${getToken() ?? ""}` },
-        });
-        if (res.ok) {
-          setBorradores((prev) => prev.filter((b) => b.id !== selected.id));
-          setSelected(null);
-        } else {
-          console.error("Error emitiendo factura:", res.status);
-        }
+        await api(EMITIR_BORRADOR(selected.id), { method: "POST" });
+        setBorradores((prev) => prev.filter((b) => b.id !== selected.id));
+        setSelected(null);
       } catch (err) {
         console.error("Error emitiendo factura:", err);
       } finally {
@@ -758,40 +738,28 @@ export function ContabilidadDashboard() {
   async function eliminar(tipo: "cliente" | "proveedor", id: number) {
     try {
       const url = tipo === "cliente" ? `${REST_CLIENTES}/${id}` : `${REST_PROVEEDORES}/${id}`;
-      const res = await fetch(url, {
-        method: "DELETE",
-        headers: { Authorization: `Bearer ${getToken() ?? ""}` },
-      });
-      if (res.ok) {
-        setBanner({ tipo: "ok", texto: `${tipo === "cliente" ? "Cliente" : "Proveedor"} eliminado.` });
-        if (tipo === "cliente") setClientes((prev) => prev.filter((c) => c.id !== id));
-        else setProveedores((prev) => prev.filter((p) => p.id !== id));
-      } else {
-        const d = await res.json().catch(() => ({}));
-        setBanner({
-          tipo: "error",
-          texto: d?.detail?.error || "No se pudo eliminar.",
-        });
-      }
+      await api(url, { method: "DELETE" });
+      setBanner({ tipo: "ok", texto: `${tipo === "cliente" ? "Cliente" : "Proveedor"} eliminado.` });
+      if (tipo === "cliente") setClientes((prev) => prev.filter((c) => c.id !== id));
+      else setProveedores((prev) => prev.filter((p) => p.id !== id));
     } catch (err) {
       console.error("Error eliminando:", err);
+      const detail = err instanceof ApiError ? (err.detail as { detail?: { error?: string } } | null)?.detail?.error : undefined;
+      setBanner({
+        tipo: "error",
+        texto: detail || "No se pudo eliminar.",
+      });
     }
   }
 
   async function eliminarTarifa(id: number) {
     try {
-      const res = await fetch(`${REST_TARIFAS}/${id}`, {
-        method: "DELETE",
-        headers: { Authorization: `Bearer ${getToken() ?? ""}` },
-      });
-      if (res.ok) {
-        setBanner({ tipo: "ok", texto: "Tarifa eliminada." });
-        setTarifas((prev) => prev.filter((t) => t.id !== id));
-      } else {
-        setBanner({ tipo: "error", texto: "No se pudo eliminar la tarifa." });
-      }
+      await api(`${REST_TARIFAS}/${id}`, { method: "DELETE" });
+      setBanner({ tipo: "ok", texto: "Tarifa eliminada." });
+      setTarifas((prev) => prev.filter((t) => t.id !== id));
     } catch (err) {
       console.error("Error eliminando tarifa:", err);
+      setBanner({ tipo: "error", texto: "No se pudo eliminar la tarifa." });
     }
   }
 
@@ -799,12 +767,8 @@ export function ContabilidadDashboard() {
     const { data } = event;
     if (!data || revertGuard.current) return;
     try {
-      const res = await fetch(`${REST_TARIFAS}/${data.id}`, {
+      await api(`${REST_TARIFAS}/${data.id}`, {
         method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${getToken() ?? ""}`,
-        },
         body: JSON.stringify({
           nombre: data.nombre,
           tipo: data.tipo,
@@ -813,7 +777,6 @@ export function ContabilidadDashboard() {
           activo: data.activo !== false,
         }),
       });
-      if (!res.ok) throw new Error(String(res.status));
     } catch {
       revertGuard.current = true;
       event.node.setDataValue(event.colDef.field!, event.oldValue);
@@ -826,12 +789,8 @@ export function ContabilidadDashboard() {
     if (!tForm.nombre.trim()) return;
     setGuardandoN(true);
     try {
-      const res = await fetch(REST_TARIFAS, {
+      await api(REST_TARIFAS, {
         method: "POST",
-        headers: {
-          Authorization: `Bearer ${getToken() ?? ""}`,
-          "Content-Type": "application/json",
-        },
         body: JSON.stringify({
           nombre: tForm.nombre.trim(),
           tipo: tForm.tipo,
@@ -840,22 +799,19 @@ export function ContabilidadDashboard() {
           activo: true,
         }),
       });
-      if (res.ok) {
-        setBanner({ tipo: "ok", texto: "Tarifa creada." });
-        setAltaTarifa(false);
-        setTForm({ nombre: "", tipo: "viaje", precio: "", cliente_id: "" });
-        const refresh = await fetch(REST_TARIFAS, { headers: { Authorization: `Bearer ${getToken() ?? ""}` } });
-        if (refresh.ok) {
-          const d = await refresh.json();
-          setTarifas(d.tarifas ?? []);
-        }
-      } else {
-        const d = await res.json().catch(() => ({}));
-        setBanner({ tipo: "error", texto: d?.detail?.error || `Error ${res.status}` });
-      }
+      setBanner({ tipo: "ok", texto: "Tarifa creada." });
+      setAltaTarifa(false);
+      setTForm({ nombre: "", tipo: "viaje", precio: "", cliente_id: "" });
+      const d = await api<any>(REST_TARIFAS);
+      setTarifas(d.tarifas ?? []);
     } catch (err) {
       console.error("Error creando tarifa:", err);
-      setBanner({ tipo: "error", texto: "Error de red." });
+      if (err instanceof ApiError) {
+        const d = err.detail as { detail?: { error?: string } } | null;
+        setBanner({ tipo: "error", texto: d?.detail?.error || `Error ${err.status}` });
+      } else {
+        setBanner({ tipo: "error", texto: "Error de red." });
+      }
     } finally {
       setGuardandoN(false);
     }
@@ -866,12 +822,8 @@ export function ContabilidadDashboard() {
     setGuardandoN(true);
     const url = altaTipo === "cliente" ? REST_CLIENTES : REST_PROVEEDORES;
     try {
-      const res = await fetch(url, {
+      await api(url, {
         method: "POST",
-        headers: {
-          Authorization: `Bearer ${getToken() ?? ""}`,
-          "Content-Type": "application/json",
-        },
         body: JSON.stringify({
           nombre: nForm.nombre.trim(),
           cif: nForm.cif.trim(),
@@ -882,26 +834,20 @@ export function ContabilidadDashboard() {
           email: nForm.email.trim(),
         }),
       });
-      if (res.ok) {
-        setBanner({ tipo: "ok", texto: `${altaTipo === "cliente" ? "Cliente" : "Proveedor"} dado de alta.` });
-        setAltaTipo(null);
-        setNForm({ nombre: "", cif: "", direccion: "", poblacion: "", cp: "", telefono: "", email: "" });
-        const refresh = await fetch(url, { headers: { Authorization: `Bearer ${getToken() ?? ""}` } });
-        if (refresh.ok) {
-          const d = await refresh.json();
-          if (altaTipo === "cliente") setClientes(d.clientes ?? []);
-          else setProveedores(d.proveedores ?? []);
-        }
-      } else {
-        const d = await res.json().catch(() => ({}));
-        setBanner({
-          tipo: "error",
-          texto: d?.detail?.error || `Error ${res.status}`,
-        });
-      }
+      setBanner({ tipo: "ok", texto: `${altaTipo === "cliente" ? "Cliente" : "Proveedor"} dado de alta.` });
+      setAltaTipo(null);
+      setNForm({ nombre: "", cif: "", direccion: "", poblacion: "", cp: "", telefono: "", email: "" });
+      const d = await api<any>(url);
+      if (altaTipo === "cliente") setClientes(d.clientes ?? []);
+      else setProveedores(d.proveedores ?? []);
     } catch (err) {
       console.error("Error dando de alta:", err);
-      setBanner({ tipo: "error", texto: "Error de red." });
+      if (err instanceof ApiError) {
+        const d = err.detail as { detail?: { error?: string } } | null;
+        setBanner({ tipo: "error", texto: d?.detail?.error || `Error ${err.status}` });
+      } else {
+        setBanner({ tipo: "error", texto: "Error de red." });
+      }
     } finally {
       setGuardandoN(false);
     }

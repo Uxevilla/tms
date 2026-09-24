@@ -5,7 +5,7 @@ import { es } from "date-fns/locale";
 import "react-big-calendar/lib/css/react-big-calendar.css";
 import { X, Save, Trash2, Loader2, Plus } from "lucide-react";
 import { REST_AUSENCIAS_PLANNING } from "../config";
-import { getToken } from "../auth";
+import { api } from "../api";
 
 // Localizador date-fns en español.
 const locales = { es };
@@ -66,13 +66,9 @@ export function PlanningCalendario({ empleados }: { empleados: Empleado[] }) {
   const [pFin, setPFin] = useState("");
   const [pObs, setPObs] = useState("");
 
-  const headers = () => ({ Authorization: `Bearer ${getToken() ?? ""}` });
-
   async function cargar() {
     try {
-      const r = await fetch(REST_AUSENCIAS_PLANNING, { headers: headers() });
-      if (!r.ok) throw new Error(String(r.status));
-      const d = await r.json();
+      const d = await api<any>(REST_AUSENCIAS_PLANNING);
       const lista: AusenciaEvento[] = (d.ausencias ?? []).map((a: any) => ({
         id: a.id,
         title: `${`${a.nombre ?? ""} ${a.apellidos ?? ""}`.trim()} - ${LABEL_TIPO[a.tipo] || a.tipo}`,
@@ -129,18 +125,16 @@ export function PlanningCalendario({ empleados }: { empleados: Empleado[] }) {
     }
     setGuardando(true);
     try {
-      const r = await fetch(REST_AUSENCIAS_PLANNING, {
+      const d = await api<any>(REST_AUSENCIAS_PLANNING, {
         method: "POST",
-        headers: { ...headers(), "Content-Type": "application/json" },
         body: JSON.stringify({ empleado_id: pEmpleado, fecha_inicio: pInicio, fecha_fin: pFin, tipo: pTipo, observaciones: pObs }),
       });
-      const d = await r.json().catch(() => ({}));
-      if (r.ok && d.ok) {
+      if (d.ok) {
         setBanner({ tipo: "ok", texto: "Ausencia registrada." });
         setDrawer(null);
         cargar();
       } else {
-        setBanner({ tipo: "error", texto: d?.detail?.error || d?.error || `Error ${r.status}` });
+        setBanner({ tipo: "error", texto: d?.detail?.error || d?.error || "Error" });
       }
     } catch {
       setBanner({ tipo: "error", texto: "Error de red al registrar." });
@@ -153,14 +147,10 @@ export function PlanningCalendario({ empleados }: { empleados: Empleado[] }) {
     if (!detalle) return;
     setBorrando(true);
     try {
-      const r = await fetch(`${REST_AUSENCIAS_PLANNING}/${detalle.id}`, { method: "DELETE", headers: headers() });
-      if (r.ok) {
-        setBanner({ tipo: "ok", texto: "Ausencia eliminada." });
-        setDetalle(null);
-        cargar();
-      } else {
-        setBanner({ tipo: "error", texto: `No se pudo eliminar (${r.status}).` });
-      }
+      await api(`${REST_AUSENCIAS_PLANNING}/${detalle.id}`, { method: "DELETE" });
+      setBanner({ tipo: "ok", texto: "Ausencia eliminada." });
+      setDetalle(null);
+      cargar();
     } catch {
       setBanner({ tipo: "error", texto: "Error de red al eliminar." });
     } finally {

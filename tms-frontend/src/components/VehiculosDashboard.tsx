@@ -4,7 +4,7 @@ import { AllCommunityModule, ModuleRegistry } from "ag-grid-community";
 import type { ColDef, ValueFormatterParams, CellValueChangedEvent } from "ag-grid-community";
 import { Truck, Wrench, X, Save, Plus, UploadCloud, FileText, Download, Trash2, RotateCcw } from "lucide-react";
 import { REST_VEHICULOS, REST_MANTENIMIENTOS, REST_MANTENIMIENTO_ALERTAS, REST_MANTENIMIENTO_CONVERTIR, PATCH_VEHICULO, REST_PROVEEDORES } from "../config";
-import { getToken } from "../auth";
+import { api, ApiError } from "../api";
 import { useAgGridState } from "../hooks/useAgGridState";
 import { TallerCalendario } from "./TallerCalendario";
 import { CaducidadRenderer } from "./CaducidadRenderer";
@@ -177,8 +177,7 @@ export function VehiculosDashboard() {
     setVTipoTenencia("Propiedad"); setVFechaAlta(""); setVProveedorId(""); setVCuotaMensual("");
     setDocs([]);
     if (proveedores.length === 0) {
-      fetch(REST_PROVEEDORES, { headers: { Authorization: `Bearer ${getToken() ?? ""}` } })
-        .then((r) => r.json())
+      api<{ proveedores?: Record<string, any>[] }>(REST_PROVEEDORES)
         .then((d) => setProveedores(d.proveedores ?? []))
         .catch(() => {});
     }
@@ -193,8 +192,7 @@ export function VehiculosDashboard() {
   function cargarDocs() {
     if (!vIdTrimble.trim()) return;
     setCargandoDocs(true);
-    fetch(`${REST_VEHICULOS}/${vIdTrimble.trim()}/documentos`, { headers: { Authorization: `Bearer ${getToken() ?? ""}` } })
-      .then((r) => r.json())
+    api<{ documentos?: { id: number; nombre: string; contenido: string; size: number }[] }>(`${REST_VEHICULOS}/${vIdTrimble.trim()}/documentos`)
       .then((d) => setDocs(d.documentos ?? []))
       .catch(() => {})
       .finally(() => setCargandoDocs(false));
@@ -220,12 +218,11 @@ export function VehiculosDashboard() {
       docsPayload.push({ nombre: f.name, contenido });
     }
     try {
-      const r = await fetch(`${REST_VEHICULOS}/${vIdTrimble.trim()}/documentos`, {
+      await api(`${REST_VEHICULOS}/${vIdTrimble.trim()}/documentos`, {
         method: "POST",
-        headers: { Authorization: `Bearer ${getToken() ?? ""}`, "Content-Type": "application/json" },
         body: JSON.stringify({ documentos: docsPayload }),
       });
-      if (r.ok) cargarDocs();
+      cargarDocs();
     } catch (err) {
       console.error("Error subiendo documentos:", err);
     } finally {
@@ -248,11 +245,10 @@ export function VehiculosDashboard() {
 
   async function eliminarDoc(id: number) {
     try {
-      const r = await fetch(`${REST_VEHICULOS}/${vIdTrimble.trim()}/documentos/${id}`, {
+      await api(`${REST_VEHICULOS}/${vIdTrimble.trim()}/documentos/${id}`, {
         method: "DELETE",
-        headers: { Authorization: `Bearer ${getToken() ?? ""}` },
       });
-      if (r.ok) setDocs((prev) => prev.filter((d) => d.id !== id));
+      setDocs((prev) => prev.filter((d) => d.id !== id));
     } catch (err) {
       console.error("Error eliminando documento:", err);
     }
@@ -310,9 +306,8 @@ export function VehiculosDashboard() {
     setGuardandoAlta(true);
     setMsgAlta(null);
     try {
-      const r = await fetch(REST_VEHICULOS, {
+      await api(REST_VEHICULOS, {
         method: "POST",
-        headers: { Authorization: `Bearer ${getToken() ?? ""}`, "Content-Type": "application/json" },
         body: JSON.stringify({
           id: vIdTrimble.trim(),
           categoria: vCategoria,
@@ -333,22 +328,22 @@ export function VehiculosDashboard() {
           cuota_mensual: Number(vCuotaMensual) || 0,
         }),
       });
-      if (r.ok) {
-        setBanner({ tipo: "ok", texto: editando ? "Ficha del vehículo actualizada correctamente." : "Vehículo dado de alta correctamente." });
-        setCreando(false);
-        const v = await fetch(REST_VEHICULOS, { headers: { Authorization: `Bearer ${getToken() ?? ""}` } });
-        if (v.ok) setVehiculos((await v.json()).vehiculos ?? []);
-        setEditando(false);
-        setVIdTrimble(""); setVMatricula(""); setVMarca(""); setVModelo(""); setVAnno(""); setVEjes(""); setVPeso(""); setVPalets("");
-        setVFechaCaducidadItv(""); setVSeguroCompania(""); setVFechaCaducidadSeguro("");
-        setVTipoTenencia("Propiedad"); setVFechaAlta(""); setVProveedorId(""); setVCuotaMensual("");
-      } else {
-        const d = await r.json().catch(() => ({}));
-        setMsgAlta({ tipo: "error", texto: d?.detail?.error || d?.error || `Error ${r.status}` });
-      }
+      setBanner({ tipo: "ok", texto: editando ? "Ficha del vehículo actualizada correctamente." : "Vehículo dado de alta correctamente." });
+      setCreando(false);
+      const v = await api<{ vehiculos?: Vehiculo[] }>(REST_VEHICULOS);
+      setVehiculos(v.vehiculos ?? []);
+      setEditando(false);
+      setVIdTrimble(""); setVMatricula(""); setVMarca(""); setVModelo(""); setVAnno(""); setVEjes(""); setVPeso(""); setVPalets("");
+      setVFechaCaducidadItv(""); setVSeguroCompania(""); setVFechaCaducidadSeguro("");
+      setVTipoTenencia("Propiedad"); setVFechaAlta(""); setVProveedorId(""); setVCuotaMensual("");
     } catch (err) {
-      console.error("Error dando de alta vehículo:", err);
-      setMsgAlta({ tipo: "error", texto: "Error de red al dar de alta el vehículo." });
+      if (err instanceof ApiError) {
+        const d = err.detail as { detail?: { error?: string }; error?: string } | null;
+        setMsgAlta({ tipo: "error", texto: d?.detail?.error || d?.error || err.message });
+      } else {
+        console.error("Error dando de alta vehículo:", err);
+        setMsgAlta({ tipo: "error", texto: "Error de red al dar de alta el vehículo." });
+      }
     } finally {
       setGuardandoAlta(false);
     }
@@ -357,16 +352,13 @@ export function VehiculosDashboard() {
   // Carga de datos vivos.
   useEffect(() => {
     let cancel = false;
-    const headers = { Authorization: `Bearer ${getToken() ?? ""}` };
-    const get = async (url: string) => {
-      const r = await fetch(url, { headers });
-      if (!r.ok) throw new Error(String(r.status));
-      return r.json();
-    };
     (async () => {
       try {
         const [v, m, a, p] = await Promise.all([
-          get(REST_VEHICULOS), get(REST_MANTENIMIENTOS), get(REST_MANTENIMIENTO_ALERTAS), get(REST_PROVEEDORES),
+          api<{ vehiculos?: Vehiculo[] }>(REST_VEHICULOS),
+          api<{ mantenimientos?: Mantenimiento[] }>(REST_MANTENIMIENTOS),
+          api<{ alertas?: Alerta[] }>(REST_MANTENIMIENTO_ALERTAS),
+          api<{ proveedores?: Record<string, any>[] }>(REST_PROVEEDORES),
         ]);
         if (!cancel) {
           const provs = p.proveedores ?? [];
@@ -512,10 +504,9 @@ export function VehiculosDashboard() {
 
   async function recargarMantYAlertas() {
     try {
-      const h = { Authorization: `Bearer ${getToken() ?? ""}` };
       const [m, a] = await Promise.all([
-        fetch(REST_MANTENIMIENTOS, { headers: h }).then((r) => r.json()),
-        fetch(REST_MANTENIMIENTO_ALERTAS, { headers: h }).then((r) => r.json()),
+        api<{ mantenimientos?: Mantenimiento[] }>(REST_MANTENIMIENTOS),
+        api<{ alertas?: Alerta[] }>(REST_MANTENIMIENTO_ALERTAS),
       ]);
       setMantenimientos(m.mantenimientos ?? []);
       setAlertas(a.alertas ?? []);
@@ -546,21 +537,24 @@ export function VehiculosDashboard() {
         base_imponible: rGenerarGasto ? Number(rBase) || 0 : 0,
         iva: Number(rIva) || 21,
       };
-      const r = await fetch(REST_MANTENIMIENTOS, {
+      const d = await api<{ ok?: boolean; detail?: { error?: string }; error?: string }>(REST_MANTENIMIENTOS, {
         method: "POST",
-        headers: { Authorization: `Bearer ${getToken() ?? ""}`, "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
-      const d = await r.json().catch(() => ({}));
-      if (r.ok && d.ok) {
+      if (d.ok) {
         setBanner({ tipo: "ok", texto: "Revisión registrada." });
         setDrawerRevision(false);
         recargarMantYAlertas();
       } else {
-        setBanner({ tipo: "error", texto: d?.detail?.error || d?.error || `Error ${r.status}` });
+        setBanner({ tipo: "error", texto: d?.detail?.error || d?.error || "Error al guardar la revisión." });
       }
-    } catch {
-      setBanner({ tipo: "error", texto: "Error de red al guardar." });
+    } catch (err) {
+      if (err instanceof ApiError) {
+        const d = err.detail as { detail?: { error?: string }; error?: string } | null;
+        setBanner({ tipo: "error", texto: d?.detail?.error || d?.error || err.message });
+      } else {
+        setBanner({ tipo: "error", texto: "Error de red al guardar." });
+      }
     } finally {
       setGuardandoRevision(false);
     }
@@ -568,18 +562,17 @@ export function VehiculosDashboard() {
 
   async function convertirAlerta(id: number) {
     try {
-      const r = await fetch(REST_MANTENIMIENTO_CONVERTIR(id), {
+      await api(REST_MANTENIMIENTO_CONVERTIR(id), {
         method: "POST",
-        headers: { Authorization: `Bearer ${getToken() ?? ""}` },
       });
-      if (r.ok) {
-        setBanner({ tipo: "ok", texto: "Alerta convertida en orden de taller." });
-        recargarMantYAlertas();
+      setBanner({ tipo: "ok", texto: "Alerta convertida en orden de taller." });
+      recargarMantYAlertas();
+    } catch (err) {
+      if (err instanceof ApiError) {
+        setBanner({ tipo: "error", texto: `No se pudo convertir (${err.status}).` });
       } else {
-        setBanner({ tipo: "error", texto: `No se pudo convertir (${r.status}).` });
+        setBanner({ tipo: "error", texto: "Error de red al convertir." });
       }
-    } catch {
-      setBanner({ tipo: "error", texto: "Error de red al convertir." });
     }
   }
 
@@ -588,12 +581,10 @@ export function VehiculosDashboard() {
     const field = colDef.field;
     if (!field || !data || revertiendoRef.current) return;
     try {
-      const r = await fetch(`${REST_MANTENIMIENTOS}/${data.id}/campos`, {
+      await api(`${REST_MANTENIMIENTOS}/${data.id}/campos`, {
         method: "PATCH",
-        headers: { Authorization: `Bearer ${getToken() ?? ""}`, "Content-Type": "application/json" },
         body: JSON.stringify({ [field]: newValue }),
       });
-      if (!r.ok) throw new Error(String(r.status));
     } catch {
       revertiendoRef.current = true;
       event.node.setDataValue(field, oldValue);
@@ -617,12 +608,10 @@ export function VehiculosDashboard() {
     }
 
     try {
-      const r = await fetch(PATCH_VEHICULO(data.id), {
+      await api(PATCH_VEHICULO(data.id), {
         method: "PATCH",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${getToken() ?? ""}` },
         body: JSON.stringify({ [campo]: valor }),
       });
-      if (!r.ok) throw new Error(String(r.status));
       if (field === "proveedor_nombre") {
         setVehiculos((prev) => prev.map((x) => (x.id === data.id ? { ...x, proveedor_id: valor as number, proveedor_nombre: String(newValue ?? "") } : x)));
       }
@@ -651,15 +640,12 @@ export function VehiculosDashboard() {
       if (coste !== "") body.coste_adquisicion = Number(coste);
       if (valorResidual !== "") body.valor_residual = Number(valorResidual);
       if (vidaUtil !== "") body.vida_util = Number(vidaUtil);
-      const r = await fetch(PATCH_VEHICULO(selected.id), {
+      await api(PATCH_VEHICULO(selected.id), {
         method: "PATCH",
-        headers: { Authorization: `Bearer ${getToken() ?? ""}`, "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
-      if (r.ok) {
-        setVehiculos((prev) => prev.map((v) => (v.id === selected.id ? { ...v, ...body } : v)));
-        setSelected(null);
-      }
+      setVehiculos((prev) => prev.map((v) => (v.id === selected.id ? { ...v, ...body } : v)));
+      setSelected(null);
     } catch (err) {
       console.error("Error guardando vehículo:", err);
     } finally {
@@ -671,19 +657,16 @@ export function VehiculosDashboard() {
     if (!selected || !mTipo) return;
     setGuardando(true);
     try {
-      const r = await fetch(REST_MANTENIMIENTOS, {
+      await api(REST_MANTENIMIENTOS, {
         method: "POST",
-        headers: { Authorization: `Bearer ${getToken() ?? ""}`, "Content-Type": "application/json" },
         body: JSON.stringify({
           vehiculo_id: selected.id, tipo: mTipo, fecha: mFecha, fecha_fin: mFechaFin,
           km: Number(mKm) || 0, coste: Number(mCoste) || 0, notas: "", hecho: false,
         }),
       });
-      if (r.ok) {
-        setMTipo(""); setMFecha(""); setMFechaFin(""); setMKm(""); setMCoste("");
-        const m = await fetch(REST_MANTENIMIENTOS, { headers: { Authorization: `Bearer ${getToken() ?? ""}` } });
-        if (m.ok) setMantenimientos((await m.json()).mantenimientos ?? []);
-      }
+      setMTipo(""); setMFecha(""); setMFechaFin(""); setMKm(""); setMCoste("");
+      const m = await api<{ mantenimientos?: Mantenimiento[] }>(REST_MANTENIMIENTOS);
+      setMantenimientos(m.mantenimientos ?? []);
     } catch (err) {
       console.error("Error registrando mantenimiento:", err);
     } finally {

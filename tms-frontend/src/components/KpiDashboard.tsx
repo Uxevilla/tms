@@ -4,7 +4,7 @@ import { AllCommunityModule, ModuleRegistry } from "ag-grid-community";
 import type { ColDef } from "ag-grid-community";
 import { BarChart3, LineChart } from "lucide-react";
 import { GRAFANA_URL, REST_RENTABILIDAD } from "../config";
-import { getToken } from "../auth";
+import { api } from "../api";
 
 import { gridTheme, GRID_ROW_HEIGHT, GRID_HEADER_HEIGHT } from "../gridConfig";
 ModuleRegistry.registerModules([AllCommunityModule]);
@@ -53,8 +53,7 @@ export function KpiDashboard() {
       if (d) q.set("desde", d);
       if (h) q.set("hasta", h);
       const qs = q.toString() ? `?${q.toString()}` : "";
-      const r = await fetch(`${REST_RENTABILIDAD}${qs}`, { headers: { Authorization: `Bearer ${getToken() ?? ""}` } });
-      const j = await r.json();
+      const j = await api<any>(`${REST_RENTABILIDAD}${qs}`);
       setData(j.flota ?? []);
       setRango({ desde: j.desde ?? "", hasta: j.hasta ?? "" });
     } catch (e) {
