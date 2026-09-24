@@ -207,6 +207,7 @@ Razonamiento (coincide con Claude):
 
 - ✅ **Fase 0** — backup `pg_dump` (tms + tms_master) + copia de prueba `tms_mig`.
 - ✅ **Fase 1 (docs)** — base64 sale de la BD a disco (`files.storage_key/sha256/bytes`, `gastos_vehiculos.storage_key`); 10+ rutas migradas (subida/serve/sync/OCR/pedido/e-CMR) + borrado con chequeo de referencias. Verificado en producción (0 base64 previo, sin datos que migrar).
+- ✅ **Fase 2 (maestros)** — `maestros.terceros` (merge de clientes/proveedores/transportistas por NIF + flags `es_cliente/es_proveedor/es_transportista`); las 3 tablas viejas son ahora **vistas de compatibilidad con triggers INSTEAD OF**, así que el código existente funciona sin cambios. Verificado en producción (CRUD vía API cae en `terceros` con el flag correcto). 0 datos a migrar (tablas vacías).
 
 ## Nota sobre el punto 8 de Claude (secretos)
 
