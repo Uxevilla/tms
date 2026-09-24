@@ -218,6 +218,7 @@ Razonamiento (coincide con Claude):
 - ⏳ **Fase 6 (flota)** — relocación `vehiculos`/`mantenimientos` → `flota.*` + **remap PK** (`vehiculos.id` TEXT→BIGINT surrogate + `matricula`/`terminal_trimble`/`codigo`). ROMPEDOR sobre la flota viva (telemetría + Trimble). Script listo en `migracion_fase6_flota.sql`; requiere worker parado + prueba `findAllUnits` real.
 - ⏳ **Fase 7 (operaciones)** — relocación `trips`/`paradas`/`tramos` → `operaciones.*` + **remap PK** (`trips.id` TEXT→BIGINT + `codigo`). ROMPEDOR (sync Trimble + telemetría + facturación). Script en `migracion_fase7_operaciones.sql`; mismo procedimiento que Fase 6.
 - ⏳ **Fase 9 (limpieza)** — eliminar vistas de compatibilidad + tablas legacy una vez el código use nombres cualificados por esquema. Depende de completar la migración del código; no bloquea el funcionamiento.
+- ✅ **Fase 6/7 (relocación)** — `vehiculos`/`mantenimientos` movidas a `flota.*` y `trips`/`paradas`/`tramos` a `operaciones.*` (los 8 esquemas del modelo destino ya quedan poblados); vistas de compatibilidad + `ON CONFLICT`/`ALTER` redirigidos. Migración `migracion_fase67_relocacion.sql` aplicada a `tms_mig` y `tms`. Verificado en producción: 50 vehículos + viajes + telemetría en vivo intactos vía vistas; FKs `paradas/tramos→trips` OK. **Pendiente solo el remap de PK** (rompedor, script listo).
 
 ## Nota sobre el punto 8 de Claude (secretos)
 
