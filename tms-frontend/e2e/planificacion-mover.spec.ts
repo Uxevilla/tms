@@ -24,13 +24,20 @@ async function tripRow(codigo: string) {
   return r.rows[0];
 }
 
-// Fecha "hoy" en LOCAL (misma fuente que el seed, datetime.date.today()), no UTC.
-// toISOString() da la fecha UTC y el test f) fallaría entre 00:00 y 02:00 en España.
+// Fecha "hoy" en Europe/Madrid — IGUAL que el seed (zoneinfo Europe/Madrid).
+// El runner del CI va en UTC, así que getFullYear/getMonth/getDate darían la fecha UTC
+// y el test f) fallaría entre 00:00 y 02:00 en España (desfase de un día con el seed).
 function hoyLocal(): string {
-  const d = new Date();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const dd = String(d.getDate()).padStart(2, "0");
-  return `${d.getFullYear()}-${m}-${dd}`;
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Europe/Madrid",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+  const y = parts.find((p) => p.type === "year")!.value;
+  const m = parts.find((p) => p.type === "month")!.value;
+  const d = parts.find((p) => p.type === "day")!.value;
+  return `${y}-${m}-${d}`;
 }
 
 // Reset determinista de los viajes que mutan los tests (el seed corre una sola vez).

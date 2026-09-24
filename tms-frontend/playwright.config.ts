@@ -12,6 +12,9 @@ export default defineConfig({
   use: {
     baseURL: process.env.E2E_BASE_URL ?? "http://localhost:8080",
     trace: "retain-on-failure",
+    // El dashboard usa la fecha LOCAL del navegador como "hoy"; el seed usa Europe/Madrid.
+    // Fijar la tz evita el desfase de un día en el CI (runner en UTC) entre 00:00 y 02:00.
+    timezoneId: "Europe/Madrid",
   },
   projects: [
     { name: "admin", use: { ...devices["Desktop Chrome"], storageState: ".auth/admin.json" } },
