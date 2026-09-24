@@ -24,6 +24,7 @@ const DocumentosDashboard = lazy(() => import("./components/DocumentosDashboard"
 const MensajeriaDashboard = lazy(() => import("./components/MensajeriaDashboard").then((m) => ({ default: m.MensajeriaDashboard })));
 const ConfiguracionDashboard = lazy(() => import("./components/ConfiguracionDashboard").then((m) => ({ default: m.ConfiguracionDashboard })));
 const TorreDashboard = lazy(() => import("./components/TorreDashboard").then((m) => ({ default: m.TorreDashboard })));
+const PlanificacionDashboard = lazy(() => import("./components/PlanificacionDashboard").then((m) => ({ default: m.PlanificacionDashboard })));
 import { NotFound } from "./components/NotFound";
 
 function Placeholder({ titulo, fase }: { titulo: string; fase: string }) {
@@ -116,7 +117,7 @@ const torreRoute = createRoute({
 const planificacionRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "/planificacion",
-  component: () => <Placeholder titulo="Planificación" fase="Fase 3" />,
+  component: () => <PlanificacionDashboard />,
 });
 const viajesRoute = createRoute({
   getParentRoute: () => appRoute,

@@ -291,3 +291,5 @@ from routers.rrhh import router as rrhh_router
 app.include_router(rrhh_router)
 from routers.torre import router as torre_router
 app.include_router(torre_router)
+from routers.planificacion import router as planificacion_router
+app.include_router(planificacion_router)

@@ -7,6 +7,9 @@ export const REST_TACOGRAFO = (terminal: string) => `/api/tacografo/${terminal}/
 export const REST_ATENCION = "/api/atencion";
 export const REST_BUSCAR = "/api/buscar";
 export const REST_ENTIDAD = (tipo: string, id: string) => `/api/entidad/${tipo}/${encodeURIComponent(id)}`;
+export const REST_PLANIFICACION = "/api/planificacion";
+export const REST_PLANIFICACION_VALIDAR = "/api/planificacion/validar";
+export const REST_ASIGNAR = (id: string) => `/api/trips/${encodeURIComponent(id)}/asignar`;
 export const MAP_STYLE_URL = (import.meta.env?.VITE_MAP_STYLE_URL as string | undefined) ?? "";
 export const AUTH_LOGIN = "/api/auth/login";
 export const CHANGE_PASSWORD = "/api/auth/change-password";

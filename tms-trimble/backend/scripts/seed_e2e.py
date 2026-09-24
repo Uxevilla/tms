@@ -73,6 +73,18 @@ def main() -> None:
             "INSERT INTO telemetria.posiciones_gps (time, vehiculo_id, lat, lng) VALUES (%s, %s, %s, %s)",
             (now, "E2E-VEH", 40.4, -3.7),
         )
+    # Segundo vehículo con posición: para que el test del encuadre pueda rastrear un marcador
+    # fijo mientras cambia la posición de OTRO vehículo (la cámara no debe re-encuadrar).
+    cur.execute(
+        "INSERT INTO flota.vehiculos (codigo, terminal_trimble, matricula, categoria, activo) "
+        "VALUES ('E2E-VEH2', 'E2E-VEH2', '0002-TST', 'tractora', true) ON CONFLICT (codigo) DO NOTHING",
+    )
+    cur.execute("SELECT 1 FROM telemetria.posiciones_gps WHERE vehiculo_id = 'E2E-VEH2' LIMIT 1")
+    if not cur.fetchone():
+        cur.execute(
+            "INSERT INTO telemetria.posiciones_gps (time, vehiculo_id, lat, lng) VALUES (%s, %s, %s, %s)",
+            (now, "E2E-VEH2", 41.4, 2.17),
+        )
 
     # Gasto sin imputar (idempotente: solo si no existe el concepto marcador).
     cur.execute("SELECT 1 FROM finanzas.gastos WHERE concepto = 'gasto suelto e2e' LIMIT 1")
@@ -82,10 +94,11 @@ def main() -> None:
             "VALUES (NULL, NULL, 'gasto suelto e2e', 10, '2026-01-01')",
         )
 
-    # Mensaje sin responder (con viaje → entidad viaje).
+    # Mensaje sin responder (con viaje → entidad viaje). Terminal único para que los mensajes
+    # reales de producción (source distinta + terminal vacío + hora posterior) no lo den por respondido.
     cur.execute(
-        "INSERT INTO mensajes (id, trip_id, needreply, source, time) VALUES ('E2E-M1', 'E2E-TRIP-1', true, 'demo', %s) "
-        "ON CONFLICT (id) DO UPDATE SET needreply=true",
+        "INSERT INTO mensajes (id, trip_id, needreply, source, terminal, time) VALUES ('E2E-M1', 'E2E-TRIP-1', true, 'demo', 'E2E-TERMINAL', %s) "
+        "ON CONFLICT (id) DO UPDATE SET needreply=true, source='demo', trip_id='E2E-TRIP-1', terminal='E2E-TERMINAL', time=EXCLUDED.time",
         (now,),
     )
 
@@ -98,6 +111,74 @@ def main() -> None:
     cur.execute(
         "INSERT INTO rrhh.conductores (empleado_id, tarjeta_tacografo) VALUES ('EMP-E2E', 'E2E-DID') "
         "ON CONFLICT (empleado_id) DO NOTHING",
+    )
+
+    # Tablero de planificación (Fase 3): tractora limpia (validación ok → verde) + semirremolque.
+    # matricula 0003-TST → se ordena al inicio del timeline (junto a las de test), visible sin scroll.
+    # DO UPDATE (no DO NOTHING) para corregir valores viejos de seeds anteriores.
+    cur.execute(
+        "INSERT INTO flota.vehiculos (codigo, terminal_trimble, matricula, categoria, activo) "
+        "VALUES ('E2E-TRAC', 'E2E-TRAC', '0003-TST', 'tractora', true) "
+        "ON CONFLICT (codigo) DO UPDATE SET terminal_trimble=EXCLUDED.terminal_trimble, matricula=EXCLUDED.matricula, categoria=EXCLUDED.categoria, activo=EXCLUDED.activo",
+    )
+    cur.execute(
+        "INSERT INTO flota.vehiculos (codigo, terminal_trimble, matricula, categoria, activo, capacidad_peso, capacidad_palets) "
+        "VALUES ('E2E-SEMI', 'E2E-SEMI', 'SEMI-TST', 'semirremolque', true, 25000, 33) "
+        "ON CONFLICT (codigo) DO UPDATE SET matricula=EXCLUDED.matricula, categoria=EXCLUDED.categoria, activo=EXCLUDED.activo, capacidad_peso=EXCLUDED.capacidad_peso, capacidad_palets=EXCLUDED.capacidad_palets",
+    )
+
+    # Fase 3 — arrastre/validación/reasignación. Fechas relativas a HOY para que aparezcan
+    # en la vista del día actual y los casos de solapamiento/caducidad sean deterministas.
+    hoy = datetime.date.today().isoformat()
+    ayer_r = (datetime.date.today() - datetime.timedelta(days=1)).isoformat()
+
+    # Tractoras de test adicionales (bloqueo por solapamiento + reasignación).
+    for codigo, matricula in (("E2E-TRAC2", "0004-TST"), ("E2E-TRAC3", "0005-TST")):
+        cur.execute(
+            "INSERT INTO flota.vehiculos (codigo, terminal_trimble, matricula, categoria, activo) "
+            "VALUES (%s, %s, %s, 'tractora', true) "
+            "ON CONFLICT (codigo) DO UPDATE SET terminal_trimble=EXCLUDED.terminal_trimble, matricula=EXCLUDED.matricula, categoria=EXCLUDED.categoria, activo=EXCLUDED.activo",
+            (codigo, codigo, matricula),
+        )
+
+    # Semirremolque con ITV caducada (aviso itv_caducada).
+    cur.execute(
+        "INSERT INTO flota.vehiculos (codigo, terminal_trimble, matricula, categoria, activo, fecha_caducidad_itv) "
+        "VALUES ('E2E-SEMI-OLD', 'E2E-SEMI-OLD', 'SEMI-OLD', 'semirremolque', true, %s) "
+        "ON CONFLICT (codigo) DO UPDATE SET fecha_caducidad_itv=EXCLUDED.fecha_caducidad_itv",
+        (ayer,),
+    )
+
+    # Viaje ya asignado a E2E-TRAC2 hoy (bloqueo tractora_solapada al solapar con otro viaje).
+    cur.execute(
+        "INSERT INTO operaciones.trips (codigo, estado, terminal, fecha_esperada_carga, fecha_esperada_descarga, origen, destino) "
+        "VALUES ('E2E-PLAN-SOLAP', 'sin_asignar', 'E2E-TRAC2', %s, %s, 'Madrid', 'Valencia') "
+        "ON CONFLICT (codigo) DO UPDATE SET terminal='E2E-TRAC2', fecha_esperada_carga=EXCLUDED.fecha_esperada_carga, fecha_esperada_descarga=EXCLUDED.fecha_esperada_descarga",
+        (f"{hoy}T09:00", f"{hoy}T11:00"),
+    )
+
+    # Pendiente limpio (ok → verde), hoy. Resetea terminal/semirremolque (idempotente).
+    cur.execute(
+        "INSERT INTO operaciones.trips (codigo, estado, fecha_esperada_carga, fecha_esperada_descarga, origen, destino, kilos) "
+        "VALUES ('E2E-PLAN-OK', 'sin_asignar', %s, %s, 'Madrid', 'Barcelona', 0) "
+        "ON CONFLICT (codigo) DO UPDATE SET terminal=NULL, semirremolque_id=NULL, remolque_id=NULL, fecha_esperada_carga=EXCLUDED.fecha_esperada_carga, fecha_esperada_descarga=EXCLUDED.fecha_esperada_descarga",
+        (f"{hoy}T10:00", f"{hoy}T12:00"),
+    )
+
+    # Pendiente con aviso (semirremolque con ITV caducada), hoy.
+    cur.execute(
+        "INSERT INTO operaciones.trips (codigo, estado, semirremolque_id, fecha_esperada_carga, fecha_esperada_descarga, origen, destino) "
+        "VALUES ('E2E-PLAN-AVISO', 'sin_asignar', 'E2E-SEMI-OLD', %s, %s, 'Madrid', 'Sevilla') "
+        "ON CONFLICT (codigo) DO UPDATE SET terminal=NULL, semirremolque_id='E2E-SEMI-OLD', fecha_esperada_carga=EXCLUDED.fecha_esperada_carga, fecha_esperada_descarga=EXCLUDED.fecha_esperada_descarga",
+        (f"{hoy}T14:00", f"{hoy}T16:00"),
+    )
+
+    # Viaje de OTRA fecha (ayer) → no aparece en la vista del día actual.
+    cur.execute(
+        "INSERT INTO operaciones.trips (codigo, estado, fecha_esperada_carga, fecha_esperada_descarga, origen, destino) "
+        "VALUES ('E2E-PLAN-OTRO', 'sin_asignar', %s, %s, 'Madrid', 'Bilbao') "
+        "ON CONFLICT (codigo) DO UPDATE SET terminal=NULL, fecha_esperada_carga=EXCLUDED.fecha_esperada_carga, fecha_esperada_descarga=EXCLUDED.fecha_esperada_descarga",
+        (f"{ayer_r}T08:00", f"{ayer_r}T20:00"),
     )
 
     conn.close()
