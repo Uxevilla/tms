@@ -7,9 +7,16 @@ actividad (nombre -> referencia). Los valores por cuenta viven en integracion_va
 Fase 1: solo siembra y migra la config actual (la lectura de credenciales sigue en `config`
 hasta la Fase 2, que pasa a leer de `integracion_valores`).
 """
+import threading
+
 import psycopg2
 
 import config
+from db import _db, _tenant_ctx
+
+# Caché en memoria del mapa {nombre: referencia} por tenant (actividades Trimble).
+_act_cache = {}
+_act_lock = threading.Lock()
 
 # --- Catálogo de proveedores (codigo, nombre, categoria, icono, activo, orden) ---
 PROVEEDORES = [
@@ -82,6 +89,35 @@ MIGRACION_CONFIG = {
     "smtp_password": ("smtp", "password"),
     "smtp_from": ("smtp", "from"),
 }
+
+
+def _actividades_map():
+    """{nombre: referencia} de las actividades activas del proveedor trimble (con caché por tenant)."""
+    t = _tenant_ctx.get()
+    dbname = t["db_name"] if t else config.DB_NAME
+    with _act_lock:
+        if dbname in _act_cache:
+            return _act_cache[dbname]
+    with _db() as conn:
+        prov = conn.execute("SELECT id FROM integracion_proveedores WHERE codigo='trimble'").fetchone()
+        m = {}
+        if prov:
+            rows = conn.execute(
+                "SELECT nombre, referencia FROM actividades WHERE proveedor_id=? AND activo",
+                (prov["id"],),
+            ).fetchall()
+            m = {r["nombre"]: r["referencia"] for r in rows}
+    with _act_lock:
+        _act_cache[dbname] = m
+    return m
+
+
+def _invalida_actividades():
+    """Limpia la caché de actividades del tenant actual (tras crear/editar/borrar actividades)."""
+    t = _tenant_ctx.get()
+    dbname = t["db_name"] if t else config.DB_NAME
+    with _act_lock:
+        _act_cache.pop(dbname, None)
 
 
 def _conn(dbname):

@@ -283,6 +283,8 @@ from routers.mensajeria import router as mensajeria_router
 app.include_router(mensajeria_router)
 from routers.viajes import router as viajes_router
 app.include_router(viajes_router)
+from routers.configuracion import router as configuracion_router
+app.include_router(configuracion_router)
 from routers.contabilidad import router as contabilidad_router
 app.include_router(contabilidad_router)
 from routers.rrhh import router as rrhh_router

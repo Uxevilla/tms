@@ -199,6 +199,8 @@ def _build_trip(viaje: ViajeRequest, trip_id: str, documentos: list = None) -> d
             "lat": d.lat, "lng": d.lng,
         }
 
+    act_map = _actividades_map()  # {nombre: referencia} editable por cuenta
+
     tasks = []
 
     def add(idx, label, actividad, d, comentario=""):
@@ -211,7 +213,7 @@ def _build_trip(viaje: ViajeRequest, trip_id: str, documentos: list = None) -> d
             "nombre": label,
             "descripcion": descripcion,
             "actividad": actividad,
-            "tipo": actividad,
+            "tipo": act_map.get(actividad, actividad),
             "contacto": contacto(d),
         }
         inicio = _to_trimble_ts(getattr(d, "fecha_inicio", "") or "")
@@ -229,7 +231,7 @@ def _build_trip(viaje: ViajeRequest, trip_id: str, documentos: list = None) -> d
         # omitir paradas vacías (sin ciudad, nombre, calle ni coordenadas)
         if not (p.ciudad or p.nombre or p.calle or p.lat is not None):
             continue
-        act = p.actividad if p.actividad in ACTIVITY_TYPES else "DESCARGA"
+        act = p.actividad if p.actividad in act_map else "DESCARGA"
         add(i, f"Parada: {p.ciudad or p.nombre or '?'}", act, p, p.comentario)
         i += 1
     add(i, f"Destino: {viaje.destino.ciudad or viaje.destino.nombre or '?'}",
@@ -563,6 +565,7 @@ def _vehiculo_ptv(terminal):
 
 from services.telemetria import _set_viaje_activo
 from services.contabilidad import _next_referencia
+from services.configuracion import _actividades_map
 
 def _vehiculo_posicion(terminal):
     """Última posición conocida de un vehículo (lat, lng) o None."""
