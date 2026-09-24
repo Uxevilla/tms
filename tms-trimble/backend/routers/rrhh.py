@@ -25,7 +25,11 @@ router = APIRouter(dependencies=[Depends(require_role(["admin"]))])
 
 @router.get("/api/empleados")
 def list_empleados(conn = Depends(get_conn)):
-    rows = conn.execute("SELECT * FROM empleados ORDER BY fecha_baja IS NOT NULL, nombre, apellidos").fetchall()
+    rows = conn.execute(
+        "SELECT e.*, c.id AS conductor_id FROM empleados e "
+        "LEFT JOIN rrhh.conductores c ON c.empleado_id = e.id "
+        "ORDER BY e.fecha_baja IS NOT NULL, e.nombre, e.apellidos"
+    ).fetchall()
     for r in rows:
         r["activo"] = not r["fecha_baja"]
     return {"empleados": [dict(r) for r in rows]}

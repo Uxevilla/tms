@@ -22,8 +22,12 @@ _MAX_DIA_CONDUCCION_MIN = 540.0
 _ORDEN_SEVERIDAD = {"critico": 0, "aviso": 1, "info": 2}
 
 # Búsqueda insensible a acentos SIN la extensión `unaccent` (translate + lower en SQL).
-_ACCENT_FROM = "áéíóúüñ"
-_ACCENT_TO = "aeiouun"
+# `translate(x, from, to)` exige que from y to tengan la MISMA longitud (1 a 1).
+_ACCENT_FROM = "áéíóúüñàèìòùâêîôûç"
+_ACCENT_TO = "aeiouunaeiouaeiouc"
+assert len(_ACCENT_FROM) == len(_ACCENT_TO) == 18, (
+    "_ACCENT_FROM y _ACCENT_TO deben tener la misma longitud (18) para translate()"
+)
 
 
 # ---------------------------------------------------------------- modelos de respuesta
@@ -159,7 +163,8 @@ def _item(tipo, severidad, titulo, detalle, entidad, ts=None, acciones=None, sub
         "titulo": titulo,
         "detalle": detalle,
         "entidad": entidad,
-        "acciones": acciones or [{"id": "abrir", "label": "Abrir"}],
+        # La fila ya abre el panel al pulsarla; la acción "abrir" es redundante y se omite.
+        "acciones": acciones or [],
         "ts": ts or datetime.datetime.now(datetime.timezone.utc).isoformat(),
     }
 
@@ -276,7 +281,7 @@ def atencion(user: dict = Depends(require_role(["admin", "dispatcher"])), conn: 
                 f"Viaje {r['codigo']} sin facturar",
                 f"Entregado · {r['cliente'] or '?'} · {r['origen']} → {r['destino']}",
                 {"tipo": "viaje", "id": r["codigo"], "codigo": r["codigo"]},
-                acciones=[{"id": "abrir", "label": "Abrir"}, {"id": "facturar", "label": "Facturar"}],
+                acciones=[{"id": "facturar", "label": "Facturar"}],
             ))
 
     # 5. gasto_sin_imputar: gasto sin vehículo ni viaje.
@@ -381,7 +386,9 @@ def buscar(q: Annotated[str, Query(max_length=80)] = "", limite: Annotated[int, 
     if len(q_norm) < 2:
         return {"resultados": []}
     es_admin = user.get("rol") == "admin"
-    patron = f"%{q_norm}%"
+    # Escapar los comodines de LIKE (% y _) para que se traten como literales.
+    q_esc = q_norm.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    patron = f"%{q_esc}%"
     resultados = []
 
     def fila(tipo, ident, titulo, subtitulo):
@@ -439,7 +446,7 @@ def buscar(q: Annotated[str, Query(max_length=80)] = "", limite: Annotated[int, 
         ).fetchall():
             fila("factura", r["numero"], r["numero"], f"Factura · {r['cliente_nombre'] or ''}")
 
-    return {"resultados": resultados[:limite]}
+    return {"resultados": resultados}
 
 
 @router.get("/api/entidad/vehiculo/{codigo}", response_model=EntidadVehiculo)

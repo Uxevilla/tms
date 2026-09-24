@@ -1,8 +1,10 @@
 import "maplibre-gl/dist/maplibre-gl.css";
 
+import { useCallback, useEffect, useRef, useState } from "react";
 import maplibreWorkerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url";
 import { setWorkerUrl } from "maplibre-gl";
 import Map, { Marker, NavigationControl } from "react-map-gl/maplibre";
+import type { MapRef } from "react-map-gl/maplibre";
 import type { StyleSpecification } from "maplibre-gl";
 
 // Vite no bundlea el worker de maplibre por defecto; lo resolvemos explícitamente.
@@ -91,15 +93,50 @@ interface MapaLibreProps {
 
 /** Mapa en vivo (MapLibre) con los camiones coloreados por estado y orientados según heading. */
 export function MapaLibre({ vehiculos, onSelect }: MapaLibreProps) {
+  const mapRef = useRef<MapRef>(null);
+  const [listo, setListo] = useState(false);
+  // El encuadre automático se hace SOLO la primera vez; las actualizaciones de
+  // telemetría no deben mover el mapa (para no pelear con el usuario que explora).
+  const encuadrado = useRef(false);
+
+  const encuadrarFlota = useCallback(() => {
+    const conPos = vehiculos.filter((v) => Number.isFinite(v.lng) && Number.isFinite(v.lat));
+    if (conPos.length === 0) return;
+    const lngs = conPos.map((v) => v.lng);
+    const lats = conPos.map((v) => v.lat);
+    const bounds: [[number, number], [number, number]] = [
+      [Math.min(...lngs), Math.min(...lats)],
+      [Math.max(...lngs), Math.max(...lats)],
+    ];
+    // Un único punto: subir el zoom máximo para no quedarnos pegados al suelo.
+    const opts = conPos.length === 1 ? { padding: 60, maxZoom: 12 } : { padding: 60 };
+    mapRef.current?.fitBounds(bounds, { ...opts, duration: 800 });
+  }, [vehiculos]);
+
+  useEffect(() => {
+    if (!listo || encuadrado.current) return;
+    encuadrarFlota();
+    encuadrado.current = true;
+  }, [listo, encuadrarFlota]);
+
   return (
     <div className="relative h-full w-full">
       <Map
+        ref={mapRef}
+        onLoad={() => setListo(true)}
         mapStyle={MAP_STYLE_URL || (OSM_STYLE as unknown as string)}
         initialViewState={{ longitude: -3.0, latitude: 40.0, zoom: 6 }}
         style={{ width: "100%", height: "100%" }}
         reuseMaps
       >
         <NavigationControl position="bottom-right" />
+        <button
+          type="button"
+          onClick={encuadrarFlota}
+          className="absolute left-3 top-3 z-10 rounded-md border border-slate-200 bg-white/90 px-2.5 py-1.5 text-xs font-medium text-slate-700 shadow backdrop-blur hover:bg-white"
+        >
+          Encuadrar flota
+        </button>
         {vehiculos.map((v) => (
           <Marcador key={v.vehiculo_id} v={v} onSelect={onSelect} />
         ))}
