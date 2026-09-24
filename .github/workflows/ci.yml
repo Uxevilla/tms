@@ -144,4 +144,7 @@ jobs:
           npx playwright install --with-deps chromium
           npx playwright test
 
+          echo "===== backend log (tail) ====="
+          tail -120 /tmp/backend.log 2>/dev/null || true
+
           kill $BACK_PID $FRONT_PID 2>/dev/null || true

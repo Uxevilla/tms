@@ -116,6 +116,7 @@ class ValidarRequest(BaseModel):
 @router.post("/api/planificacion/validar")
 def validar(req: ValidarRequest, conn=Depends(get_conn)):
     """Devuelve {ok, bloqueos, avisos} para la asignación propuesta. NO asigna."""
+    print(f"[validar] entrada trip={req.trip_id} terminal={req.terminal} conductor={req.conductor_id}", flush=True)
     bloqueos: list[dict] = []
     avisos: list[dict] = []
     terminal = _fecha(req.terminal)
@@ -206,4 +207,5 @@ def validar(req: ValidarRequest, conn=Depends(get_conn)):
             if int(cap["capacidad_palets"] or 0) > 0 and req.palets > int(cap["capacidad_palets"]):
                 avisos.append({"tipo": "capacidad_palets", "mensaje": f"Supera la capacidad de palés de {cap['matricula'] or semi} ({req.palets} > {cap['capacidad_palets']})"})
 
+    print(f"[validar] salida ok={not bloqueos} bloqueos={len(bloqueos)} avisos={len(avisos)}", flush=True)
     return {"ok": not bloqueos, "bloqueos": bloqueos, "avisos": avisos}
