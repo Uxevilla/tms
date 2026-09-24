@@ -106,6 +106,9 @@ test.describe("Planificación — envío manual", () => {
     // El viaje está pendiente → asígnalo primero.
     await arrastrar(page, '[data-viaje-pendiente="E2E-PLAN-OK"]', '[data-tractora="E2E-TRAC"]');
     await expect(page.locator('[data-viaje-bloque="E2E-PLAN-OK"]')).toBeVisible({ timeout: 10000 });
+    // Espera el commit del asignar antes de leer la fecha base (evita que el mover horizontal
+    // quede en vuelo y pise el reset del beforeEach del test siguiente).
+    await expect.poll(async () => (await tripRow("E2E-PLAN-OK")).terminal).toBe("E2E-TRAC");
     const antes = await tripRow("E2E-PLAN-OK");
 
     const bloque = page.locator('[data-viaje-bloque="E2E-PLAN-OK"]');
@@ -197,6 +200,7 @@ test.describe("Planificación — envío manual", () => {
     await expect(page.locator('[data-viaje-bloque="E2E-PLAN-OK"]')).toBeVisible({ timeout: 10000 });
     // Espera el commit del mover (y el push al historial) antes de Ctrl+Z.
     await expect.poll(async () => (await tripRow("E2E-PLAN-OK")).terminal).toBe("E2E-TRAC");
+    await page.waitForTimeout(300);
     await page.keyboard.press("Control+z");
     await expect(page.locator('[data-viaje-pendiente="E2E-PLAN-OK"]')).toBeVisible({ timeout: 10000 });
   });
