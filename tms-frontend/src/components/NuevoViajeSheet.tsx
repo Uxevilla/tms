@@ -626,7 +626,7 @@ export function NuevoViajeSheet({ onClose, onGuardado, editTripId = null }: {
           {/* Minimapa + métricas */}
           <div className="rounded-lg border p-2">
             <div className="h-48 w-full overflow-hidden rounded-md">
-              <MapContainer center={puntosRuta[0] ? [puntosRuta[0].lat, puntosRuta[0].lng] : [40, -3]} zoom={6} className="h-full w-full">
+              <MapContainer center={puntosRuta[0] ? [puntosRuta[0].lat, puntosRuta[0].lng] : [40, -3]} zoom={6} className="h-full w-full" fadeAnimation={false} zoomAnimation={false} markerZoomAnimation={false}>
                 <TileLayer attribution='&copy; OpenStreetMap' url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
                 <MapaClick onAdd={onMapClick} />
                 {puntosRuta.map((p, i) => <Marker key={p.id} position={[p.lat, p.lng]} icon={L.divIcon({ className: "bg-transparent", html: `<svg width="16" height="22" viewBox="0 0 24 32"><path d="M12 0C5.4 0 0 5.4 0 12c0 8 12 20 12 20s12-12 12-20C24 5.4 18.6 0 12 0z" fill="${i === 0 ? "#10b981" : i === puntosRuta.length - 1 ? "#ef4444" : "#2563eb"}"/></svg>`, iconSize: [16, 22], iconAnchor: [8, 22] })} />)}
