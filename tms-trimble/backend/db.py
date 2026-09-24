@@ -135,22 +135,6 @@ CREATE TABLE IF NOT EXISTS mensajes (
     originid TEXT, source TEXT, terminal TEXT, subject TEXT, body TEXT,
     time TEXT, needreply BOOLEAN DEFAULT false, creado TEXT
 );
-CREATE TABLE IF NOT EXISTS sync_state (
-    key TEXT PRIMARY KEY, value TEXT
-);
-CREATE TABLE IF NOT EXISTS config (
-    key TEXT PRIMARY KEY, value TEXT
-);
--- RBAC: esquema `config` (roles/usuarios). Distinto de la tabla public.config de arriba.
-CREATE SCHEMA IF NOT EXISTS config;
-CREATE TABLE IF NOT EXISTS config.roles (
-    id SERIAL PRIMARY KEY, nombre TEXT UNIQUE NOT NULL, descripcion TEXT
-);
-CREATE TABLE IF NOT EXISTS config.usuarios (
-    id SERIAL PRIMARY KEY, usuario TEXT UNIQUE NOT NULL, password_hash TEXT NOT NULL,
-    rol TEXT NOT NULL REFERENCES config.roles(nombre), nombre TEXT,
-    activo BOOLEAN NOT NULL DEFAULT true, creado_en TIMESTAMPTZ NOT NULL DEFAULT now()
-);
 CREATE TABLE IF NOT EXISTS telemetria (
     time TIMESTAMPTZ NOT NULL,
     source TEXT,
@@ -337,16 +321,6 @@ CREATE TABLE IF NOT EXISTS lineas_nomina (
 );
 CREATE INDEX IF NOT EXISTS idx_lineas_nomina_nomina ON lineas_nomina(nomina_id);
 CREATE INDEX IF NOT EXISTS idx_ausencias_empleado ON ausencias(empleado_id);
-CREATE TABLE IF NOT EXISTS audit_log (
-    id SERIAL PRIMARY KEY,
-    tabla TEXT NOT NULL,
-    registro_id TEXT,
-    accion TEXT NOT NULL,
-    usuario TEXT DEFAULT 'sistema',
-    antes TEXT,
-    despues TEXT,
-    ts TEXT
-);
 ALTER TABLE asientos ADD COLUMN IF NOT EXISTS borrado BOOLEAN DEFAULT false;
 ALTER TABLE asientos ADD COLUMN IF NOT EXISTS borrado_por TEXT;
 ALTER TABLE asientos ADD COLUMN IF NOT EXISTS borrado_en TEXT;
@@ -358,39 +332,6 @@ ALTER TABLE files ADD COLUMN IF NOT EXISTS storage_key TEXT;
 ALTER TABLE files ADD COLUMN IF NOT EXISTS sha256 TEXT;
 ALTER TABLE files ADD COLUMN IF NOT EXISTS bytes INTEGER;
 ALTER TABLE gastos_vehiculos ADD COLUMN IF NOT EXISTS storage_key TEXT;
-CREATE TABLE IF NOT EXISTS integracion_proveedores (
-    id SERIAL PRIMARY KEY,
-    codigo TEXT UNIQUE NOT NULL,
-    nombre TEXT NOT NULL,
-    categoria TEXT NOT NULL DEFAULT 'telemetria',
-    icono TEXT DEFAULT '',
-    activo BOOLEAN DEFAULT true,
-    orden INTEGER DEFAULT 0
-);
-CREATE TABLE IF NOT EXISTS integracion_campos (
-    id SERIAL PRIMARY KEY,
-    proveedor_id INTEGER NOT NULL REFERENCES integracion_proveedores(id) ON DELETE CASCADE,
-    clave TEXT NOT NULL,
-    etiqueta TEXT NOT NULL,
-    tipo TEXT NOT NULL DEFAULT 'texto',
-    requerido BOOLEAN DEFAULT false,
-    orden INTEGER DEFAULT 0,
-    UNIQUE(proveedor_id, clave)
-);
-CREATE TABLE IF NOT EXISTS integracion_valores (
-    id SERIAL PRIMARY KEY,
-    campo_id INTEGER NOT NULL REFERENCES integracion_campos(id) ON DELETE CASCADE,
-    valor TEXT,
-    UNIQUE(campo_id)
-);
-CREATE TABLE IF NOT EXISTS actividades (
-    id SERIAL PRIMARY KEY,
-    proveedor_id INTEGER NOT NULL REFERENCES integracion_proveedores(id) ON DELETE CASCADE,
-    nombre TEXT NOT NULL,
-    referencia TEXT NOT NULL,
-    activo BOOLEAN DEFAULT true,
-    UNIQUE(proveedor_id, nombre)
-);
 CREATE SCHEMA IF NOT EXISTS maestros;
 CREATE TABLE IF NOT EXISTS maestros.terceros (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -550,6 +491,90 @@ DROP TRIGGER IF EXISTS conductores_upd ON conductores;
 CREATE TRIGGER conductores_upd INSTEAD OF UPDATE ON conductores FOR EACH ROW EXECUTE FUNCTION rrhh.conductores_upd();
 DROP TRIGGER IF EXISTS conductores_del ON conductores;
 CREATE TRIGGER conductores_del INSTEAD OF DELETE ON conductores FOR EACH ROW EXECUTE FUNCTION rrhh.conductores_del();
+CREATE SCHEMA IF NOT EXISTS sistema;
+CREATE SCHEMA IF NOT EXISTS config;
+CREATE TABLE IF NOT EXISTS sistema.roles (
+    id SERIAL PRIMARY KEY, nombre TEXT UNIQUE NOT NULL, descripcion TEXT
+);
+CREATE TABLE IF NOT EXISTS sistema.usuarios (
+    id SERIAL PRIMARY KEY, usuario TEXT UNIQUE NOT NULL, password_hash TEXT NOT NULL,
+    rol_id INTEGER NOT NULL REFERENCES sistema.roles(id), nombre TEXT,
+    activo BOOLEAN NOT NULL DEFAULT true, debe_cambiar_clave BOOLEAN NOT NULL DEFAULT false,
+    creado_en TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS sistema.config (key TEXT PRIMARY KEY, value TEXT);
+CREATE TABLE IF NOT EXISTS sistema.sync_state (key TEXT PRIMARY KEY, value TEXT);
+CREATE TABLE IF NOT EXISTS sistema.audit_log (
+    id SERIAL PRIMARY KEY, tabla TEXT NOT NULL, registro_id TEXT, accion TEXT NOT NULL,
+    usuario TEXT DEFAULT 'sistema', antes TEXT, despues TEXT, ts TEXT
+);
+CREATE TABLE IF NOT EXISTS sistema.integracion_proveedores (
+    id SERIAL PRIMARY KEY, codigo TEXT UNIQUE NOT NULL, nombre TEXT NOT NULL,
+    categoria TEXT NOT NULL DEFAULT 'telemetria', icono TEXT DEFAULT '',
+    activo BOOLEAN DEFAULT true, orden INTEGER DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS sistema.integracion_campos (
+    id SERIAL PRIMARY KEY,
+    proveedor_id INTEGER NOT NULL REFERENCES sistema.integracion_proveedores(id) ON DELETE CASCADE,
+    clave TEXT NOT NULL, etiqueta TEXT NOT NULL, tipo TEXT NOT NULL DEFAULT 'texto',
+    requerido BOOLEAN DEFAULT false, orden INTEGER DEFAULT 0, UNIQUE(proveedor_id, clave)
+);
+CREATE TABLE IF NOT EXISTS sistema.integracion_valores (
+    id SERIAL PRIMARY KEY,
+    campo_id INTEGER NOT NULL UNIQUE REFERENCES sistema.integracion_campos(id) ON DELETE CASCADE,
+    valor TEXT
+);
+CREATE TABLE IF NOT EXISTS sistema.actividades (
+    id SERIAL PRIMARY KEY,
+    proveedor_id INTEGER NOT NULL REFERENCES sistema.integracion_proveedores(id) ON DELETE CASCADE,
+    nombre TEXT NOT NULL, referencia TEXT NOT NULL, activo BOOLEAN DEFAULT true,
+    UNIQUE(proveedor_id, nombre)
+);
+
+-- Vistas de compatibilidad (el código sigue usando los nombres viejos).
+CREATE OR REPLACE VIEW config.roles AS SELECT * FROM sistema.roles;
+CREATE OR REPLACE VIEW config.usuarios AS
+SELECT u.id, u.usuario, u.password_hash, r.nombre AS rol, u.nombre,
+       u.activo, u.creado_en, u.debe_cambiar_clave
+FROM sistema.usuarios u JOIN sistema.roles r ON r.id = u.rol_id;
+CREATE OR REPLACE VIEW config AS SELECT * FROM sistema.config;
+CREATE OR REPLACE VIEW sync_state AS SELECT * FROM sistema.sync_state;
+CREATE OR REPLACE VIEW audit_log AS SELECT * FROM sistema.audit_log;
+CREATE OR REPLACE VIEW integracion_proveedores AS SELECT * FROM sistema.integracion_proveedores;
+CREATE OR REPLACE VIEW integracion_campos AS SELECT * FROM sistema.integracion_campos;
+CREATE OR REPLACE VIEW integracion_valores AS SELECT * FROM sistema.integracion_valores;
+CREATE OR REPLACE VIEW actividades AS SELECT * FROM sistema.actividades;
+
+CREATE OR REPLACE FUNCTION sistema.usuarios_ins() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  INSERT INTO sistema.usuarios (usuario, password_hash, rol_id, nombre, activo, debe_cambiar_clave)
+  VALUES (NEW.usuario, NEW.password_hash, (SELECT id FROM sistema.roles WHERE nombre=NEW.rol),
+          NEW.nombre, COALESCE(NEW.activo, true), COALESCE(NEW.debe_cambiar_clave, false))
+  RETURNING id INTO NEW.id;
+  RETURN NEW;
+END $$;
+CREATE OR REPLACE FUNCTION sistema.usuarios_upd() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  UPDATE sistema.usuarios SET
+    nombre=COALESCE(NEW.nombre, nombre),
+    activo=COALESCE(NEW.activo, activo),
+    rol_id=COALESCE((SELECT id FROM sistema.roles WHERE nombre=NEW.rol), rol_id),
+    debe_cambiar_clave=COALESCE(NEW.debe_cambiar_clave, debe_cambiar_clave),
+    password_hash=COALESCE(NULLIF(NEW.password_hash,''), password_hash)
+  WHERE id=OLD.id;
+  RETURN NEW;
+END $$;
+CREATE OR REPLACE FUNCTION sistema.usuarios_del() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  DELETE FROM sistema.usuarios WHERE id=OLD.id;
+  RETURN OLD;
+END $$;
+DROP TRIGGER IF EXISTS usuarios_ins ON config.usuarios;
+CREATE TRIGGER usuarios_ins INSTEAD OF INSERT ON config.usuarios FOR EACH ROW EXECUTE FUNCTION sistema.usuarios_ins();
+DROP TRIGGER IF EXISTS usuarios_upd ON config.usuarios;
+CREATE TRIGGER usuarios_upd INSTEAD OF UPDATE ON config.usuarios FOR EACH ROW EXECUTE FUNCTION sistema.usuarios_upd();
+DROP TRIGGER IF EXISTS usuarios_del ON config.usuarios;
+CREATE TRIGGER usuarios_del INSTEAD OF DELETE ON config.usuarios FOR EACH ROW EXECUTE FUNCTION sistema.usuarios_del();
 """
 
 
