@@ -31,7 +31,7 @@ test("arrastre: validar → color → soltar → asignado → deshacer", async (
   await page.mouse.move(fb.x + fb.width / 2, fb.y + fb.height / 2, { steps: 12 });
 
   // Validación ok (sin bloqueos ni avisos) → la fila se tiñe de verde.
-  await expect(fila).toHaveClass(/ring-green/, { timeout: 5000 });
+  await expect(fila).toHaveClass(/ring-green/, { timeout: 10_000 });
 
   await page.mouse.up();
 

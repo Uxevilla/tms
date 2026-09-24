@@ -102,6 +102,7 @@ export function PlanificacionDashboard() {
   const [toastUndo, setToastUndo] = useState<{ viaje: ViajePlanificacion; tractora: string } | null>(null);
 
   const abortRef = useRef<AbortController | null>(null);
+  const validacionGen = useRef(0);
 
   const validar = useCallback(async (v: ViajePlanificacion, tractora: string): Promise<ValidacionResultado | null> => {
     abortRef.current?.abort();
@@ -128,11 +129,16 @@ export function PlanificacionDashboard() {
   // Validar (debounce + cancelación) cuando el puntero está sobre una tractora.
   useEffect(() => {
     if (!arrastre || !sobreTractora) {
+      validacionGen.current += 1;
       setValidacion(null);
       return;
     }
+    const gen = ++validacionGen.current;
     const timer = setTimeout(() => {
-      validar(arrastre, sobreTractora).then((r) => setValidacion(r));
+      validar(arrastre, sobreTractora).then((r) => {
+        // Solo aplica el resultado si no ha cambiado la tractora mientras tanto.
+        if (gen === validacionGen.current) setValidacion(r);
+      });
     }, 150);
     return () => clearTimeout(timer);
   }, [arrastre, sobreTractora, validar]);
