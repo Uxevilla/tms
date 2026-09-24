@@ -119,3 +119,22 @@ def test_validar_ok(scratch_db):
     finally:
         conn.close()
         main._tenant_ctx.reset(tok)
+
+
+@pytest.mark.integration
+def test_validar_campos_nulos_200(scratch_db):
+    """validar con semirremolque_id/remolque_id/fin/kilos/palets = null → 200 (no 422):
+    los validadores de ValidarRequest coaccionan None → ''/0."""
+    tok, conn = _conn(scratch_db)
+    try:
+        conn.execute("INSERT INTO flota.vehiculos (codigo, terminal_trimble, matricula, categoria, activo) VALUES ('TRAC', 'TRAC', 'TRAC-1', 'tractora', true)")
+        req = _v(semirremolque_id=None, remolque_id=None, fin=None, kilos=None, palets=None)
+        # Los validadores normalizan los nulos antes de la lógica.
+        assert req.semirremolque_id == "" and req.remolque_id == "" and req.fin == ""
+        assert req.kilos == 0.0 and req.palets == 0
+        r = planificacion.validar(req, conn=conn)  # no lanza => 200
+        assert r["ok"] is True
+        assert r["bloqueos"] == [] and r["avisos"] == []
+    finally:
+        conn.close()
+        main._tenant_ctx.reset(tok)

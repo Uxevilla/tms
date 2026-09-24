@@ -94,10 +94,11 @@ def main() -> None:
             "VALUES (NULL, NULL, 'gasto suelto e2e', 10, '2026-01-01')",
         )
 
-    # Mensaje sin responder (con viaje → entidad viaje).
+    # Mensaje sin responder (con viaje → entidad viaje). Terminal único para que los mensajes
+    # reales de producción (source distinta + terminal vacío + hora posterior) no lo den por respondido.
     cur.execute(
-        "INSERT INTO mensajes (id, trip_id, needreply, source, time) VALUES ('E2E-M1', 'E2E-TRIP-1', true, 'demo', %s) "
-        "ON CONFLICT (id) DO UPDATE SET needreply=true",
+        "INSERT INTO mensajes (id, trip_id, needreply, source, terminal, time) VALUES ('E2E-M1', 'E2E-TRIP-1', true, 'demo', 'E2E-TERMINAL', %s) "
+        "ON CONFLICT (id) DO UPDATE SET needreply=true, source='demo', trip_id='E2E-TRIP-1', terminal='E2E-TERMINAL', time=EXCLUDED.time",
         (now,),
     )
 

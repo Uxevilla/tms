@@ -85,7 +85,21 @@ export function PlanificacionDashboard() {
     refetchInterval: 30000,
   });
   const tractoras = plan.data?.vehiculos ?? [];
-  const lista = plan.data?.viajes ?? [];
+  const listaBase = plan.data?.viajes ?? [];
+
+  // Asignaciones pendientes (ventana de deshacer / envío en curso): estado APARTE que se aplica
+  // ENCIMA de plan.data con useMemo. Así un refetch (WS o refetchInterval) no devuelve el viaje
+  // a Pendientes mientras el envío está pendiente (no se toca la caché).
+  const [enCurso, setEnCurso] = useState<Record<string, { terminal: string; semirremolque_id: string; conductor_id: number | null }>>({});
+
+  // Aplicar las asignaciones en curso ENCIMA de los datos del servidor (sin tocar la caché).
+  const lista = useMemo(() => {
+    if (Object.keys(enCurso).length === 0) return listaBase;
+    return listaBase.map((v) => {
+      const pend = enCurso[v.id];
+      return pend ? { ...v, terminal: pend.terminal, semirremolque_id: pend.semirremolque_id, conductor_id: pend.conductor_id } : v;
+    });
+  }, [listaBase, enCurso]);
   const pendientes = useMemo(() => lista.filter((v) => !v.terminal), [lista]);
   const asignados = useMemo(() => lista.filter((v) => !!v.terminal), [lista]);
 
@@ -130,11 +144,13 @@ export function PlanificacionDashboard() {
   const [arrastre, setArrastre] = useState<ViajePlanificacion | null>(null);
   const [sobreTractora, setSobreTractora] = useState<string | null>(null);
   const [validacion, setValidacion] = useState<ValidacionResultado | null>(null);
+  const [validacionError, setValidacionError] = useState(false);
   const [popover, setPopover] = useState<{ viaje: ViajePlanificacion; tractora: string; x: number; y: number } | null>(null);
   const [confirmacion, setConfirmacion] = useState<{ viaje: ViajePlanificacion; tractora: string; x: number; y: number; avisos: ValidacionResultado["avisos"] } | null>(null);
   const [toastUndo, setToastUndo] = useState<{ viaje: ViajePlanificacion; tractora: string } | null>(null);
 
   const validacionRef = useRef<ValidacionResultado | null>(null);
+  const validacionErrorRef = useRef(false);
   const validacionGen = useRef(0);
   const abortRef = useRef<AbortController | null>(null);
   const pendientesEnvioRef = useRef<Map<string, EnvioPendiente>>(new Map());
@@ -167,7 +183,9 @@ export function PlanificacionDashboard() {
   useEffect(() => {
     validacionGen.current += 1;
     validacionRef.current = null;
+    validacionErrorRef.current = false;
     setValidacion(null);
+    setValidacionError(false);
     if (!arrastre || !sobreTractora) return;
     const gen = validacionGen.current;
     const ac = new AbortController();
@@ -177,7 +195,9 @@ export function PlanificacionDashboard() {
       validar(arrastre, sobreTractora, arrastre.semirremolque_id, arrastre.conductor_id, ac.signal).then((r) => {
         if (gen === validacionGen.current) {
           validacionRef.current = r;
+          validacionErrorRef.current = r === null;
           setValidacion(r);
+          setValidacionError(r === null);
         }
       });
     }, 150);
@@ -200,11 +220,20 @@ export function PlanificacionDashboard() {
             conductor: p.conductorNombre, conductor_id: p.cond,
           }),
         });
+        // Éxito: invalidar (el refetch ya devuelve el viaje asignado) y luego quitar de enCurso.
+        await qc.invalidateQueries({ queryKey: ["planificacion"] });
+        setEnCurso((cur) => {
+          const n = { ...cur };
+          delete n[p.v.id];
+          return n;
+        });
       } catch (e) {
         console.error("[planificacion] fallo al asignar:", e);
-        qc.setQueriesData<{ vehiculos: VehiculoPlanificacion[]; viajes: ViajePlanificacion[] }>({ queryKey: ["planificacion"] }, (old) =>
-          old ? { ...old, viajes: old.viajes.map((x) => (x.id === p.v.id ? { ...x, terminal: "" } : x)) } : old,
-        );
+        setEnCurso((cur) => {
+          const n = { ...cur };
+          delete n[p.v.id];
+          return n;
+        });
         toast("No se pudo asignar el viaje a Trimble. Se ha revertido.", "error");
       }
     },
@@ -233,19 +262,18 @@ export function PlanificacionDashboard() {
         pendientesEnvioRef.current.delete(v.id);
       }
       const conductorNombre = conductores.data?.find((c) => c.id === cond)?.nombre ?? "";
-      qc.setQueriesData<{ vehiculos: VehiculoPlanificacion[]; viajes: ViajePlanificacion[] }>({ queryKey: ["planificacion"] }, (old) =>
-        old ? { ...old, viajes: old.viajes.map((x) => (x.id === v.id ? { ...x, terminal: tractora, semirremolque_id: semi, conductor_id: cond } : x)) } : old,
-      );
+      // Optimista en estado aparte (no en la caché): el viaje pasa a la tractora al instante.
+      setEnCurso((cur) => ({ ...cur, [v.id]: { terminal: tractora, semirremolque_id: semi, conductor_id: cond } }));
       setPopover(null);
       const pendiente: EnvioPendiente = { timer: 0, v, tractora, semi, cond, conductorNombre };
       pendiente.timer = window.setTimeout(() => enviar(pendiente), 10000);
       pendientesEnvioRef.current.set(v.id, pendiente);
       setToastUndo({ viaje: v, tractora });
     },
-    [qc, conductores.data, enviar],
+    [conductores.data, enviar],
   );
 
-  // Deshacer (o soltar en "Pendientes"): cancelar el temporizador y revertir la caché,
+  // Deshacer (o soltar en "Pendientes"): cancelar el temporizador y quitar de enCurso,
   // SIN llamadas al servidor (el viaje aún no se ha despachado a Trimble).
   const desasignar = useCallback(
     (v: ViajePlanificacion) => {
@@ -254,16 +282,22 @@ export function PlanificacionDashboard() {
         window.clearTimeout(p.timer);
         pendientesEnvioRef.current.delete(v.id);
       }
-      qc.setQueriesData<{ vehiculos: VehiculoPlanificacion[]; viajes: ViajePlanificacion[] }>({ queryKey: ["planificacion"] }, (old) =>
-        old ? { ...old, viajes: old.viajes.map((x) => (x.id === v.id ? { ...x, terminal: "" } : x)) } : old,
-      );
+      setEnCurso((cur) => {
+        const n = { ...cur };
+        delete n[v.id];
+        return n;
+      });
       setToastUndo(null);
     },
-    [qc],
+    [],
   );
 
   const decidirSoltar = useCallback(
     (v: ViajePlanificacion, tractora: string, x: number, y: number) => {
+      if (validacionErrorRef.current) {
+        toast("No se pudo validar la asignación", "error");
+        return;
+      }
       const r = validacionRef.current;
       if (!r) {
         toast("Aún validando la asignación, espera un instante…", "info");
@@ -310,7 +344,9 @@ export function PlanificacionDashboard() {
       setArrastre(null);
       setSobreTractora(null);
       setValidacion(null);
+      setValidacionError(false);
       validacionRef.current = null;
+      validacionErrorRef.current = false;
     };
     document.addEventListener("pointermove", onMove);
     document.addEventListener("pointerup", onUp);
@@ -339,17 +375,21 @@ export function PlanificacionDashboard() {
 
   const colorValidacion = !sobreTractora
     ? ""
-    : !validacion
-      ? "ring-1 ring-inset ring-sky-400/60 bg-sky-400/5"
-      : !validacion.ok
-        ? "ring-2 ring-inset ring-red-500/70 bg-red-500/10"
-        : (validacion.avisos?.length ?? 0) > 0
-          ? "ring-2 ring-inset ring-amber-500/70 bg-amber-500/10"
-          : "ring-2 ring-inset ring-green-500/70 bg-green-500/10";
+    : validacionError
+      ? "ring-2 ring-inset ring-red-500/70 bg-red-500/10"
+      : !validacion
+        ? "ring-1 ring-inset ring-sky-400/60 bg-sky-400/5"
+        : !validacion.ok
+          ? "ring-2 ring-inset ring-red-500/70 bg-red-500/10"
+          : (validacion.avisos?.length ?? 0) > 0
+            ? "ring-2 ring-inset ring-amber-500/70 bg-amber-500/10"
+            : "ring-2 ring-inset ring-green-500/70 bg-green-500/10";
 
-  const tooltipValidacion = validacion
-    ? [...validacion.bloqueos.map((b) => `⛔ ${b.mensaje}`), ...validacion.avisos.map((a) => `⚠️ ${a.mensaje}`)].join("\n")
-    : "";
+  const tooltipValidacion = validacionError
+    ? "⛔ No se pudo validar"
+    : validacion
+      ? [...validacion.bloqueos.map((b) => `⛔ ${b.mensaje}`), ...validacion.avisos.map((a) => `⚠️ ${a.mensaje}`)].join("\n")
+      : "";
 
   const etiquetaRango = useMemo(() => {
     if (vista === "dia") {
@@ -510,7 +550,7 @@ export function PlanificacionDashboard() {
           <button onClick={() => desasignar(toastUndo.viaje)} className="flex items-center gap-1 rounded border px-2 py-1 text-xs font-medium hover:bg-muted">
             <Undo2 size={14} /> Deshacer
           </button>
-          <button onClick={() => desasignar(toastUndo.viaje)} className="text-muted-foreground hover:text-foreground"><X size={14} /></button>
+          <button onClick={() => setToastUndo(null)} className="text-muted-foreground hover:text-foreground" aria-label="Cerrar"><X size={14} /></button>
         </div>
       )}
 
@@ -551,6 +591,7 @@ function PopoverAsignacion({ popover, semirremolques, conductores, viajes, valid
   // Re-valida con el semi y el conductor elegidos (debounce + cancelación).
   useEffect(() => {
     setValidando(true);
+    setRes(null);
     const ac = new AbortController();
     const timer = window.setTimeout(() => {
       validar(popover.viaje, popover.tractora, semi, cond, ac.signal).then((r) => {
@@ -564,7 +605,9 @@ function PopoverAsignacion({ popover, semirremolques, conductores, viajes, valid
     };
   }, [semi, cond, popover, validar]);
 
-  const bloqueado = !!res && res.bloqueos.length > 0;
+  // null tras validar = el validar no respondió (error); Asignar queda desactivado.
+  const fallo = !validando && res === null;
+  const bloqueado = fallo || (!!res && res.bloqueos.length > 0);
 
   return (
     <div className="fixed z-50 w-80 rounded-lg border bg-card p-3 shadow-xl" style={{ left: Math.min(popover.x, window.innerWidth - 320), top: Math.min(popover.y, window.innerHeight - 320) }}>
@@ -585,6 +628,7 @@ function PopoverAsignacion({ popover, semirremolques, conductores, viajes, valid
       </select>
 
       {validando && <div className="mb-2 text-[11px] text-muted-foreground">Validando…</div>}
+      {fallo && <div className="mb-2 text-[11px] text-red-600 dark:text-red-400">⛔ No se pudo validar</div>}
       {res && !validando && (
         <div className="mb-2 space-y-1 text-[11px]">
           {res.bloqueos.map((b, i) => <div key={i} className="text-red-600 dark:text-red-400">⛔ {b.mensaje}</div>)}

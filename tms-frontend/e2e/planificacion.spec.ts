@@ -1,4 +1,5 @@
 import { test, expect, type Locator, type Page } from "@playwright/test";
+import { Client } from "pg";
 
 // E2E Fase 3: arrastre en el tablero de planificación.
 // El validar va contra el backend REAL; solo se mockea el despacho SOAP (POST /api/trips/*/asignar),
@@ -23,6 +24,19 @@ async function mockAsignar(page: Page, llamadas?: number[]) {
     llamadas?.push(1);
     return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true }) });
   });
+}
+
+async function cambiarEstadoTrip(codigo: string, estado: string): Promise<void> {
+  const client = new Client({
+    host: process.env.DB_HOST ?? "127.0.0.1",
+    port: Number(process.env.DB_PORT ?? 5432),
+    user: process.env.DB_USER ?? "tms",
+    password: process.env.DB_PASSWORD ?? "",
+    database: process.env.DB_NAME ?? "tms",
+  });
+  await client.connect();
+  await client.query("UPDATE operaciones.trips SET estado = $1 WHERE codigo = $2", [estado, codigo]);
+  await client.end();
 }
 
 test("arrastre ok → verde → asignar → deshacer (sin llamar a /asignar)", async ({ page }) => {
@@ -153,4 +167,63 @@ test("un viaje de otra fecha no aparece en la vista del día actual", async ({ p
   await expect(page.locator('[data-viaje-pendiente="E2E-PLAN-OK"]')).toBeVisible({ timeout: 20_000 });
   await expect(page.locator('[data-viaje-pendiente="E2E-PLAN-OTRO"]')).toHaveCount(0);
   await expect(page.locator('[data-viaje-bloque="E2E-PLAN-OTRO"]')).toHaveCount(0);
+});
+
+test("la asignación pendiente sobrevive a un refetch y /asignar se llama una sola vez a los 10 s", async ({ page }) => {
+  const llamadas: number[] = [];
+  await mockAsignar(page, llamadas);
+  await page.goto("/planificacion");
+
+  const pendiente = page.locator('[data-viaje-pendiente="E2E-PLAN-OK"]');
+  await pendiente.waitFor({ timeout: 20_000 });
+  const fila = page.locator('[data-tractora="E2E-TRAC"]');
+  await fila.waitFor();
+
+  // Asignar (optimista → bloque + toast + temporizador de 10 s).
+  await arrastrar(page, pendiente, fila);
+  await expect(fila).toHaveClass(/ring-green/, { timeout: 10_000 });
+  await page.mouse.up();
+  await page.getByRole("button", { name: "Asignar", exact: true }).click();
+  await expect(page.locator('[data-viaje-bloque="E2E-PLAN-OK"]')).toBeVisible({ timeout: 5000 });
+
+  // Cambiar el estado de OTRO viaje en la BD → el WS (poll ~3 s) invalida y refetchea.
+  await cambiarEstadoTrip("E2E-PLAN-AVISO", "En_Transito");
+
+  // A los ~4 s, tras el refetch, el bloque SIGUE en la tractora (enCurso lo mantiene; no vuelve a Pendientes).
+  await page.waitForTimeout(4000);
+  await expect(page.locator('[data-viaje-bloque="E2E-PLAN-OK"]')).toBeVisible({ timeout: 5000 });
+  await expect(page.locator('[data-viaje-pendiente="E2E-PLAN-OK"]')).toHaveCount(0);
+
+  // A los 10 s, /asignar se llama exactamente una vez.
+  await expect.poll(() => llamadas.length, { timeout: 12000 }).toBe(1);
+  await page.waitForTimeout(1000);
+  expect(llamadas.length).toBe(1);
+});
+
+test("validar del popover con 500 → Asignar desactivado", async ({ page }) => {
+  await mockAsignar(page);
+  let fallaValidar = false;
+  await page.route("**/api/planificacion/validar", (route) => {
+    if (fallaValidar) {
+      return route.fulfill({ status: 500, contentType: "application/json", body: "{}" });
+    }
+    return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true, bloqueos: [], avisos: [] }) });
+  });
+  await page.goto("/planificacion");
+
+  const pendiente = page.locator('[data-viaje-pendiente="E2E-PLAN-OK"]');
+  await pendiente.waitFor({ timeout: 20_000 });
+  const fila = page.locator('[data-tractora="E2E-TRAC"]');
+  await fila.waitFor();
+
+  // Arrastre: el validar del arrastre responde ok (200) → verde.
+  await arrastrar(page, pendiente, fila);
+  await expect(fila).toHaveClass(/ring-green/, { timeout: 10_000 });
+
+  // A partir de ahora el validar falla (500) → la re-validación del popover falla.
+  fallaValidar = true;
+  await page.mouse.up();
+
+  await expect(page.getByText("⛔ No se pudo validar")).toBeVisible({ timeout: 5000 });
+  await expect(page.getByRole("button", { name: "Asignar", exact: true })).toBeDisabled();
 });
