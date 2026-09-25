@@ -163,10 +163,13 @@ def _vehiculo_peaje_categoria(terminal):
     return (row["peaje_categoria"] if row and row["peaje_categoria"] else "pesado4")
 
 
-def _vehiculos_en_curso(exclude_trip_id=None):
+def _vehiculos_en_curso(exclude_trip_id=None, conn=None):
     """Ids de REMOLQUES (semirremolque/remolque) con un viaje activo (no finalizado).
     El terminal (tractora) NO se incluye: admite varios viajes en cola (se ejecutan uno tras otro)."""
-    with _db() as conn:
+    owns = conn is None
+    if owns:
+        conn = _db()
+    try:
         q = (f"SELECT semirremolque_id, remolque_id FROM trips "
              f"WHERE COALESCE(estado,'') NOT IN {_ESTADOS_FINALES_SQL}")
         params = []
@@ -174,6 +177,9 @@ def _vehiculos_en_curso(exclude_trip_id=None):
             q += " AND id != ?"
             params.append(exclude_trip_id)
         rows = conn.execute(q, params).fetchall()
+    finally:
+        if owns:
+            conn.close()
     ids = set()
     for r in rows:
         for v in (r["semirremolque_id"], r["remolque_id"]):

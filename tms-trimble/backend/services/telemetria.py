@@ -88,13 +88,13 @@ def _viajes_snapshot() -> dict:
             "(SELECT string_agg(actividad, ' → ' ORDER BY orden) FROM operaciones.paradas WHERE trip_id = t.id) AS itinerario, "
             "(SELECT COUNT(*) FROM files WHERE trip_id = t.id) AS n_documentos, "
             "(SELECT COUNT(*) FROM operaciones.tramos WHERE trip_id = t.id) AS n_tramos, "
-            "tl.speed_kmh AS velocidad, tl.heading, tl.odometer_km, tl.lat, tl.lng "
+            "gp.speed_kmh AS velocidad, gp.heading, gp.odometer_km, gp.lat, gp.lng "
             "FROM trips t "
             "LEFT JOIN vehiculos v ON v.id = t.terminal "
-            "LEFT JOIN LATERAL ("
-            "  SELECT speed_kmh, heading, odometer_km, lat, lng FROM telemetria.posiciones_gps "
-            "  WHERE vehiculo_id = t.terminal ORDER BY time DESC LIMIT 1"
-            ") tl ON true "
+            "LEFT JOIN ("
+            "  SELECT DISTINCT ON (vehiculo_id) vehiculo_id, speed_kmh, heading, odometer_km, lat, lng "
+            "  FROM telemetria.posiciones_gps ORDER BY vehiculo_id, time DESC"
+            ") gp ON gp.vehiculo_id = t.terminal "
             "ORDER BY t.creado DESC NULLS LAST LIMIT 500"
         ).fetchall()
     finally:
