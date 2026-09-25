@@ -18,6 +18,7 @@ import argparse
 import os
 import subprocess
 import sys
+from datetime import datetime
 
 # Permite importar config/db del backend aunque se lance desde scripts/.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -49,14 +50,26 @@ def _tenant_dbs():
         conn.close()
 
 
+BACKUP_DIR = os.environ.get("TMS_BACKUP_DIR", os.path.expanduser("~/tms_backups"))
+
+
 def _backup(dbname):
-    out = f"/tmp/backup_{dbname}.sql"
-    subprocess.run(
-        ["pg_dump", "-h", config.DB_HOST, "-p", str(config.DB_PORT), "-U", config.DB_USER,
-         "-d", dbname, "-f", out],
-        check=False,
+    os.makedirs(BACKUP_DIR, exist_ok=True)
+    out = os.path.join(BACKUP_DIR, f"identidad_{dbname}_{datetime.now():%Y%m%d_%H%M%S}.dump")
+    env = {**os.environ, "PGPASSWORD": config.DB_PASSWORD or ""}
+    r = subprocess.run(
+        ["pg_dump", "-Fc", "-h", config.DB_HOST, "-p", str(config.DB_PORT),
+         "-U", config.DB_USER, "-d", dbname, "-f", out], env=env,
     )
-    print(f"    backup: {out}")
+    if r.returncode != 0 or not os.path.exists(out) or os.path.getsize(out) == 0:
+        sys.exit(f"ABORTADO: backup de {dbname} falló (rc={r.returncode}); no se aplica nada.")
+    print(f"    backup OK: {out}")
+
+
+_UNICAS = (
+    "(SELECT matricula, min(codigo) AS codigo FROM flota.vehiculos "
+    " WHERE COALESCE(matricula,'') <> '' GROUP BY matricula HAVING count(*) = 1)"
+)
 
 
 def _migrar(dbname, dry_run, backup_ok):
@@ -67,19 +80,28 @@ def _migrar(dbname, dry_run, backup_ok):
     conn.autocommit = False
     cur = conn.cursor()
     try:
-        # 1. trips.terminal guardado como matrícula -> codigo
+        # 1. trips.terminal guardado como matrícula ÚNICA -> codigo (las ambiguas se informan)
         cur.execute(
-            "UPDATE operaciones.trips t SET terminal = v.codigo "
-            "FROM flota.vehiculos v WHERE t.terminal = v.matricula AND t.terminal <> v.codigo"
+            f"UPDATE operaciones.trips t SET terminal = v.codigo FROM {_UNICAS} v "
+            "WHERE t.terminal = v.matricula AND t.terminal <> v.codigo "
+            "AND NOT EXISTS (SELECT 1 FROM flota.vehiculos x WHERE x.codigo = t.terminal)"
         )
-        print(f"    [1] trips.terminal matrícula -> codigo: {cur.rowcount}")
+        print(f"    [1] trips.terminal matrícula única -> codigo: {cur.rowcount}")
+        cur.execute(
+            "SELECT t.codigo, t.terminal FROM operaciones.trips t "
+            "WHERE t.terminal IN (SELECT matricula FROM flota.vehiculos GROUP BY matricula HAVING count(*) > 1) "
+            "AND NOT EXISTS (SELECT 1 FROM flota.vehiculos x WHERE x.codigo = t.terminal)"
+        )
+        ambiguos = cur.fetchall()
+        print(f"    [1] viajes con matrícula ambigua (revisar a mano): {ambiguos or 'ninguno'}")
 
-        # 2. mantenimientos.vehiculo_id guardado como matrícula -> codigo
+        # 2. mantenimientos.vehiculo_id guardado como matrícula ÚNICA -> codigo
         cur.execute(
-            "UPDATE flota.mantenimientos m SET vehiculo_id = v.codigo "
-            "FROM flota.vehiculos v WHERE m.vehiculo_id = v.matricula AND m.vehiculo_id <> v.codigo"
+            f"UPDATE flota.mantenimientos m SET vehiculo_id = v.codigo FROM {_UNICAS} v "
+            "WHERE m.vehiculo_id = v.matricula AND m.vehiculo_id <> v.codigo "
+            "AND NOT EXISTS (SELECT 1 FROM flota.vehiculos x WHERE x.codigo = m.vehiculo_id)"
         )
-        print(f"    [2] mantenimientos.vehiculo_id matrícula -> codigo: {cur.rowcount}")
+        print(f"    [2] mantenimientos.vehiculo_id matrícula única -> codigo: {cur.rowcount}")
 
         # 3. terminal_trimble NULL/vacío -> codigo (reportando colisiones, sin fallar)
         cur.execute(
