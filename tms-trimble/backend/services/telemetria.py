@@ -90,7 +90,7 @@ def _viajes_snapshot() -> dict:
             "(SELECT COUNT(*) FROM operaciones.tramos WHERE trip_id = t.id) AS n_tramos, "
             "tl.speed_kmh AS velocidad, tl.heading, tl.odometer_km, tl.lat, tl.lng "
             "FROM trips t "
-            "LEFT JOIN vehiculos v ON v.id = t.terminal "
+            "LEFT JOIN vehiculos v ON v.terminal_trimble = t.terminal "
             "LEFT JOIN LATERAL ("
             "  SELECT speed_kmh, heading, odometer_km, lat, lng FROM telemetria.posiciones_gps "
             "  WHERE vehiculo_id = t.terminal ORDER BY time DESC LIMIT 1"

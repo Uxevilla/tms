@@ -90,7 +90,7 @@ def api_telemetria_activa(user: dict = Depends(require_role(["admin", "dispatche
         f"       COALESCE(a.conductor,'') AS conductor, "
         f"       c.nombre AS conductor_taco "
         f"FROM ultima u "
-        f"LEFT JOIN vehiculos v ON v.id = u.vehiculo_id "
+        f"LEFT JOIN vehiculos v ON v.terminal_trimble = u.vehiculo_id "
         f"LEFT JOIN activa a ON a.terminal = u.vehiculo_id "
         f"LEFT JOIN dstat d ON d.vehiculo_id = u.vehiculo_id "
         f"LEFT JOIN conductores c ON c.did = d.did "

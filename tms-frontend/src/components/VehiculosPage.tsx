@@ -57,7 +57,6 @@ const TENENCIAS = ["Propiedad", "Renting", "Leasing"] as const;
 
 // ------------------------------------------------------------------ formulario
 const vehiculoSchema = z.object({
-  id: z.string().trim().min(1, "Requerido (referencia interna)"),
   terminal_trimble: z.string().trim(),
   app_terminal: z.string().trim(),
   matricula: z.string().trim().min(1, "Requerido"),
@@ -81,7 +80,6 @@ const vehiculoSchema = z.object({
 type VehiculoForm = z.infer<typeof vehiculoSchema>;
 
 const valoresPorDefecto: VehiculoForm = {
-  id: "",
   terminal_trimble: "",
   app_terminal: "",
   matricula: "",
@@ -143,7 +141,6 @@ export function VehiculosPage() {
         return api(PATCH_VEHICULO(editar.id), { method: "PATCH", body: JSON.stringify(body) });
       }
       const body = {
-        id: valores.id,
         terminal_trimble: valores.terminal_trimble,
         app_terminal: valores.app_terminal,
         matricula: valores.matricula,
@@ -249,7 +246,6 @@ export function VehiculosPage() {
               setEditando(row.original);
               form.reset({
                 ...valoresPorDefecto,
-                id: row.original.id,
                 terminal_trimble: row.original.terminal_trimble ?? "",
                 app_terminal: row.original.app_terminal ?? "",
                 matricula: row.original.matricula,
@@ -365,21 +361,12 @@ export function VehiculosPage() {
           </SheetHeader>
           <form onSubmit={form.handleSubmit(onSubmit)} className="mt-4 flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-6 pb-6">
             {!editando && (
-              <div className="grid grid-cols-2 gap-3">
-                <div className="flex flex-col gap-1.5">
-                  <Label htmlFor="id">Código interno</Label>
-                  <Input id="id" placeholder="Ej: VH-001" {...form.register("id")} />
-                  {form.formState.errors.id && (
-                    <span className="text-xs text-red-600">{form.formState.errors.id.message}</span>
-                  )}
-                </div>
-                <div className="flex flex-col gap-1.5">
-                  <Label htmlFor="matricula">Matrícula</Label>
-                  <Input id="matricula" placeholder="0000 ABC" {...form.register("matricula")} />
-                  {form.formState.errors.matricula && (
-                    <span className="text-xs text-red-600">{form.formState.errors.matricula.message}</span>
-                  )}
-                </div>
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="matricula">Matrícula</Label>
+                <Input id="matricula" placeholder="0000 ABC" {...form.register("matricula")} />
+                {form.formState.errors.matricula && (
+                  <span className="text-xs text-red-600">{form.formState.errors.matricula.message}</span>
+                )}
               </div>
             )}
 
