@@ -15,7 +15,7 @@ def _conn(scratch_db):
 
 
 def _v(**kw):
-    base = dict(trip_id="T1", matricula="TRAC-1", inicio="2026-09-24T08:00", fin="2026-09-24T12:00")
+    base = dict(trip_id="T1", codigo="TRAC", inicio="2026-09-24T08:00", fin="2026-09-24T12:00")
     base.update(kw)
     return ValidarRequest(**base)
 
@@ -39,7 +39,7 @@ def test_bloqueo_tractora_solapada(scratch_db):
     tok, conn = _conn(scratch_db)
     try:
         conn.execute("INSERT INTO flota.vehiculos (codigo, terminal_trimble, matricula, categoria, activo) VALUES ('TRAC', 'TRAC', 'TRAC-1', 'tractora', true)")
-        conn.execute("INSERT INTO operaciones.trips (codigo, estado, matricula, fecha_esperada_carga, fecha_esperada_descarga) VALUES ('A1', 'En_Transito', 'TRAC-1', '2026-09-24T09:00', '2026-09-24T14:00')")
+        conn.execute("INSERT INTO operaciones.trips (codigo, estado, terminal, fecha_esperada_carga, fecha_esperada_descarga) VALUES ('A1', 'En_Transito', 'TRAC', '2026-09-24T09:00', '2026-09-24T14:00')")
         r = planificacion.validar(_v(), conn=conn)  # T1 solapa 08:00-12:00 con A1 09:00-14:00
         assert any(b["tipo"] == "tractora_solapada" for b in r["bloqueos"])
         assert r["ok"] is False
