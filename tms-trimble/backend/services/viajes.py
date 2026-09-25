@@ -422,14 +422,16 @@ def _crear_pedido(trip_id, viaje):
     }
 
 
-def _enviar_viaje(trip_id, viaje, matricula, semirremolque, remolque):
-    # El ID del proveedor de telemetría (terminal_trimble) se resuelve internamente
-    # desde la matrícula (referencia del TMS). El terminal APP (Fleet XPS) para el
-    # despacho SOAP se deriva del terminal_trimble.
+def _enviar_viaje(trip_id, viaje, codigo, semirremolque, remolque):
+    # codigo = clave interna FIJA del vehículo; se traduce SOLO aquí a terminal_trimble
+    # (telemetría/Redis) y app_terminal (despacho SOAP). Sin APP vinculada → error claro.
     conn = _db()
-    terminal = _terminal_por_matricula(conn, matricula)
-    soap_terminal = _terminal_app(conn, terminal)
+    terminal = terminal_trimble_de(codigo, conn=conn)
+    soap_terminal = app_terminal_de(codigo, conn=conn)
     conn.close()
+    if not soap_terminal:
+        raise HTTPException(status_code=400, detail={
+            "error": f"El vehículo {codigo} no tiene terminal APP: configúralo en Vehículos."})
 
     # Bloqueo: un semirremolque/remolque con viaje activo no puede asignarse de nuevo.
     # El terminal (tractora) SÍ admite varios viajes en cola: se ejecutan uno tras otro,
@@ -501,10 +503,10 @@ def _enviar_viaje(trip_id, viaje, matricula, semirremolque, remolque):
         km_vacio = _haversine_km(pos[0], pos[1], viaje.origen.lat, viaje.origen.lng) or 0.0
 
     _save_trip(
-        trip_id, nombre, terminal, viaje.conductor, viaje.tipo_carga,
+        trip_id, nombre, viaje.matricula or "", viaje.conductor, viaje.tipo_carga,
         viaje.origen.ciudad or viaje.origen.nombre,
         viaje.destino.ciudad or viaje.destino.nombre,
-        n_tareas, estado, error, terminal,
+        n_tareas, estado, error, codigo,
         semirremolque_id=semirremolque,
         remolque_id=remolque,
         cliente=viaje.cliente or "",
@@ -543,6 +545,7 @@ def _enviar_viaje(trip_id, viaje, matricula, semirremolque, remolque):
 
     return {
         "ok": True,
+        "estado": estado,
         "trip_id": trip_id,
         "nombre": nombre,
         "terminal": terminal,
@@ -570,21 +573,21 @@ def _terminal_app(conn, vehiculo_id):
     """Resuelve el terminal APP (Fleet XPS) para el despacho SOAP, desde un vehículo.
 
     El ID del proveedor de telemetría (terminal_trimble) solo da telemetría/tacógrafo;
-    los viajes y question paths se envían a la APP vinculada (id con sufijo 'APP').
-    Si no hay APP vinculada, cae al terminal APP por defecto.
+    los viajes y question paths se envían a la APP vinculada. Devuelve '' si no hay APP
+    (el llamador decide el error); ya no cae al terminal por defecto.
     """
     row = conn.execute("SELECT app_terminal FROM vehiculos WHERE terminal_trimble=?", (vehiculo_id,)).fetchone()
     if row and row["app_terminal"]:
         return row["app_terminal"]
-    return config.DEFAULT_TRIMBLE_TERMINAL or vehiculo_id
+    return ""
 
 
 def _vehiculo_ptv(terminal):
     """Atributos PTV del vehículo para el cálculo de peaje exacto."""
     with _db() as conn:
         row = conn.execute(
-            "SELECT ptv_profile, ejes, mma, clase_euro FROM vehiculos WHERE terminal_trimble=? OR matricula=? LIMIT 1",
-            (terminal, terminal),
+            "SELECT ptv_profile, ejes, mma, clase_euro FROM vehiculos WHERE terminal_trimble=? LIMIT 1",
+            (terminal,),
         ).fetchone()
     return {
         "ptv_profile": (row["ptv_profile"] if row and row["ptv_profile"] else "EUR_TRAILER_TRUCK"),
@@ -595,13 +598,14 @@ def _vehiculo_ptv(terminal):
 
 
 from services.telemetria import _set_viaje_activo
+from services.vehiculos import terminal_trimble_de, app_terminal_de
 from services.contabilidad import _next_referencia
 from services.configuracion import _actividades_map
 
 def _vehiculo_posicion(terminal):
     """Última posición conocida de un vehículo (lat, lng) o None."""
     with _db() as conn:
-        row = conn.execute("SELECT last_lat, last_lng FROM vehiculos WHERE id=?", (terminal,)).fetchone()
+        row = conn.execute("SELECT last_lat, last_lng FROM vehiculos WHERE terminal_trimble=?", (terminal,)).fetchone()
     if row and row["last_lat"] is not None and row["last_lng"] is not None:
         return (float(row["last_lat"]), float(row["last_lng"]))
     return None

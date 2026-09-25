@@ -111,7 +111,7 @@ def planificacion(desde: str = "", hasta: str = "", conn=Depends(get_conn)):
 
 class ValidarRequest(BaseModel):
     trip_id: str = ""
-    matricula: str = ""            # tractora destino (referencia del TMS)
+    codigo: str = ""               # tractora destino (código interno del vehículo)
     semirremolque_id: str = ""
     remolque_id: str = ""
     conductor_id: Optional[int] = None
@@ -120,7 +120,7 @@ class ValidarRequest(BaseModel):
     kilos: float = 0.0
     palets: int = 0
 
-    @field_validator("trip_id", "matricula", "semirremolque_id", "remolque_id", "inicio", "fin", mode="before")
+    @field_validator("trip_id", "codigo", "semirremolque_id", "remolque_id", "inicio", "fin", mode="before")
     @classmethod
     def _nulo_a_vacio(cls, v):
         return "" if v is None else v
@@ -140,7 +140,7 @@ def _bloqueos_y_avisos(req: ValidarRequest, conn) -> tuple:
     """Bloqueos + avisos de la asignación propuesta. Lógica compartida por /validar y /mover."""
     bloqueos: list[dict] = []
     avisos: list[dict] = []
-    terminal = _fecha(req.matricula)
+    terminal = _fecha(req.codigo)
 
     # ---- BLOQUEO 1: remolque/semirremolque ocupado en un viaje no finalizado ----
     remolques_ocupados = _vehiculos_en_curso(exclude_trip_id=req.trip_id or None)
@@ -153,7 +153,7 @@ def _bloqueos_y_avisos(req: ValidarRequest, conn) -> tuple:
     if terminal and req.inicio and req.fin:
         otros = conn.execute(
             f"SELECT id, fecha_esperada_carga, fecha_esperada_descarga FROM trips "
-            f"WHERE matricula = ? AND id != ? AND COALESCE(estado,'') NOT IN {_ESTADOS_FINALES_SQL}",
+            f"WHERE terminal = ? AND id != ? AND COALESCE(estado,'') NOT IN {_ESTADOS_FINALES_SQL}",
             (terminal, req.trip_id or ""),
         ).fetchall()
         for o in otros:
@@ -177,7 +177,7 @@ def _bloqueos_y_avisos(req: ValidarRequest, conn) -> tuple:
     # ---- AVISO 1: conducción legal ajustada (tacógrafo, reutiliza _dstat_terminal) ----
     if terminal:
         # Resuelve el terminal_trimble (ID del proveedor de telemetría) desde la matrícula.
-        vrow = conn.execute("SELECT terminal_trimble FROM vehiculos WHERE matricula=? LIMIT 1", (terminal,)).fetchone()
+        vrow = conn.execute("SELECT terminal_trimble FROM vehiculos WHERE codigo=? LIMIT 1", (terminal,)).fetchone()
         ttrim = (vrow["terminal_trimble"] if vrow and vrow["terminal_trimble"] else terminal)
         stats = _dstat_terminal(ttrim)
         if stats and req.fin:
@@ -271,7 +271,7 @@ def mover(req: MoverRequest, conn=Depends(get_conn)):
         raise HTTPException(status_code=409, detail={"bloqueos": bloqueos})
 
     terminal_anterior = (row["terminal"] or "").strip()
-    terminal_nuevo = (req.terminal or "").strip()
+    terminal_nuevo = (req.codigo or "").strip()
     in_trimble = estado == "enviado" or en_curso
     # Misma tractora (cambio de hora/semi/conductor sin mover de camión): NO desasignar,
     # NO tocar Trimble, mantener el estado y marcar pendiente de reenvío.

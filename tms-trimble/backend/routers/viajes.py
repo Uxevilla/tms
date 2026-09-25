@@ -76,7 +76,7 @@ def api_telemetria_activa(user: dict = Depends(require_role(["admin", "dispatche
         f"), activa AS ("
         f"  SELECT DISTINCT ON (terminal) terminal, id, estado, fecha_esperada_descarga, "
         f"         conductor, matricula "
-        f"  FROM trips WHERE COALESCE(estado,'') NOT IN {_ESTADOS_FINALES_SQL} "
+        f"  FROM trips WHERE estado = 'enviado' OR estado IN ('Llegada_Origen','Cargando','En_Transito','Llegada_Destino','Descargando') "
         f"  ORDER BY terminal, creado DESC"
         f"), dstat AS ("
         f"  SELECT DISTINCT ON (vehiculo_id) vehiculo_id, did "
@@ -90,8 +90,8 @@ def api_telemetria_activa(user: dict = Depends(require_role(["admin", "dispatche
         f"       COALESCE(a.conductor,'') AS conductor, "
         f"       c.nombre AS conductor_taco "
         f"FROM ultima u "
-        f"LEFT JOIN vehiculos v ON v.id = u.vehiculo_id "
-        f"LEFT JOIN activa a ON a.terminal = u.vehiculo_id "
+        f"LEFT JOIN vehiculos v ON v.terminal_trimble = u.vehiculo_id "
+        f"LEFT JOIN activa a ON a.terminal = v.codigo "
         f"LEFT JOIN dstat d ON d.vehiculo_id = u.vehiculo_id "
         f"LEFT JOIN conductores c ON c.did = d.did "
         f"ORDER BY u.time DESC"
@@ -152,9 +152,9 @@ def asignar_trip(trip_id: str, req: AsignarRequest, conn = Depends(get_conn)):
         raise HTTPException(status_code=409, detail={"error": f"El viaje ya está asignado (estado: {row['estado']})"})
 
     viaje = ViajeRequest(**json.loads(row["payload"] or "{}"))
-    matricula = (req.matricula or "").strip()
-    if not matricula:
-        raise HTTPException(status_code=400, detail={"error": "Indica la tractora (matrícula) para asignar."})
+    codigo = (req.codigo or "").strip()
+    if not codigo:
+        raise HTTPException(status_code=400, detail={"error": "Indica la tractora para asignar."})
 
     # Fusionar ediciones en línea (columnas de trips) sobre el payload original
     viaje.cliente = row["cliente"] or viaje.cliente
@@ -166,7 +166,7 @@ def asignar_trip(trip_id: str, req: AsignarRequest, conn = Depends(get_conn)):
     viaje.conductor = req.conductor or row["conductor"] or viaje.conductor or ""
     viaje.conductor_id = req.conductor_id if req.conductor_id is not None else row["conductor_id"]
 
-    viaje.matricula = matricula
+    viaje.matricula = row["matricula"] or viaje.matricula or ""
     viaje.semirremolque_id = (req.semirremolque_id or row["semirremolque_id"] or "").strip()
     viaje.remolque_id = (req.remolque_id or row["remolque_id"] or "").strip()
     viaje.conduccion_acumulada_min = req.conduccion_acumulada_min
@@ -178,7 +178,7 @@ def asignar_trip(trip_id: str, req: AsignarRequest, conn = Depends(get_conn)):
     if not req.force:
         _chequear_conduccion_legal(viaje, row)
 
-    return _enviar_viaje(trip_id, viaje, matricula, viaje.semirremolque_id, viaje.remolque_id)
+    return _enviar_viaje(trip_id, viaje, codigo, viaje.semirremolque_id, viaje.remolque_id)
 
 
 
@@ -334,16 +334,19 @@ def enviar_trip(trip_id: str, force: bool = False, conn = Depends(get_conn)):
     if not row:
         raise HTTPException(status_code=404, detail={"error": f"Viaje {trip_id} no encontrado"})
     viaje = ViajeRequest(**json.loads(row["payload"] or "{}"))
-    matricula = (viaje.matricula or row["matricula"] or "").strip()
-    if not matricula:
-        raise HTTPException(status_code=400, detail={"error": "Asigna la tractora (matrícula) antes de enviar el viaje a Trimble."})
+    codigo = (row["terminal"] or "").strip()
+    if not codigo:
+        raise HTTPException(status_code=400, detail={"error": "Asigna la tractora antes de enviar el viaje a Trimble."})
     # Fusionar el estado actual de la fila sobre el payload original.
     viaje.cliente = row["cliente"] or viaje.cliente
     viaje.precio = float(row["precio"] or 0)
     viaje.gastos = float(row["gastos"] or 0)
     viaje.iva = float(row["iva"] or 0)
     viaje.conductor = row["conductor"] or viaje.conductor or ""
-    viaje.matricula = matricula
+    viaje.conductor_id = row["conductor_id"] if row["conductor_id"] is not None else viaje.conductor_id
+    viaje.matricula = row["matricula"] or viaje.matricula or ""
+    viaje.fecha_esperada_carga = row["fecha_esperada_carga"] or viaje.fecha_esperada_carga
+    viaje.fecha_esperada_descarga = row["fecha_esperada_descarga"] or viaje.fecha_esperada_descarga
     viaje.semirremolque_id = (row["semirremolque_id"] or "").strip()
     viaje.remolque_id = (row["remolque_id"] or "").strip()
 
@@ -351,12 +354,14 @@ def enviar_trip(trip_id: str, force: bool = False, conn = Depends(get_conn)):
     if not force:
         _chequear_conduccion_legal(viaje, row)
 
-    resp = _enviar_viaje(trip_id, viaje, matricula, viaje.semirremolque_id, viaje.remolque_id)
-    # El envío ya refleja los cambios pendientes → quitar la marca de reenvío.
-    payload = json.loads(row["payload"] or "{}")
-    if payload.pop("pendiente_reenvio", None):
-        conn.execute("UPDATE trips SET payload=? WHERE id=?", (json.dumps(payload), trip_id))
-        conn.commit()
+    resp = _enviar_viaje(trip_id, viaje, codigo, viaje.semirremolque_id, viaje.remolque_id)
+    # Limpiar la marca de reenvío SOLO si el envío fue bien (releyendo el payload actual).
+    if resp.get("estado") == "enviado":
+        actual = conn.execute("SELECT payload FROM trips WHERE id=?", (trip_id,)).fetchone()
+        payload = json.loads((actual and actual["payload"]) or "{}")
+        if payload.pop("pendiente_reenvio", None):
+            conn.execute("UPDATE trips SET payload=? WHERE id=?", (json.dumps(payload), trip_id))
+            conn.commit()
     return resp
 
 

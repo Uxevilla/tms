@@ -134,7 +134,7 @@ class TripUpdate(BaseModel):
 
 
 class AsignarRequest(BaseModel):
-    matricula: str = ""
+    codigo: str = ""
     semirremolque_id: str = ""
     remolque_id: str = ""
     conductor: str = ""
@@ -273,6 +273,8 @@ class Vehiculo(BaseModel):
     id: str = ""
     categoria: str = "tractora"
     matricula: str = ""
+    terminal_trimble: str = ""
+    app_terminal: str = ""
     marca: str = ""
     modelo: str = ""
     anno: int = 0

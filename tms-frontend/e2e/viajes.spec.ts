@@ -80,6 +80,7 @@ test.describe("Viajes (Fase 4)", () => {
 
   // Abre el Sheet con el atajo "n" (keyboard.press real; si el CI se cuelga, se adjunta la traza).
   async function abrirSheetConN(page: Page) {
+    await page.waitForTimeout(400); // deja asentar la página tras el goto (evita el hang de keyboard.press)
     await page.keyboard.press("n");
     await expect(page.getByPlaceholder("Buscar cliente…")).toBeVisible({ timeout: 15000 });
   }
@@ -193,7 +194,9 @@ test.describe("Viajes (Fase 4)", () => {
 
   test("validación en vivo: el botón se habilita solo con los obligatorios", async ({ page }) => {
     await abrirViajes(page);
-    await abrirSheetConN(page);
+    // Abre el Sheet con el botón (más robusto que el atajo "n"; la validación no es el test de teclado).
+    await page.getByRole("button", { name: /Nuevo viaje/i }).click();
+    await expect(page.getByPlaceholder("Buscar cliente…")).toBeVisible({ timeout: 15000 });
 
     // Sin rellenar nada, el botón de guardar está deshabilitado.
     const guardar = page.getByRole("button", { name: /Crear viaje/i });

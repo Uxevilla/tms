@@ -146,6 +146,7 @@ export interface ViajePlanificacion {
   destino: string;
   cliente: string;
   matricula: string;
+  terminal: string;
   kilos: number;
   palets: number;
   tiempo_min: number;

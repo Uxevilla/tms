@@ -29,7 +29,7 @@ def _conn(scratch_db):
 
 
 def _mv(**kw):
-    base = dict(trip_id="T1", terminal="TRAC2", inicio="2026-09-24T08:00", fin="2026-09-24T12:00")
+    base = dict(trip_id="T1", codigo="TRAC2", inicio="2026-09-24T08:00", fin="2026-09-24T12:00")
     base.update(kw)
     return MoverRequest(**base)
 
@@ -84,7 +84,7 @@ def test_mover_enviado_a_pendientes(scratch_db):
     try:
         _tractoras(conn, "TRAC1")
         conn.execute("INSERT INTO operaciones.trips (codigo, estado, terminal) VALUES ('T1', 'enviado', 'TRAC1')")
-        r = planificacion.mover(_mv(terminal=None), conn=conn)
+        r = planificacion.mover(_mv(codigo=None), conn=conn)
         assert r["ok"] is True
         assert [c["op"] for c in _fake_calls()].count("unAssignTrips") == 1
         row = conn.execute("SELECT terminal, estado FROM trips WHERE id='T1'").fetchone()
@@ -196,7 +196,7 @@ def test_mover_enviado_misma_tractora(scratch_db):
             "INSERT INTO operaciones.trips (codigo, estado, terminal, payload) "
             "VALUES ('T1', 'enviado', 'TRAC1', "
             "'{\"origen\": {\"nombre\": \"A\"}, \"destino\": {\"nombre\": \"B\"}}')")
-        r = planificacion.mover(_mv(terminal="TRAC1", inicio="2026-09-24T10:00", fin="2026-09-24T14:00"), conn=conn)
+        r = planificacion.mover(_mv(codigo="TRAC1", inicio="2026-09-24T10:00", fin="2026-09-24T14:00"), conn=conn)
         assert r["ok"] is True
         assert _fake_calls() == []  # 0 llamadas a Trimble (misma tractora)
         row = conn.execute("SELECT terminal, estado, payload FROM trips WHERE id='T1'").fetchone()
@@ -225,6 +225,35 @@ def test_enviar_quita_pendiente_reenvio(scratch_db, monkeypatch):
         assert r["ok"] is True
         row = conn.execute("SELECT payload FROM trips WHERE id='T1'").fetchone()
         assert json.loads(row["payload"]).get("pendiente_reenvio") is None
+    finally:
+        conn.close()
+        main._tenant_ctx.reset(tok)
+
+
+# 13. /enviar fusiona conductor_id y fechas desde la fila (tras mover el viaje).
+@pytest.mark.integration
+def test_enviar_fusiona_conductor_y_fechas(scratch_db, monkeypatch):
+    tok, conn = _conn(scratch_db)
+    try:
+        _tractoras(conn, "TRAC1")
+        conn.execute(
+            "INSERT INTO operaciones.trips "
+            "(codigo, estado, terminal, conductor_id, fecha_esperada_carga, fecha_esperada_descarga, payload) "
+            "VALUES ('T1', 'sin_asignar', 'TRAC1', 9, '2026-09-24T14:00', '2026-09-24T18:00', "
+            "'{\"origen\": {\"nombre\": \"A\"}, \"destino\": {\"nombre\": \"B\"}}')")
+        capturado = {}
+
+        def _falso_envio(trip_id, viaje, codigo, *a, **k):
+            capturado["viaje"] = viaje
+            return {"ok": True, "estado": "enviado"}
+
+        monkeypatch.setattr(viajes, "_enviar_viaje", _falso_envio)
+        r = viajes.enviar_trip("T1", force=True, conn=conn)
+        assert r["ok"] is True
+        v = capturado["viaje"]
+        assert v.conductor_id == 9
+        assert v.fecha_esperada_carga == "2026-09-24T14:00"
+        assert v.fecha_esperada_descarga == "2026-09-24T18:00"
     finally:
         conn.close()
         main._tenant_ctx.reset(tok)

@@ -465,25 +465,25 @@ def entidad_vehiculo(codigo: str, user: dict = Depends(require_role(["admin", "d
 
     pos = conn.execute(
         "SELECT lat, lng, speed_kmh, heading, odometer_km, time FROM telemetria.posiciones_gps "
-        "WHERE vehiculo_id = ? ORDER BY time DESC LIMIT 1", (veh,),
+        "WHERE vehiculo_id = ? ORDER BY time DESC LIMIT 1", (terminal,),
     ).fetchone()
 
     viaje_actual = conn.execute(
         "SELECT codigo, estado, origen, destino, cliente, fecha_esperada_descarga FROM operaciones.trips "
-        "WHERE (matricula = ? OR terminal = ?) AND COALESCE(estado,'') NOT IN ('Entregado','Cancelado','sin_asignar','') "
-        "ORDER BY creado DESC LIMIT 1", (veh, terminal),
+        "WHERE terminal = ? AND COALESCE(estado,'') NOT IN ('Entregado','Cancelado','sin_asignar','') "
+        "ORDER BY creado DESC LIMIT 1", (veh,),
     ).fetchone()
 
     proximos = conn.execute(
         "SELECT codigo, estado, origen, destino, fecha_esperada_carga FROM operaciones.trips "
-        "WHERE (matricula = ? OR terminal = ?) AND (estado IN ('sin_asignar','planificado') OR estado IS NULL) "
-        "ORDER BY creado DESC LIMIT 5", (veh, terminal),
+        "WHERE terminal = ? AND (estado IN ('sin_asignar','planificado') OR estado IS NULL) "
+        "ORDER BY creado DESC LIMIT 5", (veh,),
     ).fetchall()
 
     dstat = conn.execute(
         "SELECT d.*, c.nombre AS conductor_nombre FROM (SELECT DISTINCT ON (vehiculo_id) * FROM tacografo_dstat "
         "WHERE vehiculo_id = ? ORDER BY vehiculo_id, COALESCE(time, creado) DESC) d "
-        "LEFT JOIN conductores c ON c.did = d.did", (veh,),
+        "LEFT JOIN conductores c ON c.did = d.did", (terminal,),
     ).fetchone()
 
     caducidades = []
