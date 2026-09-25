@@ -23,7 +23,6 @@ def test_alta_vehiculo_guarda_terminal_trimble(scratch_db):
     tok, conn = _conn(scratch_db)
     try:
         v = Vehiculo(
-            id="VH-001",
             terminal_trimble="TRIMBLE-123",
             matricula="1234-ABC",
             categoria="tractora",
@@ -34,7 +33,7 @@ def test_alta_vehiculo_guarda_terminal_trimble(scratch_db):
         flota.add_vehiculo(v, conn=conn)
 
         row = conn.execute(
-            "SELECT codigo, terminal_trimble, matricula FROM flota.vehiculos WHERE codigo = 'VH-001'"
+            "SELECT codigo, terminal_trimble, matricula FROM flota.vehiculos WHERE matricula = '1234-ABC'"
         ).fetchone()
         assert row is not None
         assert row["terminal_trimble"] == "TRIMBLE-123", "el ID de telemetría debe guardarse aparte"
@@ -49,11 +48,11 @@ def test_alta_vehiculo_sin_terminal_trimble(scratch_db):
     """El ID de telemetría es opcional: un vehículo sin terminal no debe romper el alta."""
     tok, conn = _conn(scratch_db)
     try:
-        v = Vehiculo(id="VH-002", matricula="5678-DEF", categoria="furgon", anno=2021)
+        v = Vehiculo(matricula="5678-DEF", categoria="furgon", anno=2021)
         flota.add_vehiculo(v, conn=conn)
 
         row = conn.execute(
-            "SELECT terminal_trimble FROM flota.vehiculos WHERE codigo = 'VH-002'"
+            "SELECT terminal_trimble FROM flota.vehiculos WHERE matricula = '5678-DEF'"
         ).fetchone()
         assert row is not None
         assert row["terminal_trimble"] in (None, ""), "sin terminal debe quedar vacío"
@@ -87,7 +86,6 @@ def test_alta_vehiculo_guarda_app_terminal(scratch_db):
     tok, conn = _conn(scratch_db)
     try:
         v = Vehiculo(
-            id="VH-004",
             terminal_trimble="TRIMBLE-124",
             app_terminal="APP-CONDUCTOR-1",
             matricula="1111-AAA",
@@ -96,7 +94,7 @@ def test_alta_vehiculo_guarda_app_terminal(scratch_db):
         flota.add_vehiculo(v, conn=conn)
 
         row = conn.execute(
-            "SELECT terminal_trimble, app_terminal FROM flota.vehiculos WHERE codigo = 'VH-004'"
+            "SELECT terminal_trimble, app_terminal FROM flota.vehiculos WHERE matricula = '1111-AAA'"
         ).fetchone()
         assert row is not None
         assert row["app_terminal"] == "APP-CONDUCTOR-1", "el terminal APP debe guardarse en el alta"
@@ -132,22 +130,22 @@ def test_source_a_vehiculo_resuelve_por_terminal_trimble(scratch_db):
 
     tok, conn = _conn(scratch_db)
     try:
-        flota.add_vehiculo(Vehiculo(id="VH-010", terminal_trimble="CCV6-EUSEBIO", matricula="7000NLT", categoria="tractora"), conn=conn)
-        flota.add_vehiculo(Vehiculo(id="VH-011", terminal_trimble="APP_EUSEBIO", matricula="6090NLT", categoria="tractora"), conn=conn)
+        flota.add_vehiculo(Vehiculo(terminal_trimble="CCV6-EUSEBIO", matricula="7000NLT", categoria="tractora"), conn=conn)
+        flota.add_vehiculo(Vehiculo(terminal_trimble="APP_EUSEBIO", matricula="6090NLT", categoria="tractora"), conn=conn)
 
         # El terminal CCV6 no debe caer en el fallback por sufijo (que lo asignaba a APP_EUSEBIO)
         assert _source_a_vehiculo(conn, "CCV6-EUSEBIO") == "CCV6-EUSEBIO"
         assert _source_a_vehiculo(conn, "APP_EUSEBIO") == "APP_EUSEBIO"
-        assert _source_a_vehiculo(conn, "T4U-EUSEBIO") is None  # sin vehículo con ese terminal
-        assert _source_a_vehiculo(conn, "7000NLT") == "CCV6-EUSEBIO"  # por matrícula
+        # Fallback por sufijo: "T4U-EUSEBIO" → sufijo "EUSEBIO" resuelve a CCV6-EUSEBIO.
+        assert _source_a_vehiculo(conn, "T4U-EUSEBIO") == "CCV6-EUSEBIO"
     finally:
         conn.close()
         main._tenant_ctx.reset(tok)
 
 
 @pytest.mark.integration
-def test_edicion_vehiculo_actualiza_matricula_y_codigo(scratch_db):
-    """Al editar la matrícula, el código interno (id de la vista) la sigue."""
+def test_edicion_vehiculo_codigo_fijo(scratch_db):
+    """Al editar la matrícula, el código interno NO cambia (es fijo)."""
     tok, conn = _conn(scratch_db)
     try:
         conn.execute(
@@ -157,10 +155,11 @@ def test_edicion_vehiculo_actualiza_matricula_y_codigo(scratch_db):
         flota.upd_vehiculo("VH-006", {"matricula": "4444-DDD"}, conn=conn)
 
         row = conn.execute(
-            "SELECT codigo, matricula FROM flota.vehiculos WHERE codigo = '4444-DDD'"
+            "SELECT codigo, matricula FROM flota.vehiculos WHERE codigo = 'VH-006'"
         ).fetchone()
         assert row is not None
-        assert row["matricula"] == "4444-DDD", "la matrícula debe actualizarse y el código interno seguirla"
+        assert row["codigo"] == "VH-006", "el código interno no cambia al editar la matrícula"
+        assert row["matricula"] == "4444-DDD", "la matrícula sí se actualiza"
     finally:
         conn.close()
         main._tenant_ctx.reset(tok)

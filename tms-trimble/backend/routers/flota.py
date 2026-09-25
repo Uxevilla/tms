@@ -83,9 +83,6 @@ def add_mantenimiento(m: Mantenimiento, conn = Depends(get_conn)):
 @router.post("/api/vehiculos")
 def add_vehiculo(v: Vehiculo, conn = Depends(get_conn)):
     coste = float(v.coste_adquisicion or 0)
-    # La única referencia del vehículo es la matrícula; el código interno se deriva de ella
-    # (la casilla "Código interno" ya no existe en el formulario de alta).
-    codigo = (v.id or v.matricula).strip() or ("VH-" + uuid.uuid4().hex[:8].upper())
     # Compra (coste>0) o renting/leasing exigen proveedor vinculado.
     if (v.tipo_tenencia in ("Renting", "Leasing") or coste > 0) and not v.proveedor_id:
         raise HTTPException(status_code=400, detail={"error": "Indica el proveedor (proveedor_id) para este vehículo."})
@@ -114,7 +111,7 @@ def add_vehiculo(v: Vehiculo, conn = Depends(get_conn)):
         (codigo, v.terminal_trimble, v.app_terminal, v.categoria, v.matricula, v.marca, v.modelo, v.anno, v.itv, v.seguro, v.peaje_categoria,
          v.ptv_profile, v.ejes, v.mma, v.clase_euro, v.capacidad_peso, v.capacidad_palets,
          v.coste_adquisicion, v.fecha_adquisicion, v.vida_util, v.valor_residual,
-         v.fecha_caducidad_itv, v.seguro_compania, v.fecha_caducidad_seguro, v.tipo_tenencia, v.proveedor_id, v.fecha_alta, v.cuota_mensual, v.app_terminal),
+         v.fecha_caducidad_itv, v.seguro_compania, v.fecha_caducidad_seguro, v.tipo_tenencia, v.proveedor_id, v.fecha_alta, v.cuota_mensual),
     )
     # Asiento de adquisición (solo compra en Propiedad): Debe 218 / Haber 400, una sola vez.
     if coste > 0 and v.proveedor_id:

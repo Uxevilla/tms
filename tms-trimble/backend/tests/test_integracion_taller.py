@@ -191,9 +191,9 @@ def test_list_mantenimientos_filtro_vehiculo(scratch_db):
             "VALUES ('VH-MANT-005', 'TRIM-005', '5555-EEE', 'semirremolque', true)"
         )
 
-        # Mantenimiento para VH-MANT-004
+        # Mantenimiento para VH-MANT-004 (vehiculo_id = codigo, no matrícula)
         m1 = Mantenimiento(
-            vehiculo_id="4444-DDD",
+            vehiculo_id="VH-MANT-004",
             tipo="revision",
             fecha="2026-01-10",
             km=10000,
@@ -205,7 +205,7 @@ def test_list_mantenimientos_filtro_vehiculo(scratch_db):
 
         # Mantenimiento para VH-MANT-005
         m2 = Mantenimiento(
-            vehiculo_id="5555-EEE",
+            vehiculo_id="VH-MANT-005",
             tipo="aceite",
             fecha="2026-01-11",
             km=20000,
@@ -220,16 +220,16 @@ def test_list_mantenimientos_filtro_vehiculo(scratch_db):
         assert len(todos["mantenimientos"]) == 2
 
         # Filtrar por VH-MANT-004 -> 1
-        filtrados = list_mantenimientos(vehiculo_id="4444-DDD", conn=conn)
+        filtrados = list_mantenimientos(vehiculo_id="VH-MANT-004", conn=conn)
         assert len(filtrados["mantenimientos"]) == 1
-        assert filtrados["mantenimientos"][0]["vehiculo_id"] == "4444-DDD"
+        assert filtrados["mantenimientos"][0]["vehiculo_id"] == "VH-MANT-004"
         assert filtrados["mantenimientos"][0]["matricula"] == "4444-DDD"
         assert filtrados["mantenimientos"][0]["notas"] == "Veh 1"
 
         # Filtrar por VH-MANT-005 -> 1
-        filtrados2 = list_mantenimientos(vehiculo_id="5555-EEE", conn=conn)
+        filtrados2 = list_mantenimientos(vehiculo_id="VH-MANT-005", conn=conn)
         assert len(filtrados2["mantenimientos"]) == 1
-        assert filtrados2["mantenimientos"][0]["vehiculo_id"] == "5555-EEE"
+        assert filtrados2["mantenimientos"][0]["vehiculo_id"] == "VH-MANT-005"
         assert filtrados2["mantenimientos"][0]["notas"] == "Veh 2"
     finally:
         conn.close()
