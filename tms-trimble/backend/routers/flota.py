@@ -46,6 +46,11 @@ def add_mantenimiento(m: Mantenimiento, conn = Depends(get_conn)):
     mid = cur.fetchone()["id"]
     # Integración contable: si se marca Completado y se pide generar gasto → gastos_vehiculos + asiento 622/472/400.
     if m.hecho and m.generar_gasto and m.base_imponible > 0:
+        # mantenimientos referencia el vehículo por matrícula; gastos_vehiculos (finanzas) por código interno.
+        codigo_veh = m.vehiculo_id
+        _vrow = conn.execute("SELECT id FROM vehiculos WHERE matricula = ?", (m.vehiculo_id,)).fetchone()
+        if _vrow:
+            codigo_veh = _vrow["id"]
         iva_pct = round(float(m.iva or 21), 2)
         importe = round(float(m.base_imponible) * (1 + iva_pct / 100.0), 2)
         cuota = round(importe - float(m.base_imponible), 2)
@@ -54,7 +59,7 @@ def add_mantenimiento(m: Mantenimiento, conn = Depends(get_conn)):
             "INSERT INTO finanzas.gastos_vehiculos (vehiculo_id, proveedor_id, fecha, tipo, litros, base_imponible, iva, "
             "importe_total, factura_ref, cuenta_contable_gasto, estado_pago, creado) "
             "VALUES (?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id",
-            (m.vehiculo_id, m.proveedor_id, m.fecha, "reparaciones", 0, m.base_imponible, iva_pct, importe,
+            (codigo_veh, m.proveedor_id, m.fecha, "reparaciones", 0, m.base_imponible, iva_pct, importe,
              "", "622", "Pendiente", datetime.datetime.utcnow().isoformat() + "Z"),
         )
         gid = gcur.fetchone()["id"]
@@ -285,12 +290,12 @@ def list_documentos(conn = Depends(get_conn)):
 def list_mantenimientos(vehiculo_id: str = "", conn = Depends(get_conn)):
     if vehiculo_id:
         rows = conn.execute(
-            "SELECT m.*, v.matricula, v.categoria FROM flota.mantenimientos m LEFT JOIN vehiculos v ON v.id=m.vehiculo_id "
+            "SELECT m.*, v.matricula, v.categoria FROM flota.mantenimientos m LEFT JOIN vehiculos v ON v.matricula=m.vehiculo_id "
             "WHERE m.vehiculo_id=? ORDER BY m.fecha", (vehiculo_id,),
         ).fetchall()
     else:
         rows = conn.execute(
-            "SELECT m.*, v.matricula, v.categoria FROM flota.mantenimientos m LEFT JOIN vehiculos v ON v.id=m.vehiculo_id ORDER BY m.fecha"
+            "SELECT m.*, v.matricula, v.categoria FROM flota.mantenimientos m LEFT JOIN vehiculos v ON v.matricula=m.vehiculo_id ORDER BY m.fecha"
         ).fetchall()
     return {"mantenimientos": [dict(r) for r in rows]}
 
@@ -361,7 +366,7 @@ def list_vehiculos_disponibles(fecha_esperada_carga: str = "", categoria: str = 
             )
             SELECT v.*, man.tipo_man
             FROM vehiculos v
-            LEFT JOIN man ON man.vehiculo_id = v.id
+            LEFT JOIN man ON man.vehiculo_id = v.matricula
             {where}
             ORDER BY v.id
             """,

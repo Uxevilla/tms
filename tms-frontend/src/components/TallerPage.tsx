@@ -239,7 +239,7 @@ export function TallerPage() {
             >
               <option value="">Todos los vehículos</option>
               {vehiculos.map((v) => (
-                <option key={v.id} value={v.id}>
+                <option key={v.matricula} value={v.matricula}>
                   {v.matricula} ({v.categoria})
                 </option>
               ))}

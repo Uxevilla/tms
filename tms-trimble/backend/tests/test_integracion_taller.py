@@ -33,7 +33,7 @@ def test_alta_mantenimiento(scratch_db):
         )
 
         m = Mantenimiento(
-            vehiculo_id="VH-MANT-001",
+            vehiculo_id="1111-AAA",
             tipo="revision",
             fecha="2026-01-15",
             km=100000,
@@ -53,7 +53,7 @@ def test_alta_mantenimiento(scratch_db):
             (mid,),
         ).fetchone()
         assert row is not None
-        assert row["vehiculo_id"] == "VH-MANT-001"
+        assert row["vehiculo_id"] == "1111-AAA"
         assert row["tipo"] == "revision"
         assert row["fecha"] == "2026-01-15"
         assert row["km"] == 100000
@@ -85,7 +85,7 @@ def test_edicion_en_linea_campos_mantenimiento(scratch_db):
         )
 
         m = Mantenimiento(
-            vehiculo_id="VH-MANT-002",
+            vehiculo_id="2222-BBB",
             tipo="aceite",
             fecha="2026-02-01",
             km=50000,
@@ -143,7 +143,7 @@ def test_toggle_hecho_mantenimiento(scratch_db):
         )
 
         m = Mantenimiento(
-            vehiculo_id="VH-MANT-003",
+            vehiculo_id="3333-CCC",
             tipo="frenos",
             fecha="2026-03-01",
             km=80000,
@@ -193,7 +193,7 @@ def test_list_mantenimientos_filtro_vehiculo(scratch_db):
 
         # Mantenimiento para VH-MANT-004
         m1 = Mantenimiento(
-            vehiculo_id="VH-MANT-004",
+            vehiculo_id="4444-DDD",
             tipo="revision",
             fecha="2026-01-10",
             km=10000,
@@ -205,7 +205,7 @@ def test_list_mantenimientos_filtro_vehiculo(scratch_db):
 
         # Mantenimiento para VH-MANT-005
         m2 = Mantenimiento(
-            vehiculo_id="VH-MANT-005",
+            vehiculo_id="5555-EEE",
             tipo="aceite",
             fecha="2026-01-11",
             km=20000,
@@ -220,15 +220,16 @@ def test_list_mantenimientos_filtro_vehiculo(scratch_db):
         assert len(todos["mantenimientos"]) == 2
 
         # Filtrar por VH-MANT-004 -> 1
-        filtrados = list_mantenimientos(vehiculo_id="VH-MANT-004", conn=conn)
+        filtrados = list_mantenimientos(vehiculo_id="4444-DDD", conn=conn)
         assert len(filtrados["mantenimientos"]) == 1
-        assert filtrados["mantenimientos"][0]["vehiculo_id"] == "VH-MANT-004"
+        assert filtrados["mantenimientos"][0]["vehiculo_id"] == "4444-DDD"
+        assert filtrados["mantenimientos"][0]["matricula"] == "4444-DDD"
         assert filtrados["mantenimientos"][0]["notas"] == "Veh 1"
 
         # Filtrar por VH-MANT-005 -> 1
-        filtrados2 = list_mantenimientos(vehiculo_id="VH-MANT-005", conn=conn)
+        filtrados2 = list_mantenimientos(vehiculo_id="5555-EEE", conn=conn)
         assert len(filtrados2["mantenimientos"]) == 1
-        assert filtrados2["mantenimientos"][0]["vehiculo_id"] == "VH-MANT-005"
+        assert filtrados2["mantenimientos"][0]["vehiculo_id"] == "5555-EEE"
         assert filtrados2["mantenimientos"][0]["notas"] == "Veh 2"
     finally:
         conn.close()
@@ -249,7 +250,7 @@ def test_edicion_campos_solo_allow(scratch_db):
         )
 
         m = Mantenimiento(
-            vehiculo_id="VH-MANT-006",
+            vehiculo_id="6666-FFF",
             tipo="neumaticos",
             fecha="2026-04-01",
             km=60000,
@@ -269,7 +270,7 @@ def test_edicion_campos_solo_allow(scratch_db):
             (mid,),
         ).fetchone()
         # vehiculo_id no debe cambiar (no está en allow)
-        assert row["vehiculo_id"] == "VH-MANT-006"
+        assert row["vehiculo_id"] == "6666-FFF"
         # tipo sí debe cambiar (está en allow)
         assert row["tipo"] == "itv"
     finally:
