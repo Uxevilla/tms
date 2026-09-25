@@ -545,6 +545,7 @@ def _enviar_viaje(trip_id, viaje, codigo, semirremolque, remolque):
 
     return {
         "ok": True,
+        "estado": estado,
         "trip_id": trip_id,
         "nombre": nombre,
         "terminal": terminal,

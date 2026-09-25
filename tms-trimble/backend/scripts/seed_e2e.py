@@ -54,9 +54,9 @@ def main() -> None:
 
     # Viaje retrasado (descarga pasada) + envío fallido (error).
     cur.execute(
-        "INSERT INTO operaciones.trips (codigo, estado, fecha_esperada_descarga, origen, destino, matricula) "
-        "VALUES ('E2E-TRIP-1', 'En_Transito', %s, 'Madrid', 'Barcelona', '0001-TST') "
-        "ON CONFLICT (codigo) DO UPDATE SET estado='En_Transito', fecha_esperada_descarga=EXCLUDED.fecha_esperada_descarga",
+        "INSERT INTO operaciones.trips (codigo, estado, fecha_esperada_descarga, origen, destino, matricula, terminal) "
+        "VALUES ('E2E-TRIP-1', 'En_Transito', %s, 'Madrid', 'Barcelona', '0001-TST', 'E2E-VEH') "
+        "ON CONFLICT (codigo) DO UPDATE SET estado='En_Transito', fecha_esperada_descarga=EXCLUDED.fecha_esperada_descarga, terminal=EXCLUDED.terminal",
         (ayer,),
     )
     cur.execute(
@@ -71,7 +71,7 @@ def main() -> None:
     # Conducción al límite (lectura < 12 h).
     cur.execute(
         "INSERT INTO tacografo_dstat (did, vehiculo_id, driving_coupure_min, day_driving_min, time, creado) "
-        "VALUES ('E2E-DID', '0001-TST', 250, 0, %s, %s) ON CONFLICT DO NOTHING",
+        "VALUES ('E2E-DID', 'E2E-VEH', 250, 0, %s, %s) ON CONFLICT DO NOTHING",
         (now, now),
     )
 

@@ -230,6 +230,35 @@ def test_enviar_quita_pendiente_reenvio(scratch_db, monkeypatch):
         main._tenant_ctx.reset(tok)
 
 
+# 13. /enviar fusiona conductor_id y fechas desde la fila (tras mover el viaje).
+@pytest.mark.integration
+def test_enviar_fusiona_conductor_y_fechas(scratch_db, monkeypatch):
+    tok, conn = _conn(scratch_db)
+    try:
+        _tractoras(conn, "TRAC1")
+        conn.execute(
+            "INSERT INTO operaciones.trips "
+            "(codigo, estado, terminal, conductor_id, fecha_esperada_carga, fecha_esperada_descarga, payload) "
+            "VALUES ('T1', 'sin_asignar', 'TRAC1', 9, '2026-09-24T14:00', '2026-09-24T18:00', "
+            "'{\"origen\": {\"nombre\": \"A\"}, \"destino\": {\"nombre\": \"B\"}}')")
+        capturado = {}
+
+        def _falso_envio(trip_id, viaje, codigo, *a, **k):
+            capturado["viaje"] = viaje
+            return {"ok": True, "estado": "enviado"}
+
+        monkeypatch.setattr(viajes, "_enviar_viaje", _falso_envio)
+        r = viajes.enviar_trip("T1", force=True, conn=conn)
+        assert r["ok"] is True
+        v = capturado["viaje"]
+        assert v.conductor_id == 9
+        assert v.fecha_esperada_carga == "2026-09-24T14:00"
+        assert v.fecha_esperada_descarga == "2026-09-24T18:00"
+    finally:
+        conn.close()
+        main._tenant_ctx.reset(tok)
+
+
 # 12. Blindaje del modo falso: los endpoints de inspección dan 404 si el fake no está activo.
 def test_fake_endpoints_404_sin_modo_falso(monkeypatch):
     monkeypatch.delenv("TMS_TRIMBLE_FAKE", raising=False)

@@ -3,7 +3,7 @@ from fastapi import HTTPException
 
 import config
 from db import _db, _tenant_ctx, _valores_proveedor
-from soap_client import TrimbleClient
+from soap_client import TrimbleClient, _trimble_fake
 
 _client_cache = {}
 
@@ -17,6 +17,9 @@ def get_client():
     se usaba solo el .env, ignorando lo guardado en /configuración.
     """
     t = _tenant_ctx.get()
+    # Modo fake (CI/e2e): sin credenciales ni red.
+    if _trimble_fake():
+        return TrimbleClient("fake", "fake", "fake", "")
     if t and t.get("superadmin"):
         # BD maestra (sin schema): no hay tabla de integraciones; solo defaults del .env.
         cfg = {}

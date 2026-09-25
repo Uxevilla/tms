@@ -76,7 +76,7 @@ def api_telemetria_activa(user: dict = Depends(require_role(["admin", "dispatche
         f"), activa AS ("
         f"  SELECT DISTINCT ON (terminal) terminal, id, estado, fecha_esperada_descarga, "
         f"         conductor, matricula "
-        f"  FROM trips WHERE COALESCE(estado,'') NOT IN {_ESTADOS_FINALES_SQL} "
+        f"  FROM trips WHERE estado = 'enviado' OR estado IN ('Llegada_Origen','Cargando','En_Transito','Llegada_Destino','Descargando') "
         f"  ORDER BY terminal, creado DESC"
         f"), dstat AS ("
         f"  SELECT DISTINCT ON (vehiculo_id) vehiculo_id, did "
@@ -343,7 +343,10 @@ def enviar_trip(trip_id: str, force: bool = False, conn = Depends(get_conn)):
     viaje.gastos = float(row["gastos"] or 0)
     viaje.iva = float(row["iva"] or 0)
     viaje.conductor = row["conductor"] or viaje.conductor or ""
+    viaje.conductor_id = row["conductor_id"] if row["conductor_id"] is not None else viaje.conductor_id
     viaje.matricula = row["matricula"] or viaje.matricula or ""
+    viaje.fecha_esperada_carga = row["fecha_esperada_carga"] or viaje.fecha_esperada_carga
+    viaje.fecha_esperada_descarga = row["fecha_esperada_descarga"] or viaje.fecha_esperada_descarga
     viaje.semirremolque_id = (row["semirremolque_id"] or "").strip()
     viaje.remolque_id = (row["remolque_id"] or "").strip()
 
@@ -352,11 +355,13 @@ def enviar_trip(trip_id: str, force: bool = False, conn = Depends(get_conn)):
         _chequear_conduccion_legal(viaje, row)
 
     resp = _enviar_viaje(trip_id, viaje, codigo, viaje.semirremolque_id, viaje.remolque_id)
-    # El envío ya refleja los cambios pendientes → quitar la marca de reenvío.
-    payload = json.loads(row["payload"] or "{}")
-    if payload.pop("pendiente_reenvio", None):
-        conn.execute("UPDATE trips SET payload=? WHERE id=?", (json.dumps(payload), trip_id))
-        conn.commit()
+    # Limpiar la marca de reenvío SOLO si el envío fue bien (releyendo el payload actual).
+    if resp.get("estado") == "enviado":
+        actual = conn.execute("SELECT payload FROM trips WHERE id=?", (trip_id,)).fetchone()
+        payload = json.loads((actual and actual["payload"]) or "{}")
+        if payload.pop("pendiente_reenvio", None):
+            conn.execute("UPDATE trips SET payload=? WHERE id=?", (json.dumps(payload), trip_id))
+            conn.commit()
     return resp
 
 
