@@ -31,13 +31,13 @@ def test_snapshot_une_posicion_por_terminal_trimble_y_matricula(scratch_db):
             "VALUES (now(), 'TRIM-A', 40.4, -3.7)"
         )
         conn.execute(
-            "INSERT INTO operaciones.trips (codigo, matricula, estado) "
-            "VALUES ('VIAJE-A', 'MAT-A', 'En_Transito')"
+            "INSERT INTO operaciones.trips (codigo, terminal, estado) "
+            "VALUES ('VIAJE-A', 'COD-A', 'En_Transito')"
         )
         snap = _viajes_snapshot()
         viaje = snap.get("VIAJE-A")
         assert viaje is not None
-        assert viaje["lat"] == 40.4, "la posición debe unirse por terminal_trimble (vía matrícula)"
+        assert viaje["lat"] == 40.4, "la posición debe unirse por terminal_trimble (vía código)"
         assert viaje["lng"] == -3.7
     finally:
         conn.close()

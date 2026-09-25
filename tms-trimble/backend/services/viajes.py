@@ -585,8 +585,8 @@ def _vehiculo_ptv(terminal):
     """Atributos PTV del vehículo para el cálculo de peaje exacto."""
     with _db() as conn:
         row = conn.execute(
-            "SELECT ptv_profile, ejes, mma, clase_euro FROM vehiculos WHERE terminal_trimble=? OR matricula=? LIMIT 1",
-            (terminal, terminal),
+            "SELECT ptv_profile, ejes, mma, clase_euro FROM vehiculos WHERE terminal_trimble=? LIMIT 1",
+            (terminal,),
         ).fetchone()
     return {
         "ptv_profile": (row["ptv_profile"] if row and row["ptv_profile"] else "EUR_TRAILER_TRUCK"),
@@ -604,7 +604,7 @@ from services.configuracion import _actividades_map
 def _vehiculo_posicion(terminal):
     """Última posición conocida de un vehículo (lat, lng) o None."""
     with _db() as conn:
-        row = conn.execute("SELECT last_lat, last_lng FROM vehiculos WHERE id=?", (terminal,)).fetchone()
+        row = conn.execute("SELECT last_lat, last_lng FROM vehiculos WHERE terminal_trimble=?", (terminal,)).fetchone()
     if row and row["last_lat"] is not None and row["last_lng"] is not None:
         return (float(row["last_lat"]), float(row["last_lng"]))
     return None

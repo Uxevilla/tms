@@ -90,7 +90,7 @@ def _viajes_snapshot() -> dict:
             "(SELECT COUNT(*) FROM files WHERE trip_id = t.id) AS n_documentos, "
             "(SELECT COUNT(*) FROM operaciones.tramos WHERE trip_id = t.id) AS n_tramos "
             "FROM trips t "
-            "LEFT JOIN vehiculos v ON v.matricula = t.matricula "
+            "LEFT JOIN vehiculos v ON v.codigo = t.terminal "
             "ORDER BY t.creado DESC NULLS LAST LIMIT 500"
         ).fetchall()
         # Posiciones (última por vehículo) en consulta aparte: si el hypertable de
