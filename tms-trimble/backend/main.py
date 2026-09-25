@@ -105,6 +105,14 @@ async def lifespan(app):
     if not TRANSFOLLOW_WEBHOOK_PASSWORD:
         print("[seguridad] AVISO: TRANSFOLLOW_WEBHOOK_PASSWORD sin configurar → "
               "el webhook de TransFollow rechaza todas las peticiones (fail closed).")
+    if os.environ.get("TMS_TRIMBLE_FAKE") == "1":
+        if os.environ.get("TMS_ENV") == "prod":
+            raise RuntimeError(
+                "TMS_TRIMBLE_FAKE=1 no puede usarse en producción (TMS_ENV=prod). "
+                "El modo falso de Trimble es solo para CI/e2e."
+            )
+        print("[seguridad] AVISO: modo falso de Trimble activo (TMS_TRIMBLE_FAKE=1) — "
+              "las llamadas SOAP no llegan a Trimble.")
     await asyncio.to_thread(_bootstrap)
     tasks = [asyncio.create_task(w()) for w in (ingesta_run, mantenimiento_run, facturacion_run)]
     yield

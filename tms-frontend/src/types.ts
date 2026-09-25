@@ -151,6 +151,7 @@ export interface ViajePlanificacion {
   tiempo_min: number;
   inicio: string;
   fin: string;
+  pendiente_reenvio?: boolean;
 }
 
 export interface VehiculoPlanificacion {

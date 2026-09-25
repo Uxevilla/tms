@@ -6,8 +6,18 @@ Uso: python scripts/seed_e2e.py  (con DB_HOST/DB_PORT/DB_USER/DB_PASSWORD/DB_NAM
 import datetime
 import os
 import sys
+import zoneinfo
 
 import psycopg2
+
+# "hoy" en la zona LOCAL de España (no UTC): el contenedor puede ir en UTC y el test
+# (Node, en el host) usa la hora local; si divergen, los viajes caen fuera del rango
+# visible entre las 00:00 y las 02:00 en España.
+_ZONA = zoneinfo.ZoneInfo("Europe/Madrid")
+
+
+def _hoy() -> str:
+    return datetime.datetime.now(_ZONA).date().isoformat()
 
 
 def main() -> None:
@@ -129,16 +139,25 @@ def main() -> None:
 
     # Fase 3 — arrastre/validación/reasignación. Fechas relativas a HOY para que aparezcan
     # en la vista del día actual y los casos de solapamiento/caducidad sean deterministas.
-    hoy = datetime.date.today().isoformat()
-    ayer_r = (datetime.date.today() - datetime.timedelta(days=1)).isoformat()
+    hoy = _hoy()
+    ayer_r = (datetime.datetime.now(_ZONA).date() - datetime.timedelta(days=1)).isoformat()
 
-    # Tractoras de test adicionales (bloqueo por solapamiento + reasignación).
-    for codigo, matricula in (("E2E-TRAC2", "0004-TST"), ("E2E-TRAC3", "0005-TST")):
+    # Tractoras de test adicionales (bloqueo por solapamiento + reasignación + auto-scroll).
+    for i, (codigo, matricula) in enumerate((("E2E-TRAC2", "0004-TST"), ("E2E-TRAC3", "0005-TST")), start=0):
         cur.execute(
             "INSERT INTO flota.vehiculos (codigo, terminal_trimble, matricula, categoria, activo) "
             "VALUES (%s, %s, %s, 'tractora', true) "
             "ON CONFLICT (codigo) DO UPDATE SET terminal_trimble=EXCLUDED.terminal_trimble, matricula=EXCLUDED.matricula, categoria=EXCLUDED.categoria, activo=EXCLUDED.activo",
             (codigo, codigo, matricula),
+        )
+    # 12 tractoras extra para el auto-scroll (E2E-TRAC4..E2E-TRAC15).
+    for n in range(4, 16):
+        codigo = f"E2E-TRAC{n}"
+        cur.execute(
+            "INSERT INTO flota.vehiculos (codigo, terminal_trimble, matricula, categoria, activo) "
+            "VALUES (%s, %s, %s, 'tractora', true) "
+            "ON CONFLICT (codigo) DO UPDATE SET terminal_trimble=EXCLUDED.terminal_trimble, matricula=EXCLUDED.matricula, categoria=EXCLUDED.categoria, activo=EXCLUDED.activo",
+            (codigo, codigo, f"{n:04d}-TST"),
         )
 
     # Semirremolque con ITV caducada (aviso itv_caducada).
@@ -158,11 +177,12 @@ def main() -> None:
     )
 
     # Pendiente limpio (ok → verde), hoy. Resetea terminal/semirremolque (idempotente).
+    # payload mínimo para que POST /api/trips/{id}/enviar reconstruya el ViajeRequest (test c).
     cur.execute(
-        "INSERT INTO operaciones.trips (codigo, estado, fecha_esperada_carga, fecha_esperada_descarga, origen, destino, kilos) "
-        "VALUES ('E2E-PLAN-OK', 'sin_asignar', %s, %s, 'Madrid', 'Barcelona', 0) "
-        "ON CONFLICT (codigo) DO UPDATE SET matricula=NULL, semirremolque_id=NULL, remolque_id=NULL, fecha_esperada_carga=EXCLUDED.fecha_esperada_carga, fecha_esperada_descarga=EXCLUDED.fecha_esperada_descarga",
-        (f"{hoy}T10:00", f"{hoy}T12:00"),
+        "INSERT INTO operaciones.trips (codigo, estado, payload, fecha_esperada_carga, fecha_esperada_descarga, origen, destino, kilos) "
+        "VALUES ('E2E-PLAN-OK', 'sin_asignar', %s, %s, %s, 'Madrid', 'Barcelona', 0) "
+        "ON CONFLICT (codigo) DO UPDATE SET matricula=NULL, semirremolque_id=NULL, remolque_id=NULL, payload=EXCLUDED.payload, fecha_esperada_carga=EXCLUDED.fecha_esperada_carga, fecha_esperada_descarga=EXCLUDED.fecha_esperada_descarga",
+        ('{"origen": {"nombre": "Madrid"}, "destino": {"nombre": "Barcelona"}}', f"{hoy}T10:00", f"{hoy}T12:00"),
     )
 
     # Pendiente con aviso (semirremolque con ITV caducada), hoy.
@@ -181,6 +201,19 @@ def main() -> None:
         (f"{ayer_r}T08:00", f"{ayer_r}T20:00"),
     )
 
+    # Cambio de planificación (envío manual): viaje ya en el terminal (enviado) + fault de Trimble.
+    cur.execute(
+        "INSERT INTO operaciones.trips (codigo, estado, terminal, fecha_esperada_carga, fecha_esperada_descarga, origen, destino) "
+        "VALUES ('E2E-PLAN-ENVIADO', 'enviado', 'E2E-TRAC', %s, %s, 'Madrid', 'Valencia') "
+        "ON CONFLICT (codigo) DO UPDATE SET terminal='E2E-TRAC', estado='enviado', fecha_esperada_carga=EXCLUDED.fecha_esperada_carga, fecha_esperada_descarga=EXCLUDED.fecha_esperada_descarga",
+        (f"{hoy}T16:00", f"{hoy}T18:00"),
+    )
+    cur.execute(
+        "INSERT INTO operaciones.trips (codigo, estado, terminal, fecha_esperada_carga, fecha_esperada_descarga, origen, destino) "
+        "VALUES ('E2E-FAIL-1', 'enviado', 'E2E-TRAC', %s, %s, 'Madrid', 'Valencia') "
+        "ON CONFLICT (codigo) DO UPDATE SET terminal='E2E-TRAC', estado='enviado', fecha_esperada_carga=EXCLUDED.fecha_esperada_carga, fecha_esperada_descarga=EXCLUDED.fecha_esperada_descarga",
+        (f"{hoy}T18:00", f"{hoy}T20:00"),
+    )
     # Fase 4 — cliente + direcciones para el e2e de "crear viaje de 2 paradas con teclado".
     # Ciudades únicas (E2EORIGEN/E2EDESTINO/…) para que el viaje creado sea identificable en la lista.
     cur.execute("SELECT 1 FROM clientes WHERE cif = 'E2E00000A' LIMIT 1")
