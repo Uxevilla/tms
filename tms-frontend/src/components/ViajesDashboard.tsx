@@ -161,7 +161,7 @@ export function ViajesDashboard() {
                   value={v.matricula ?? ""}
                   onChange={(e) => {
                     const veh = tractoras.find((x) => x.matricula === e.target.value);
-                    if (veh) editarCelda(v.id, "matricula", e.target.value, { terminal: veh.id }, "matrícula");
+                    if (veh) editarCelda(v.id, "matricula", e.target.value, { matricula: e.target.value }, "matrícula");
                   }}
                   className={inputCls}
                 >

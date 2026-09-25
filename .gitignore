@@ -36,3 +36,4 @@
 **/test-results/
 **/playwright-report/
 **/.auth/
+**/docker-compose.fake-e2e.yml

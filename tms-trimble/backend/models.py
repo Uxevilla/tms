@@ -121,7 +121,7 @@ class TripUpdate(BaseModel):
     cliente: Optional[str] = None
     tipo_carga: Optional[str] = None
     conductor: Optional[str] = None
-    terminal: Optional[str] = None
+    matricula: Optional[str] = None
     semirremolque_id: Optional[str] = None
     remolque_id: Optional[str] = None
     fecha_esperada_carga: Optional[str] = None

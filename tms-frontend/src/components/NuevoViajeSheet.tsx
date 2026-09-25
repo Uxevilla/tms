@@ -49,7 +49,7 @@ const esquema = z
     subcontratado: z.boolean(),
     proveedor_id: z.string(),
     coste: z.string(),
-    terminal: z.string(),
+    matricula: z.string(),
     conductor_id: z.string(),
     semirremolque_id: z.string(),
     paradas: z.array(paradaSchema),
@@ -85,7 +85,7 @@ interface PayloadTrip {
   cliente?: string;
   cliente_id?: number;
   conductor_id?: number | null;
-  terminal?: string;
+  matricula?: string;
   semirremolque_id?: string;
   fecha_esperada_carga?: string;
   fecha_esperada_descarga?: string;
@@ -167,7 +167,7 @@ export function NuevoViajeSheet({ onClose, onGuardado, editTripId = null }: {
       actividad_origen: "CARGA", actividad_destino: "DESCARGA",
       fecha_carga: "", fecha_descarga: "",
       tarifa_id: "", precio: "", kilos: "", subcontratado: false, proveedor_id: "", coste: "",
-      terminal: "", conductor_id: "", semirremolque_id: "", paradas: [],
+      matricula: "", conductor_id: "", semirremolque_id: "", paradas: [],
     },
   });
   const { fields, append, remove, move } = useFieldArray({ control, name: "paradas" });
@@ -236,7 +236,7 @@ export function NuevoViajeSheet({ onClose, onGuardado, editTripId = null }: {
           subcontratado: !!p.subcontratado,
           proveedor_id: p.proveedor_id ? String(p.proveedor_id) : "",
           coste: p.coste ? String(p.coste) : "",
-          terminal: p.terminal || "",
+          matricula: p.matricula || "",
           conductor_id: p.conductor_id ? String(p.conductor_id) : "",
           semirremolque_id: p.semirremolque_id || "",
           paradas: (p.paradas ?? []).map((par) => ({
@@ -287,7 +287,7 @@ export function NuevoViajeSheet({ onClose, onGuardado, editTripId = null }: {
     let cancel = false;
     setRuta((p) => ({ ...p, calculando: true }));
     const t = window.setTimeout(() => {
-      api<RespuestaRuta>(RUTA, { method: "POST", body: JSON.stringify({ puntos: puntosRuta, terminal: watch("terminal") || "" }) })
+      api<RespuestaRuta>(RUTA, { method: "POST", body: JSON.stringify({ puntos: puntosRuta, matricula: watch("matricula") || "" }) })
         .then((d) => {
           if (cancel) return;
           const ptv = d.ptv;
@@ -302,7 +302,7 @@ export function NuevoViajeSheet({ onClose, onGuardado, editTripId = null }: {
         .catch(() => { if (!cancel) setRuta((p) => ({ ...p, calculando: false })); });
     }, 400);
     return () => { cancel = true; window.clearTimeout(t); };
-  }, [puntosRuta, watch("terminal")]);
+  }, [puntosRuta, watch("matricula")]);
 
   // Precargar tarifa + direcciones habituales al elegir cliente.
   const elegirCliente = (c: Cliente) => {
@@ -419,7 +419,7 @@ export function NuevoViajeSheet({ onClose, onGuardado, editTripId = null }: {
       cliente_id: Number(f.cliente_id),
       conductor: conductores.find((c) => String(c.id) === f.conductor_id)?.nombre || "",
       conductor_id: f.conductor_id ? Number(f.conductor_id) : null,
-      terminal: f.terminal || "",
+      matricula: f.matricula || "",
       semirremolque_id: f.semirremolque_id || "",
       tipo_carga: "",
       precio: tarifa ? 0 : Number(f.precio) || 0,
@@ -582,9 +582,9 @@ export function NuevoViajeSheet({ onClose, onGuardado, editTripId = null }: {
           </div>
 
           <div className="grid grid-cols-2 gap-2">
-            <select {...register("terminal")} className="rounded-md border px-2 py-1.5 text-sm">
+            <select {...register("matricula")} className="rounded-md border px-2 py-1.5 text-sm">
               <option value="">— Sin tractora —</option>
-              {vehiculos.filter((v) => v.categoria === "tractora").map((v) => <option key={v.id} value={v.id}>{v.matricula}</option>)}
+              {vehiculos.filter((v) => v.categoria === "tractora").map((v) => <option key={v.id} value={v.matricula}>{v.matricula}</option>)}
             </select>
             <select {...register("semirremolque_id")} className="rounded-md border px-2 py-1.5 text-sm">
               <option value="">— Sin semirremolque —</option>

@@ -489,13 +489,13 @@ def update_trip(trip_id: str, upd: TripUpdate, conn = Depends(get_conn)):
         raise HTTPException(status_code=404, detail={"error": f"Viaje {trip_id} no encontrado"})
     if (row["estado"] or "").lower() in _ESTADOS_FINALES:
         # en viajes finalizados solo se permite el cambio de estado de pago (cobro)
-        otros = [f for f in ("factura", "cliente", "tipo_carga", "conductor", "terminal",
+        otros = [f for f in ("factura", "cliente", "tipo_carga", "conductor", "matricula",
                              "semirremolque_id", "remolque_id", "precio", "gastos", "iva", "origen", "destino")
                  if getattr(upd, f) is not None]
         if otros:
             raise HTTPException(status_code=409, detail={"error": "El viaje está finalizado y no se puede modificar."})
     sets, params = [], []
-    for field in ("factura", "estado_pago", "cliente", "tipo_carga", "conductor", "terminal", "semirremolque_id", "remolque_id", "fecha_esperada_carga", "fecha_esperada_descarga", "origen", "destino"):
+    for field in ("factura", "estado_pago", "cliente", "tipo_carga", "conductor", "matricula", "semirremolque_id", "remolque_id", "fecha_esperada_carga", "fecha_esperada_descarga", "origen", "destino"):
         val = getattr(upd, field)
         if val is not None:
             sets.append(f"{field}=?")
