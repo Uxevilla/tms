@@ -37,7 +37,7 @@ interface Toast {
   tipo: "error" | "info";
 }
 interface Asignacion {
-  matricula: string;
+  codigo: string;
   semirremolque_id: string;
   conductor_id: number | null;
   inicio: string;
@@ -134,14 +134,14 @@ export function PlanificacionDashboard() {
     return listaBase.map((v) => {
       const pend = enCurso[v.id];
       const base = pend
-        ? { ...v, matricula: pend.matricula, semirremolque_id: pend.semirremolque_id, conductor_id: pend.conductor_id, inicio: pend.inicio, fin: pend.fin }
+        ? { ...v, terminal: pend.codigo, semirremolque_id: pend.semirremolque_id, conductor_id: pend.conductor_id, inicio: pend.inicio, fin: pend.fin }
         : v;
       const reenvio = pendienteReenvio[v.id] ?? v.pendiente_reenvio;
       return reenvio === undefined ? base : { ...base, pendiente_reenvio: reenvio };
     });
   }, [listaBase, enCurso, pendienteReenvio]);
-  const pendientes = useMemo(() => lista.filter((v) => !v.matricula), [lista]);
-  const asignados = useMemo(() => lista.filter((v) => !!v.matricula), [lista]);
+  const pendientes = useMemo(() => lista.filter((v) => !v.terminal), [lista]);
+  const asignados = useMemo(() => lista.filter((v) => !!v.terminal), [lista]);
 
   const semirremolques = useQuery({
     queryKey: ["planificacion-semirremolques"],
@@ -182,7 +182,7 @@ export function PlanificacionDashboard() {
   const ultimoUsado = useCallback(
     (tractora: string): { semi: string; cond: number | null } => {
       const usados = lista
-        .filter((v) => v.matricula === tractora)
+        .filter((v) => v.terminal === tractora)
         .sort((a, b) => (b.inicio || "").localeCompare(a.inicio || ""));
       return {
         semi: usados.find((v) => v.semirremolque_id)?.semirremolque_id ?? "",
@@ -213,7 +213,7 @@ export function PlanificacionDashboard() {
   // ---- mover (optimista + enCurso + avisos + historial + reversión) ----
   const moverViaje = useCallback(
     async (v: ViajePlanificacion, destino: Asignacion, force = false) => {
-      const anterior = { matricula: v.matricula, semirremolque_id: v.semirremolque_id, conductor_id: v.conductor_id, inicio: v.inicio, fin: v.fin };
+      const anterior = { codigo: v.terminal, semirremolque_id: v.semirremolque_id, conductor_id: v.conductor_id, inicio: v.inicio, fin: v.fin };
       setEnCurso((cur) => ({ ...cur, [v.id]: destino }));
       setGuardando((prev) => new Set(prev).add(v.id));
       try {
@@ -339,7 +339,7 @@ export function PlanificacionDashboard() {
         return await api<{ ok: boolean; bloqueos: ValidacionMotivo[]; avisos: ValidacionMotivo[] }>(REST_PLANIFICACION_VALIDAR, {
           method: "POST",
           body: JSON.stringify({
-            trip_id: v.id, matricula: tractora, semirremolque_id: semi, remolque_id: v.remolque_id,
+            trip_id: v.id, codigo: tractora, semirremolque_id: semi, remolque_id: v.remolque_id,
             conductor_id: cond, inicio, fin, kilos: v.kilos, palets: v.palets,
           }),
           signal,
@@ -394,11 +394,11 @@ export function PlanificacionDashboard() {
       // B/C: la fila decide la tractora; la posición horizontal decide la hora (siempre).
       const inicio = xATiempo(clientX) || v.inicio;
       const fin = fmtLocalISO(new Date(aTs(inicio) + duracionDe(v)));
-      const cambia = tractora !== v.matricula;
+      const cambia = tractora !== v.terminal;
       // Reasignación → preseleccionar el último semi/conductor; mismo tractora → conservar.
       const semi = cambia ? (tractora ? ultimoUsado(tractora).semi : "") : v.semirremolque_id;
       const cond = cambia ? (tractora ? ultimoUsado(tractora).cond : null) : v.conductor_id;
-      const destino: Asignacion = { matricula: tractora ?? "", semirremolque_id: semi, conductor_id: cond, inicio, fin };
+      const destino: Asignacion = { codigo: tractora ?? "", semirremolque_id: semi, conductor_id: cond, inicio, fin };
 
       // Bloqueos → no soltar + toast (el servidor re-valida, pero el color ya lo anticipa).
       if (validacionErrorRef.current) { toast("No se pudo validar la asignación", "error"); return; }
@@ -527,7 +527,7 @@ export function PlanificacionDashboard() {
     const onUp = () => {
       const r = redimensionandoRef.current;
       if (r && r.fin !== r.viaje.fin) {
-        moverViaje(r.viaje, { matricula: r.viaje.matricula, semirremolque_id: r.viaje.semirremolque_id, conductor_id: r.viaje.conductor_id, inicio: r.viaje.inicio, fin: r.fin });
+        moverViaje(r.viaje, { codigo: r.viaje.terminal, semirremolque_id: r.viaje.semirremolque_id, conductor_id: r.viaje.conductor_id, inicio: r.viaje.inicio, fin: r.fin });
       }
       redimensionandoRef.current = null;
       setRedimensionando(null);
@@ -613,7 +613,7 @@ export function PlanificacionDashboard() {
 
   // Enviar todos los viajes planificados (sin enviar) de una tractora.
   const enviarTodos = async (t: VehiculoPlanificacion) => {
-    const planificados = asignados.filter((v) => v.matricula === t.id && !enTrimble(v));
+    const planificados = asignados.filter((v) => v.terminal === t.id && !enTrimble(v));
     if (planificados.length === 0) { toast("No hay viajes planificados sin enviar en esta tractora."); return; }
     for (const v of planificados) await enviarViaje(v);
   };
@@ -686,7 +686,7 @@ export function PlanificacionDashboard() {
             </div>
 
             {tractoras.map((t) => {
-              const viajesDeTractora = asignados.filter((v) => v.matricula === t.id);
+              const viajesDeTractora = asignados.filter((v) => v.terminal === t.id);
               const planificadosSinEnviar = viajesDeTractora.filter((v) => !enTrimble(v));
               return (
                 <div key={t.id} data-tractora={t.id} className={`flex border-b transition-colors ${sobreTractora === t.id ? colorValidacion : ""}`}>
@@ -823,8 +823,8 @@ function MenuViaje({ v, enviarViaje, quitarTerminal, moverViaje, ultimoUsado, ab
   conductores: ConductorOpcion[];
 }) {
   const enviado = enTrimble(v);
-  const cambiaSemi = (semi: string) => moverViaje(v, { matricula: v.matricula, semirremolque_id: semi, conductor_id: v.conductor_id, inicio: v.inicio, fin: v.fin });
-  const cambiaConductor = (cond: number | null) => moverViaje(v, { matricula: v.matricula, semirremolque_id: v.semirremolque_id, conductor_id: cond, inicio: v.inicio, fin: v.fin });
+  const cambiaSemi = (semi: string) => moverViaje(v, { codigo: v.terminal, semirremolque_id: semi, conductor_id: v.conductor_id, inicio: v.inicio, fin: v.fin });
+  const cambiaConductor = (cond: number | null) => moverViaje(v, { codigo: v.terminal, semirremolque_id: v.semirremolque_id, conductor_id: cond, inicio: v.inicio, fin: v.fin });
 
   return (
     <ContextMenuContent>
@@ -853,7 +853,7 @@ function MenuViaje({ v, enviarViaje, quitarTerminal, moverViaje, ultimoUsado, ab
           ))}
         </ContextMenuSubContent>
       </ContextMenuSub>
-      <ContextMenuItem onSelect={() => moverViaje(v, { matricula: "", semirremolque_id: "", conductor_id: null, inicio: v.inicio, fin: v.fin })}>
+      <ContextMenuItem onSelect={() => moverViaje(v, { codigo: "", semirremolque_id: "", conductor_id: null, inicio: v.inicio, fin: v.fin })}>
         <CornerUpLeft size={13} /> Devolver a Pendientes
       </ContextMenuItem>
       <ContextMenuSeparator />
