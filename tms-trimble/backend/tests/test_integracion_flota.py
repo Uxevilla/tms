@@ -143,3 +143,24 @@ def test_source_a_vehiculo_resuelve_por_terminal_trimble(scratch_db):
     finally:
         conn.close()
         main._tenant_ctx.reset(tok)
+
+
+@pytest.mark.integration
+def test_edicion_vehiculo_actualiza_matricula_y_codigo(scratch_db):
+    """Al editar la matrícula, el código interno (id de la vista) la sigue."""
+    tok, conn = _conn(scratch_db)
+    try:
+        conn.execute(
+            "INSERT INTO flota.vehiculos (codigo, terminal_trimble, matricula, activo) "
+            "VALUES ('VH-006', 'TRIMBLE-126', '3333-CCC', true)"
+        )
+        flota.upd_vehiculo("VH-006", {"matricula": "4444-DDD"}, conn=conn)
+
+        row = conn.execute(
+            "SELECT codigo, matricula FROM flota.vehiculos WHERE codigo = '4444-DDD'"
+        ).fetchone()
+        assert row is not None
+        assert row["matricula"] == "4444-DDD", "la matrícula debe actualizarse y el código interno seguirla"
+    finally:
+        conn.close()
+        main._tenant_ctx.reset(tok)

@@ -630,13 +630,16 @@ def upd_mantenimiento_campos(mid: int, body: dict, conn = Depends(get_conn)):
 @router.patch("/api/vehiculos/{veh_id}")
 def upd_vehiculo(veh_id: str, body: dict, conn = Depends(get_conn)):
     """Edita datos técnicos y costes fijos de un vehículo (ITV, seguro, costes...)."""
-    allow = ("terminal_trimble", "app_terminal", "itv", "seguro", "coste_adquisicion", "valor_residual", "vida_util",
+    allow = ("matricula", "terminal_trimble", "app_terminal", "itv", "seguro", "coste_adquisicion", "valor_residual", "vida_util",
              "clase_euro", "capacidad_peso", "capacidad_palets", "mma", "ejes",
              "fecha_caducidad_itv", "seguro_compania", "fecha_caducidad_seguro",
              "tipo_tenencia", "proveedor_id", "fecha_alta", "cuota_mensual", "fecha_proxima_revision")
     fields = {k: body[k] for k in allow if k in body}
     if not fields:
         return {"ok": False, "error": "Sin campos editables"}
+    # La matrícula es la única referencia: el código interno (id de la vista) la sigue.
+    if "matricula" in fields:
+        fields["codigo"] = fields["matricula"]
     sets = ", ".join(f"{k}=?" for k in fields)
     conn.execute(f"UPDATE vehiculos SET {sets} WHERE id=?", (*fields.values(), veh_id))
     conn.commit()

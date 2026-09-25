@@ -124,6 +124,7 @@ export function VehiculosPage() {
     mutationFn: async ({ editar, valores }: { editar: Vehiculo | null; valores: VehiculoForm }) => {
       if (editar) {
         const body = {
+          matricula: valores.matricula,
           terminal_trimble: valores.terminal_trimble,
           app_terminal: valores.app_terminal,
           fecha_caducidad_itv: valores.fecha_caducidad_itv,
@@ -360,15 +361,13 @@ export function VehiculosPage() {
             <SheetTitle>{editando ? "Editar vehículo" : "Nuevo vehículo"}</SheetTitle>
           </SheetHeader>
           <form onSubmit={form.handleSubmit(onSubmit)} className="mt-4 flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-6 pb-6">
-            {!editando && (
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="matricula">Matrícula</Label>
-                <Input id="matricula" placeholder="0000 ABC" {...form.register("matricula")} />
-                {form.formState.errors.matricula && (
-                  <span className="text-xs text-red-600">{form.formState.errors.matricula.message}</span>
-                )}
-              </div>
-            )}
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="matricula">Matrícula</Label>
+              <Input id="matricula" placeholder="0000 ABC" {...form.register("matricula")} />
+              {form.formState.errors.matricula && (
+                <span className="text-xs text-red-600">{form.formState.errors.matricula.message}</span>
+              )}
+            </div>
 
             {!editando && (
               <div className="grid grid-cols-2 gap-3">
