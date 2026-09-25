@@ -273,6 +273,8 @@ class Vehiculo(BaseModel):
     id: str = ""
     categoria: str = "tractora"
     matricula: str = ""
+    terminal_trimble: str = ""
+    app_terminal: str = ""
     marca: str = ""
     modelo: str = ""
     anno: int = 0
