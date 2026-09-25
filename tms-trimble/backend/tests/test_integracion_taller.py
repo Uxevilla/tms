@@ -359,6 +359,11 @@ def test_mantenimiento_generar_gasto_al_editar(scratch_db):
         # El gasto_id quedó guardado en el mantenimiento.
         gid = conn.execute("SELECT gasto_id FROM flota.mantenimientos WHERE id=?", (mid,)).fetchone()["gasto_id"]
         assert gid is not None
+
+        # GET /api/mantenimientos incluye gasto_id.
+        from routers.flota import list_mantenimientos
+        lista = list_mantenimientos(vehiculo_id="VH-EDIT", conn=conn)
+        assert lista["mantenimientos"][0]["gasto_id"] == gid
     finally:
         conn.rollback()
         conn.close()

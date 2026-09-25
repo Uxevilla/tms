@@ -32,6 +32,7 @@ interface Mantenimiento {
   hecho: boolean;
   matricula: string;
   categoria: string;
+  gasto_id: number | null;
 }
 
 interface Vehiculo {
@@ -371,7 +372,8 @@ export function TallerPage() {
                 id="vehiculo_id"
                 value={form.watch("vehiculo_id")}
                 onChange={(e) => form.setValue("vehiculo_id", e.target.value)}
-                className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"
+                disabled={editando != null}
+                className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm disabled:cursor-not-allowed disabled:opacity-60"
               >
                 <option value="">Seleccionar vehículo</option>
                 {vehiculos.map((v) => (
@@ -460,19 +462,25 @@ export function TallerPage() {
                 />
                 <Label htmlFor="hecho">Completado</Label>
               </div>
-              <div className="flex items-center gap-2">
-                <input
-                  id="generar-gasto"
-                  type="checkbox"
-                  checked={form.watch("generar_gasto")}
-                  onChange={(e) => form.setValue("generar_gasto", e.target.checked)}
-                  className="h-4 w-4 rounded border-slate-300 text-primary focus:ring-primary"
-                />
-                <Label htmlFor="generar-gasto">Generar gasto</Label>
-              </div>
+              {editando?.gasto_id ? (
+                <div className="flex items-center gap-1.5 text-sm font-medium text-emerald-700">
+                  Gasto contabilizado (#{editando.gasto_id})
+                </div>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <input
+                    id="generar-gasto"
+                    type="checkbox"
+                    checked={form.watch("generar_gasto")}
+                    onChange={(e) => form.setValue("generar_gasto", e.target.checked)}
+                    className="h-4 w-4 rounded border-slate-300 text-primary focus:ring-primary"
+                  />
+                  <Label htmlFor="generar-gasto">Generar gasto</Label>
+                </div>
+              )}
             </div>
 
-            {form.watch("generar_gasto") && (
+            {!editando?.gasto_id && form.watch("generar_gasto") && (
               <div className="grid grid-cols-2 gap-3 rounded-md border border-slate-200 p-3">
                 <div className="flex flex-col gap-1.5">
                   <Label htmlFor="base_imponible">Base imponible (€)</Label>
