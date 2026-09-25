@@ -627,7 +627,7 @@ def upd_mantenimiento_campos(mid: int, body: dict, conn = Depends(get_conn)):
 @router.patch("/api/vehiculos/{veh_id}")
 def upd_vehiculo(veh_id: str, body: dict, conn = Depends(get_conn)):
     """Edita datos técnicos y costes fijos de un vehículo (ITV, seguro, costes...)."""
-    allow = ("terminal_trimble", "itv", "seguro", "coste_adquisicion", "valor_residual", "vida_util",
+    allow = ("terminal_trimble", "app_terminal", "itv", "seguro", "coste_adquisicion", "valor_residual", "vida_util",
              "clase_euro", "capacidad_peso", "capacidad_palets", "mma", "ejes",
              "fecha_caducidad_itv", "seguro_compania", "fecha_caducidad_seguro",
              "tipo_tenencia", "proveedor_id", "fecha_alta", "cuota_mensual", "fecha_proxima_revision")

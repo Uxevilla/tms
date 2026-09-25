@@ -343,11 +343,11 @@ export function ConductoresPage() {
 
       {/* Sheet alta/edición conductor */}
       <Sheet open={abierto} onOpenChange={setAbierto}>
-        <SheetContent side="right" className="w-full max-w-md overflow-y-auto">
-          <SheetHeader>
+        <SheetContent side="right" className="flex w-full flex-col gap-0 overflow-hidden p-0 sm:max-w-[480px]">
+          <SheetHeader className="shrink-0">
             <SheetTitle>{editando ? "Editar conductor" : "Nuevo conductor"}</SheetTitle>
           </SheetHeader>
-          <form onSubmit={form.handleSubmit(onSubmit)} className="mt-4 flex flex-col gap-4">
+          <form onSubmit={form.handleSubmit(onSubmit)} className="mt-4 flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-6 pb-6">
             <div className="grid grid-cols-2 gap-3">
               <div className="flex flex-col gap-1.5">
                 <Label htmlFor="nombre">Nombre</Label>
@@ -402,11 +402,11 @@ export function ConductoresPage() {
 
       {/* Sheet editar caducidades */}
       <Sheet open={!!editandoCaducidades} onOpenChange={(v) => !v && setEditandoCaducidades(null)}>
-        <SheetContent side="right" className="w-full max-w-md overflow-y-auto">
-          <SheetHeader>
+        <SheetContent side="right" className="flex w-full flex-col gap-0 overflow-hidden p-0 sm:max-w-[480px]">
+          <SheetHeader className="shrink-0">
             <SheetTitle>Editar caducidades — {editandoCaducidades?.nombre}</SheetTitle>
           </SheetHeader>
-          <form onSubmit={formCaducidades.handleSubmit(onSubmitCaducidades)} className="mt-4 flex flex-col gap-4">
+          <form onSubmit={formCaducidades.handleSubmit(onSubmitCaducidades)} className="mt-4 flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-6 pb-6">
             <p className="text-sm text-slate-500">
               Las caducidades se guardan en el empleado vinculado (PATCH /api/empleados/&#123;id&#125;).
             </p>

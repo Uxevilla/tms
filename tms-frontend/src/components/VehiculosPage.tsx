@@ -127,6 +127,7 @@ export function VehiculosPage() {
       if (editar) {
         const body = {
           terminal_trimble: valores.terminal_trimble,
+          app_terminal: valores.app_terminal,
           fecha_caducidad_itv: valores.fecha_caducidad_itv,
           seguro_compania: valores.seguro_compania,
           fecha_caducidad_seguro: valores.fecha_caducidad_seguro,
@@ -250,6 +251,7 @@ export function VehiculosPage() {
                 ...valoresPorDefecto,
                 id: row.original.id,
                 terminal_trimble: row.original.terminal_trimble ?? "",
+                app_terminal: row.original.app_terminal ?? "",
                 matricula: row.original.matricula,
                 categoria: (row.original.categoria as VehiculoForm["categoria"]) ?? "tractora",
                 marca: row.original.marca,
@@ -357,11 +359,11 @@ export function VehiculosPage() {
       </div>
 
       <Sheet open={abierto} onOpenChange={setAbierto}>
-        <SheetContent side="right" className="w-full max-w-md overflow-y-auto">
-          <SheetHeader>
+        <SheetContent side="right" className="flex w-full flex-col gap-0 overflow-hidden p-0 sm:max-w-[480px]">
+          <SheetHeader className="shrink-0">
             <SheetTitle>{editando ? "Editar vehículo" : "Nuevo vehículo"}</SheetTitle>
           </SheetHeader>
-          <form onSubmit={form.handleSubmit(onSubmit)} className="mt-4 flex flex-col gap-4">
+          <form onSubmit={form.handleSubmit(onSubmit)} className="mt-4 flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-6 pb-6">
             {!editando && (
               <div className="grid grid-cols-2 gap-3">
                 <div className="flex flex-col gap-1.5">
@@ -430,20 +432,18 @@ export function VehiculosPage() {
               </span>
             </div>
 
-            {!editando && (
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="app_terminal">Terminal APP (Fleet XPS)</Label>
-                <Input
-                  id="app_terminal"
-                  placeholder="ID de la app del conductor en Trimble"
-                  {...form.register("app_terminal")}
-                />
-                <span className="text-xs text-slate-400">
-                  Terminal donde el conductor recibe el viaje y los formularios. Si se deja vacío se
-                  usa el terminal por defecto.
-                </span>
-              </div>
-            )}
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="app_terminal">Terminal APP (Fleet XPS)</Label>
+              <Input
+                id="app_terminal"
+                placeholder="ID de la app del conductor en Trimble"
+                {...form.register("app_terminal")}
+              />
+              <span className="text-xs text-slate-400">
+                Terminal donde el conductor recibe el viaje y los formularios. Si se deja vacío se
+                usa el terminal por defecto.
+              </span>
+            </div>
 
             <div className="grid grid-cols-2 gap-3">
               <div className="flex flex-col gap-1.5">

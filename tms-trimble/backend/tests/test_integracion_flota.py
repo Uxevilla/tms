@@ -106,8 +106,8 @@ def test_alta_vehiculo_guarda_app_terminal(scratch_db):
 
 
 @pytest.mark.integration
-def test_app_terminal_no_se_edita_por_patch(scratch_db):
-    """El terminal APP es de alta: el PATCH no debe tocarlo (solo en la ficha de alta)."""
+def test_edicion_vehiculo_actualiza_app_terminal(scratch_db):
+    """El terminal APP se puede editar con el PATCH (visible en alta y edición)."""
     tok, conn = _conn(scratch_db)
     try:
         conn.execute(
@@ -119,7 +119,7 @@ def test_app_terminal_no_se_edita_por_patch(scratch_db):
         row = conn.execute(
             "SELECT app_terminal FROM flota.vehiculos WHERE codigo = 'VH-005'"
         ).fetchone()
-        assert row["app_terminal"] == "APP-ORIGINAL", "el PATCH no debe permitir editar el terminal APP"
+        assert row["app_terminal"] == "APP-CAMBIADA", "el PATCH debe actualizar el terminal APP"
     finally:
         conn.close()
         main._tenant_ctx.reset(tok)
