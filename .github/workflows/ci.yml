@@ -146,3 +146,12 @@ jobs:
           npx playwright test
 
           kill $BACK_PID $FRONT_PID 2>/dev/null || true
+
+      - name: Subir trazas de Playwright (e2e)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-traces
+          path: tms-frontend/test-results/
+          if-no-files-found: ignore
+          retention-days: 7

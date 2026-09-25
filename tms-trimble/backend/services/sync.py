@@ -101,7 +101,7 @@ def _sync_status():
             ).fetchone()
             if dest and dest["lat"] is not None and dest["lng"] is not None:
                 conn.execute(
-                    "UPDATE vehiculos SET last_lat=?, last_lng=? WHERE id=?",
+                    "UPDATE vehiculos SET last_lat=?, last_lng=? WHERE terminal_trimble=?",
                     (dest["lat"], dest["lng"], row["terminal"]),
                 )
     conn.commit()
@@ -118,6 +118,16 @@ def _set_sync_state(key, value):
     with _db() as conn:
         conn.execute("INSERT INTO sistema.sync_state (key, value) VALUES (?,?) ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value", (key, value))
         conn.commit()
+
+
+def _mark_inicial():
+    """Cursor de arranque: 2 días atrás en UTC (formato del cursor de Trimble).
+
+    Al levantar el stack por primera vez (o con las marks vacías), el sync arranca
+    desde hace 2 días en vez de tragarse todo el histórico de colas de Trimble.
+    """
+    ts = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=2)
+    return ts.strftime("%Y-%m-%dT%H:%M:%S.000")
 
 
 def _parse_props(block):
@@ -350,7 +360,7 @@ def _entrega_confirmada(qp):
 def _sync_files():
     # 1) trazas tipo 10 (activity started) -> mapa LID -> trip_id
     lid_map = json.loads(_get_sync_state("lid_map") or "{}")
-    mark = _get_sync_state("traces_mark")
+    mark = _get_sync_state("traces_mark") or _mark_inicial()
     with _db() as pos_conn:
         pos_conn.set_autocommit(True)  # no mantener transacción abierta durante los poll SOAP (evita lock en cascada)
         posiciones = {}
@@ -420,7 +430,7 @@ def _sync_files():
                 break
         for veh, (lat, lng, ttime) in posiciones.items():
             pos_conn.execute(
-                "UPDATE vehiculos SET last_lat=?, last_lng=?, last_position_time=? WHERE id=?",
+                "UPDATE vehiculos SET last_lat=?, last_lng=?, last_position_time=? WHERE terminal_trimble=?",
                 (lat, lng, ttime, veh),
             )
         pos_conn.commit()
@@ -446,7 +456,7 @@ def _sync_files():
         conn.close()
 
     # 2) poll files + descarga (solo tipo 3 = documentos/escaneos del conductor)
-    fmark = _get_sync_state("files_mark")
+    fmark = _get_sync_state("files_mark") or _mark_inicial()
     for _ in range(10):
         r = get_client().poll_files(fmark)
         if not r.get("ok"):
@@ -486,7 +496,7 @@ def _sync_mensajes():
     lid_map = json.loads(_get_sync_state("lid_map") or "{}")
 
     # 1) mensajes estructurados (candidato del question path)
-    smark = _get_sync_state("mensajes_mark")
+    smark = _get_sync_state("mensajes_mark") or _mark_inicial()
     for _ in range(10):
         r = get_client().poll_structured_messages(smark)
         if not r.get("ok"):
@@ -502,7 +512,7 @@ def _sync_mensajes():
     _set_sync_state("mensajes_mark", smark or "")
 
     # 2) mensajes libres
-    fmark = _get_sync_state("mensajes_free_mark")
+    fmark = _get_sync_state("mensajes_free_mark") or _mark_inicial()
     for _ in range(10):
         r = get_client().poll_messages(fmark)
         if not r.get("ok"):

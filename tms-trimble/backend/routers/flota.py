@@ -330,7 +330,7 @@ def list_vehiculos(categoria: str = "", conn = Depends(get_conn)):
         rows = conn.execute("SELECT * FROM vehiculos WHERE categoria=? ORDER BY id", (categoria,)).fetchall()
     else:
         rows = conn.execute("SELECT * FROM vehiculos ORDER BY id").fetchall()
-    activos = _vehiculos_en_curso()
+    activos = _vehiculos_en_curso(conn=conn)
     return {"vehiculos": [{**dict(r), "disponible": r["id"] not in activos} for r in rows]}
 
 
@@ -340,7 +340,7 @@ def list_vehiculos(categoria: str = "", conn = Depends(get_conn)):
 def list_vehiculos_disponibles(fecha_esperada_carga: str = "", categoria: str = "", conn = Depends(get_conn)):
     """Vehículos con disponibilidad para una fecha de carga: bloquea si tiene mantenimiento solapado o viaje en curso."""
     fecha = (fecha_esperada_carga or "")[:10]
-    en_curso = _vehiculos_en_curso()
+    en_curso = _vehiculos_en_curso(conn=conn)
     conds, params = [], []
     if categoria:
         conds.append("v.categoria=?")
@@ -645,7 +645,7 @@ def upd_vehiculo(veh_id: str, body: dict, conn = Depends(get_conn)):
 @router.get("/api/vehiculos/cercano")
 def vehiculo_cercano(lat: float, lng: float, conn = Depends(get_conn)):
     """Devuelve la tractora libre más cercana al punto dado (por última posición conocida)."""
-    activos = _vehiculos_en_curso()
+    activos = _vehiculos_en_curso(conn=conn)
     rows = conn.execute("SELECT id, last_lat, last_lng, matricula FROM vehiculos WHERE categoria='tractora'").fetchall()
     best = None
     for r in rows:

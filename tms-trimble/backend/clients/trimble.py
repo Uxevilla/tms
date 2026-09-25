@@ -9,23 +9,28 @@ _client_cache = {}
 
 
 def get_client():
-    """Cliente SOAP del tenant actual (cacheado por credenciales Trimble)."""
+    """Cliente SOAP del tenant actual (cacheado por credenciales Trimble).
+
+    Lee SIEMPRE la config del proveedor 'trimble' de la BD actual (integracion_valores)
+    y solo cae a los valores por defecto del .env si la BD no tiene credenciales. Antes,
+    para el JWT del frontend React (token sin 'empresa'), el tenant quedaba en None y
+    se usaba solo el .env, ignorando lo guardado en /configuración.
+    """
     t = _tenant_ctx.get()
-    if not t:
-        u = config.DEFAULT_TRIMBLE_USERNAME
-        p = config.DEFAULT_TRIMBLE_PASSWORD
-        c = config.DEFAULT_TRIMBLE_CUSTOMER
-        term = config.DEFAULT_TRIMBLE_TERMINAL
+    if t and t.get("superadmin"):
+        # BD maestra (sin schema): no hay tabla de integraciones; solo defaults del .env.
+        cfg = {}
     else:
         with _db() as conn:
             cfg = _valores_proveedor(conn, "trimble")
-        u = cfg.get("username", "") or ""
-        p = cfg.get("password", "") or ""
-        c = cfg.get("customer", "") or ""
-        term = cfg.get("terminal", "") or ""
-        if not u or not c:
-            raise HTTPException(status_code=503, detail={"error": "Trimble no configurado para este cliente"})
-    key = (u, c)
+    u = cfg.get("username", "") or config.DEFAULT_TRIMBLE_USERNAME or ""
+    p = cfg.get("password", "") or config.DEFAULT_TRIMBLE_PASSWORD or ""
+    c = cfg.get("customer", "") or config.DEFAULT_TRIMBLE_CUSTOMER or ""
+    term = cfg.get("terminal", "") or config.DEFAULT_TRIMBLE_TERMINAL or ""
+    if not u or not c:
+        raise HTTPException(status_code=503, detail={"error": "Trimble no configurado para este cliente"})
+    # La clave incluye password y terminal: cambiar cualquiera invalida la caché.
+    key = (u, p, c, term)
     if key not in _client_cache:
         _client_cache[key] = TrimbleClient(u, p, c, term)
     return _client_cache[key]

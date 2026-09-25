@@ -50,7 +50,7 @@ def calcular_ruta(req: RutaRequest):
     tramos, total, metodo, toll_km = _calc_ruta(puntos)
     resp = {"tramos": tramos, "total_km": total, "metodo": metodo, "total_toll_km": toll_km}
     if len(puntos) >= 2:
-        ptv = _ptv_route(puntos, _vehiculo_ptv(req.terminal), req.conduccion_acumulada_min)
+        ptv = _ptv_route(puntos, _vehiculo_ptv(req.matricula), req.conduccion_acumulada_min)
         if ptv:
             resp["ptv"] = ptv
     return resp
