@@ -207,28 +207,30 @@ def _guardar_telemetria(pos, vehiculo_id):
 
 
 def _source_a_vehiculo(conn, source):
-    """Mapea el 'source' de una traza al id de vehículo.
+    """Mapea el 'source' de una traza al terminal_trimble del vehículo.
 
-    El source puede ser la matrícula (id del vehículo) o el serial del OBC (device).
+    El source es el ID del proveedor de telemetría (terminal_trimble) o el serial
+    del OBC (device). Devuelve el `terminal_trimble` (clave de posiciones_gps/tacografo_dstat).
     """
     if not source:
         return None
-    # 1) match directo por id (referencia Trimble = matrícula)
-    row = conn.execute("SELECT id FROM vehiculos WHERE id=? LIMIT 1", (source,)).fetchone()
+    # 1) match directo por terminal_trimble (ID del proveedor de telemetría)
+    row = conn.execute(
+        "SELECT terminal_trimble FROM vehiculos WHERE terminal_trimble=? LIMIT 1", (source,)
+    ).fetchone()
     if row:
-        return row["id"]
+        return row["terminal_trimble"]
     # 2) match por device (serial OBC)
-    row = conn.execute("SELECT id FROM vehiculos WHERE device=? LIMIT 1", (source,)).fetchone()
+    row = conn.execute(
+        "SELECT terminal_trimble FROM vehiculos WHERE device=? LIMIT 1", (source,)
+    ).fetchone()
     if row:
-        return row["id"]
-    # 3) fallback por sufijo
-    suffix = source.rsplit("-", 1)[-1].strip().lower()
-    if suffix:
-        row = conn.execute(
-            "SELECT id FROM vehiculos WHERE LOWER(id) LIKE ? OR LOWER(COALESCE(matricula,'')) LIKE ? LIMIT 1",
-            (f"%{suffix}%", f"%{suffix}%"),
-        ).fetchone()
-        if row:
-            return row["id"]
+        return row["terminal_trimble"]
+    # 3) fallback por matricula (referencia TMS)
+    row = conn.execute(
+        "SELECT terminal_trimble FROM vehiculos WHERE matricula=? LIMIT 1", (source,)
+    ).fetchone()
+    if row:
+        return row["terminal_trimble"]
     return None
 

@@ -123,3 +123,23 @@ def test_edicion_vehiculo_actualiza_app_terminal(scratch_db):
     finally:
         conn.close()
         main._tenant_ctx.reset(tok)
+
+
+@pytest.mark.integration
+def test_source_a_vehiculo_resuelve_por_terminal_trimble(scratch_db):
+    """El source de la traza se resuelve por terminal_trimble, no por código ni sufijo."""
+    from services.telemetria import _source_a_vehiculo
+
+    tok, conn = _conn(scratch_db)
+    try:
+        flota.add_vehiculo(Vehiculo(id="VH-010", terminal_trimble="CCV6-EUSEBIO", matricula="7000NLT", categoria="tractora"), conn=conn)
+        flota.add_vehiculo(Vehiculo(id="VH-011", terminal_trimble="APP_EUSEBIO", matricula="6090NLT", categoria="tractora"), conn=conn)
+
+        # El terminal CCV6 no debe caer en el fallback por sufijo (que lo asignaba a APP_EUSEBIO)
+        assert _source_a_vehiculo(conn, "CCV6-EUSEBIO") == "CCV6-EUSEBIO"
+        assert _source_a_vehiculo(conn, "APP_EUSEBIO") == "APP_EUSEBIO"
+        assert _source_a_vehiculo(conn, "T4U-EUSEBIO") is None  # sin vehículo con ese terminal
+        assert _source_a_vehiculo(conn, "7000NLT") == "CCV6-EUSEBIO"  # por matrícula
+    finally:
+        conn.close()
+        main._tenant_ctx.reset(tok)
