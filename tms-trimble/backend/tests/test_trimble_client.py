@@ -39,6 +39,7 @@ def test_get_client_lee_config_bd_con_tenant_none(monkeypatch):
 
 def test_get_client_fallback_env_si_bd_vacia(monkeypatch):
     _mock_db(monkeypatch, {})
+    monkeypatch.setattr(tc.config, "TMS_ENV", "dev")
     monkeypatch.setattr(tc.config, "DEFAULT_TRIMBLE_USERNAME", "u_env")
     monkeypatch.setattr(tc.config, "DEFAULT_TRIMBLE_PASSWORD", "p_env")
     monkeypatch.setattr(tc.config, "DEFAULT_TRIMBLE_CUSTOMER", "c_env")

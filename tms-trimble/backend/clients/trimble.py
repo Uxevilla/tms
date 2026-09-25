@@ -23,9 +23,14 @@ def get_client():
     else:
         with _db() as conn:
             cfg = _valores_proveedor(conn, "trimble")
-    u = cfg.get("username", "") or config.DEFAULT_TRIMBLE_USERNAME or ""
-    p = cfg.get("password", "") or config.DEFAULT_TRIMBLE_PASSWORD or ""
-    c = cfg.get("customer", "") or config.DEFAULT_TRIMBLE_CUSTOMER or ""
+    u = cfg.get("username", "") or ""
+    p = cfg.get("password", "") or ""
+    c = cfg.get("customer", "") or ""
+    # El .env solo como fallback en desarrollo; en producción, sin credenciales → 503.
+    if (config.TMS_ENV or "").lower() in ("dev", "development", "local"):
+        u = u or config.DEFAULT_TRIMBLE_USERNAME or ""
+        p = p or config.DEFAULT_TRIMBLE_PASSWORD or ""
+        c = c or config.DEFAULT_TRIMBLE_CUSTOMER or ""
     term = cfg.get("terminal", "") or config.DEFAULT_TRIMBLE_TERMINAL or ""
     if not u or not c:
         raise HTTPException(status_code=503, detail={"error": "Trimble no configurado para este cliente"})
