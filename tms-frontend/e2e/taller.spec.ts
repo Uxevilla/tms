@@ -56,12 +56,14 @@ test("planificar y luego completar editando → genera 1 gasto 622", async ({ pa
   await expect(page.getByRole("button", { name: /Nuevo mantenimiento/i })).toBeVisible();
 
   const antes = await contarGastos622("E2E-VEH2");
+  // Notas único por ejecución: evita el strict-mode (admin y dispatcher comparten BD).
+  const notas = `planificar-editar-${Date.now()}`;
 
   // 1. Planificar: crear SIN completar (sin generar gasto).
   await page.getByLabel("Vehículo", { exact: true }).selectOption("E2E-VEH2");
   await page.getByRole("button", { name: /Nuevo mantenimiento/i }).click();
   await page.getByLabel("Fecha", { exact: true }).fill("2026-09-25");
-  await page.getByLabel("Notas", { exact: true }).fill("planificar-editar-e2e");
+  await page.getByLabel("Notas", { exact: true }).fill(notas);
   await page.getByRole("button", { name: "Guardar", exact: true }).click();
 
   // Sheet cerrado + sin gasto aún.
@@ -69,7 +71,7 @@ test("planificar y luego completar editando → genera 1 gasto 622", async ({ pa
   await expect.poll(() => contarGastos622("E2E-VEH2")).toBe(antes);
 
   // 2. Editar la fila recién creada: Completado + Generar gasto.
-  await page.getByText("planificar-editar-e2e").click();
+  await page.getByText(notas).click();
   await page.getByLabel("Completado", { exact: true }).check();
   await page.getByLabel("Generar gasto", { exact: true }).check();
   await page.getByLabel("Base imponible (€)", { exact: true }).fill("150");
