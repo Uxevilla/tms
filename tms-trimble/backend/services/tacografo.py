@@ -162,10 +162,13 @@ def _chequear_conduccion_legal(viaje, row):
     """Safe-Dispatching: rechaza el despacho si el conductor del terminal no tiene tiempo legal.
 
     Usa el DSTAT (traza 82) del conductor logueado en el terminal asignado.
+    El terminal (ID del proveedor de telemetría) se resuelve internamente desde la matrícula.
     """
-    terminal = (viaje.terminal or "").strip()
+    from services.viajes import _terminal_por_matricula
+    with _db() as conn:
+        terminal = _terminal_por_matricula(conn, (viaje.matricula or "").strip())
     if not terminal:
-        return  # sin terminal asignado, no aplica
+        return  # sin tractora asignada, no aplica
     stats = _dstat_terminal(terminal)
     if not stats:
         return  # sin datos de tacógrafo (DSTAT), no se puede verificar (fail-open)

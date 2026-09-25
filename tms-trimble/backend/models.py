@@ -62,7 +62,7 @@ class ViajeRequest(BaseModel):
     conductor: str = ""
     tipo_carga: str = ""
     documentos: list["Documento"] = Field(default_factory=list)
-    terminal: str = ""
+    matricula: str = ""
     semirremolque_id: str = ""
     remolque_id: str = ""
     tramos: list[TramoRequest] = Field(default_factory=list)
@@ -111,7 +111,7 @@ class PuntoRuta(BaseModel):
 
 class RutaRequest(BaseModel):
     puntos: list[PuntoRuta]
-    terminal: str = ""
+    matricula: str = ""
     conduccion_acumulada_min: float = 0.0
 
 
@@ -134,7 +134,7 @@ class TripUpdate(BaseModel):
 
 
 class AsignarRequest(BaseModel):
-    terminal: str = ""
+    matricula: str = ""
     semirremolque_id: str = ""
     remolque_id: str = ""
     conductor: str = ""

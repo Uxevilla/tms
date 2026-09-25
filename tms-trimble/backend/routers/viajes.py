@@ -152,9 +152,9 @@ def asignar_trip(trip_id: str, req: AsignarRequest, conn = Depends(get_conn)):
         raise HTTPException(status_code=409, detail={"error": f"El viaje ya está asignado (estado: {row['estado']})"})
 
     viaje = ViajeRequest(**json.loads(row["payload"] or "{}"))
-    terminal = (req.terminal or "").strip()
-    if not terminal:
-        raise HTTPException(status_code=400, detail={"error": "Indica la tractora (terminal) para asignar."})
+    matricula = (req.matricula or "").strip()
+    if not matricula:
+        raise HTTPException(status_code=400, detail={"error": "Indica la tractora (matrícula) para asignar."})
 
     # Fusionar ediciones en línea (columnas de trips) sobre el payload original
     viaje.cliente = row["cliente"] or viaje.cliente
@@ -166,7 +166,7 @@ def asignar_trip(trip_id: str, req: AsignarRequest, conn = Depends(get_conn)):
     viaje.conductor = req.conductor or row["conductor"] or viaje.conductor or ""
     viaje.conductor_id = req.conductor_id if req.conductor_id is not None else row["conductor_id"]
 
-    viaje.terminal = terminal
+    viaje.matricula = matricula
     viaje.semirremolque_id = (req.semirremolque_id or row["semirremolque_id"] or "").strip()
     viaje.remolque_id = (req.remolque_id or row["remolque_id"] or "").strip()
     viaje.conduccion_acumulada_min = req.conduccion_acumulada_min
@@ -178,7 +178,7 @@ def asignar_trip(trip_id: str, req: AsignarRequest, conn = Depends(get_conn)):
     if not req.force:
         _chequear_conduccion_legal(viaje, row)
 
-    return _enviar_viaje(trip_id, viaje, terminal, viaje.semirremolque_id, viaje.remolque_id)
+    return _enviar_viaje(trip_id, viaje, matricula, viaje.semirremolque_id, viaje.remolque_id)
 
 
 
@@ -199,15 +199,15 @@ def create_tarifa(t: TarifaRequest, conn = Depends(get_conn)):
 @router.post("/api/trips")
 def create_trip(viaje: ViajeRequest):
     trip_id = "VIAJE-" + uuid.uuid4().hex[:10].upper()
-    terminal = (viaje.terminal or "").strip()
+    matricula = (viaje.matricula or "").strip()
     semirremolque = (viaje.semirremolque_id or "").strip()
     remolque = (viaje.remolque_id or "").strip()
 
     # Sin camión asignado → pedido (se planifica, aún no se envía a Trimble)
-    if not terminal:
+    if not matricula:
         return _crear_pedido(trip_id, viaje)
 
-    return _enviar_viaje(trip_id, viaje, terminal, semirremolque, remolque)
+    return _enviar_viaje(trip_id, viaje, matricula, semirremolque, remolque)
 
 
 
@@ -283,7 +283,7 @@ def duplicar_trip(trip_id: str):
             iva=float(row["iva"] or 21),
         )
     # Forzar sin asignar (sin vehículo ni conductor)
-    viaje.terminal = ""
+    viaje.matricula = ""
     viaje.conductor = ""
     viaje.conductor_id = None
     viaje.semirremolque_id = ""
@@ -323,17 +323,17 @@ def enviar_trip(trip_id: str, force: bool = False, conn = Depends(get_conn)):
     row = conn.execute("SELECT * FROM trips WHERE id=?", (trip_id,)).fetchone()
     if not row:
         raise HTTPException(status_code=404, detail={"error": f"Viaje {trip_id} no encontrado"})
-    terminal = (row["terminal"] or "").strip()
-    if not terminal:
-        raise HTTPException(status_code=400, detail={"error": "Asigna la tractora (terminal) antes de enviar el viaje a Trimble."})
     viaje = ViajeRequest(**json.loads(row["payload"] or "{}"))
+    matricula = (viaje.matricula or row["matricula"] or "").strip()
+    if not matricula:
+        raise HTTPException(status_code=400, detail={"error": "Asigna la tractora (matrícula) antes de enviar el viaje a Trimble."})
     # Fusionar el estado actual de la fila sobre el payload original.
     viaje.cliente = row["cliente"] or viaje.cliente
     viaje.precio = float(row["precio"] or 0)
     viaje.gastos = float(row["gastos"] or 0)
     viaje.iva = float(row["iva"] or 0)
     viaje.conductor = row["conductor"] or viaje.conductor or ""
-    viaje.terminal = terminal
+    viaje.matricula = matricula
     viaje.semirremolque_id = (row["semirremolque_id"] or "").strip()
     viaje.remolque_id = (row["remolque_id"] or "").strip()
 
@@ -341,7 +341,7 @@ def enviar_trip(trip_id: str, force: bool = False, conn = Depends(get_conn)):
     if not force:
         _chequear_conduccion_legal(viaje, row)
 
-    return _enviar_viaje(trip_id, viaje, terminal, viaje.semirremolque_id, viaje.remolque_id)
+    return _enviar_viaje(trip_id, viaje, matricula, viaje.semirremolque_id, viaje.remolque_id)
 
 
 

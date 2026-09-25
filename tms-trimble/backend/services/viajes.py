@@ -159,8 +159,25 @@ def _vehiculo_peaje_categoria(terminal):
     if not terminal:
         return "pesado4"
     with _db() as conn:
-        row = conn.execute("SELECT peaje_categoria FROM vehiculos WHERE id=?", (terminal,)).fetchone()
+        row = conn.execute(
+            "SELECT peaje_categoria FROM vehiculos WHERE terminal_trimble=? OR matricula=? LIMIT 1",
+            (terminal, terminal),
+        ).fetchone()
     return (row["peaje_categoria"] if row and row["peaje_categoria"] else "pesado4")
+
+
+def _terminal_por_matricula(conn, matricula):
+    """Resuelve el terminal_trimble (ID del proveedor de telemetría) desde la matrícula.
+
+    El viaje se asigna a la tractora por matrícula (referencia del TMS); el ID del
+    proveedor de telemetría (terminal_trimble, hoy Trimble) se gestiona internamente.
+    """
+    if not matricula:
+        return ""
+    row = conn.execute(
+        "SELECT terminal_trimble FROM vehiculos WHERE matricula=? LIMIT 1", (matricula,)
+    ).fetchone()
+    return (row["terminal_trimble"] or "") if row else ""
 
 
 def _vehiculos_en_curso(exclude_trip_id=None, conn=None):
@@ -405,10 +422,12 @@ def _crear_pedido(trip_id, viaje):
     }
 
 
-def _enviar_viaje(trip_id, viaje, terminal, semirremolque, remolque):
-    # Resolver el terminal APP (Fleet XPS) para el despacho SOAP; el T4U (`terminal`) queda
-    # para telemetría/PTV/posición. Sin APP vinculada cae al terminal APP por defecto.
+def _enviar_viaje(trip_id, viaje, matricula, semirremolque, remolque):
+    # El ID del proveedor de telemetría (terminal_trimble) se resuelve internamente
+    # desde la matrícula (referencia del TMS). El terminal APP (Fleet XPS) para el
+    # despacho SOAP se deriva del terminal_trimble.
     conn = _db()
+    terminal = _terminal_por_matricula(conn, matricula)
     soap_terminal = _terminal_app(conn, terminal)
     conn.close()
 
@@ -548,13 +567,13 @@ def _enviar_viaje(trip_id, viaje, terminal, semirremolque, remolque):
 
 
 def _terminal_app(conn, vehiculo_id):
-    """Resuelve el terminal APP (Fleet XPS) para el despacho SOAP, desde un vehículo T4U.
+    """Resuelve el terminal APP (Fleet XPS) para el despacho SOAP, desde un vehículo.
 
-    El T4U (id = matrícula) solo da telemetría/tacógrafo; los viajes y question paths
-    se envían a la APP vinculada (id con sufijo 'APP'). Si no hay APP vinculada,
-    cae al terminal APP por defecto (config.DEFAULT_TRIMBLE_TERMINAL, p. ej. 'demo').
+    El ID del proveedor de telemetría (terminal_trimble) solo da telemetría/tacógrafo;
+    los viajes y question paths se envían a la APP vinculada (id con sufijo 'APP').
+    Si no hay APP vinculada, cae al terminal APP por defecto.
     """
-    row = conn.execute("SELECT app_terminal FROM vehiculos WHERE id=?", (vehiculo_id,)).fetchone()
+    row = conn.execute("SELECT app_terminal FROM vehiculos WHERE terminal_trimble=?", (vehiculo_id,)).fetchone()
     if row and row["app_terminal"]:
         return row["app_terminal"]
     return config.DEFAULT_TRIMBLE_TERMINAL or vehiculo_id
@@ -564,7 +583,8 @@ def _vehiculo_ptv(terminal):
     """Atributos PTV del vehículo para el cálculo de peaje exacto."""
     with _db() as conn:
         row = conn.execute(
-            "SELECT ptv_profile, ejes, mma, clase_euro FROM vehiculos WHERE id=?", (terminal,)
+            "SELECT ptv_profile, ejes, mma, clase_euro FROM vehiculos WHERE terminal_trimble=? OR matricula=? LIMIT 1",
+            (terminal, terminal),
         ).fetchone()
     return {
         "ptv_profile": (row["ptv_profile"] if row and row["ptv_profile"] else "EUR_TRAILER_TRUCK"),
