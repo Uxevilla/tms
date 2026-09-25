@@ -240,15 +240,32 @@ def delete_tarifa(tarifa_id: int, conn = Depends(get_conn)):
 
 
 @router.delete("/api/trips/{trip_id}")
-def delete_trip(trip_id: str, force: bool = False, user: dict = Depends(require_role(["admin", "dispatcher"])), conn = Depends(get_conn)):
-    """Elimina un viaje. Los viajes finalizados solo puede eliminarlos un administrador.
-    Si el viaje ya está en Trimble, lo borra del servidor (removeTrips) antes de la BD."""
-    row = conn.execute("SELECT estado, terminal FROM trips WHERE id=?", (trip_id,)).fetchone()
+def delete_trip(trip_id: str, force: bool = False, motivo: str = "", user: dict = Depends(require_role(["admin", "dispatcher"])), conn = Depends(get_conn)):
+    """Elimina o anula un viaje. Los viajes finalizados solo puede eliminarlos un administrador.
+
+    Un viaje con documentos o facturado NO se borra físicamente: se ANULA (soft delete)
+    conservando documentos y mensajes (son prueba de cobro). force=True fuerza el borrado
+    físico (solo admin)."""
+    row = conn.execute("SELECT estado, terminal, factura FROM trips WHERE id=?", (trip_id,)).fetchone()
     if not row:
         raise HTTPException(status_code=404, detail={"error": f"Viaje {trip_id} no encontrado"})
     estado = (row["estado"] or "").lower()
     if estado in _ESTADOS_FINALES and user.get("rol") != "admin":
         raise HTTPException(status_code=403, detail={"error": "Solo un administrador puede eliminar un viaje finalizado."})
+    if force and user.get("rol") != "admin":
+        raise HTTPException(status_code=403, detail={"error": "Solo un administrador puede forzar el borrado físico."})
+
+    tiene_docs = conn.execute("SELECT 1 FROM files WHERE trip_id=? LIMIT 1", (trip_id,)).fetchone()
+    tiene_factura = bool(row["factura"])
+
+    if (tiene_docs or tiene_factura) and not force:
+        # Soft delete: conservar documentos y mensajes (prueba de cobro).
+        conn.execute(
+            "UPDATE trips SET anulado_at=now(), anulado_por=?, anulado_motivo=? WHERE id=?",
+            (user.get("usuario") or user.get("sub") or "", motivo or "anulado", trip_id),
+        )
+        conn.commit()
+        return {"ok": True, "trip_id": trip_id, "anulado": True}
 
     # Si estaba en el terminal, borrarlo de Trimble ANTES (si Trimble falla, la BD no cambia).
     in_trimble = estado == "enviado" or estado in ("llegada_origen", "cargando", "en_transito", "llegada_destino", "descargando")
@@ -266,7 +283,7 @@ def delete_trip(trip_id: str, force: bool = False, user: dict = Depends(require_
     # paradas y tramos se borran por ON DELETE CASCADE.
     conn.execute("DELETE FROM trips WHERE id=?", (trip_id,))
     conn.commit()
-    return {"ok": True, "trip_id": trip_id}
+    return {"ok": True, "trip_id": trip_id, "anulado": False}
 
 
 

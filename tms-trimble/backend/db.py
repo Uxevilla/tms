@@ -142,6 +142,9 @@ CREATE TABLE IF NOT EXISTS files (
     id SERIAL PRIMARY KEY, trip_id TEXT, vehiculo_id TEXT, name TEXT UNIQUE, ftype INTEGER, ftime TEXT,
     source TEXT, driver TEXT, lid TEXT, content_b64 TEXT, formato TEXT
 );
+CREATE TABLE IF NOT EXISTS documentos_auditoria (
+    id BIGSERIAL PRIMARY KEY, file_id INT, accion TEXT, usuario TEXT, detalle TEXT, creado TIMESTAMPTZ DEFAULT now()
+);
 CREATE TABLE IF NOT EXISTS mensajes (
     id TEXT PRIMARY KEY, trip_id TEXT, tipo TEXT, messagetype TEXT,
     originid TEXT, source TEXT, terminal TEXT, subject TEXT, body TEXT,
@@ -740,7 +743,8 @@ SELECT t.codigo AS id, t.id AS _pk, t.codigo,
        t.iva, t.cliente_id, t.conductor_id, t.payload, t.fecha_actualizacion,
        t.fecha_esperada_carga, t.fecha_esperada_descarga, t.referencia, t.origen_id,
        t.destino_id, t.modo_tarifa, t.tarifa_id, t.precio_unitario, t.kilos,
-       t.subcontratado, t.proveedor_id, t.coste
+       t.subcontratado, t.proveedor_id, t.coste,
+       t.anulado_at, t.anulado_por, t.anulado_motivo
 FROM operaciones.trips t;
 """
 
@@ -816,6 +820,24 @@ def _db():
             cur.execute("ALTER TABLE flota.vehiculos ADD COLUMN IF NOT EXISTS fecha_alta TEXT")
             cur.execute("ALTER TABLE flota.vehiculos ADD COLUMN IF NOT EXISTS cuota_mensual NUMERIC(12,2) DEFAULT 0")
             cur.execute("ALTER TABLE files ADD COLUMN IF NOT EXISTS vehiculo_id TEXT")
+            cur.execute("ALTER TABLE files ADD COLUMN IF NOT EXISTS estado_descarga TEXT DEFAULT 'descargado'")
+            cur.execute("ALTER TABLE files ADD COLUMN IF NOT EXISTS intentos INT DEFAULT 0")
+            cur.execute("ALTER TABLE files ADD COLUMN IF NOT EXISTS ultimo_error TEXT")
+            cur.execute("ALTER TABLE files ADD COLUMN IF NOT EXISTS task_id TEXT")
+            cur.execute("ALTER TABLE files ADD COLUMN IF NOT EXISTS mensaje_id TEXT")
+            cur.execute("ALTER TABLE files ADD COLUMN IF NOT EXISTS report_id TEXT")
+            cur.execute("ALTER TABLE files ADD COLUMN IF NOT EXISTS question_id TEXT")
+            cur.execute("ALTER TABLE files ADD COLUMN IF NOT EXISTS tipo_documento TEXT")
+            cur.execute("ALTER TABLE files ADD COLUMN IF NOT EXISTS mime TEXT")
+            cur.execute("ALTER TABLE files ADD COLUMN IF NOT EXISTS paginas INT")
+            cur.execute("ALTER TABLE files ADD COLUMN IF NOT EXISTS lat DOUBLE PRECISION")
+            cur.execute("ALTER TABLE files ADD COLUMN IF NOT EXISTS lng DOUBLE PRECISION")
+            cur.execute("ALTER TABLE files ADD COLUMN IF NOT EXISTS vinculado_por TEXT")
+            cur.execute("ALTER TABLE files ADD COLUMN IF NOT EXISTS revisado_at TIMESTAMPTZ")
+            cur.execute("ALTER TABLE files ADD COLUMN IF NOT EXISTS revisado_por TEXT")
+            cur.execute("ALTER TABLE files ADD COLUMN IF NOT EXISTS anulado_at TIMESTAMPTZ")
+            cur.execute("ALTER TABLE files ADD COLUMN IF NOT EXISTS anulado_por TEXT")
+            cur.execute("ALTER TABLE files ADD COLUMN IF NOT EXISTS anulado_motivo TEXT")
             cur.execute("ALTER TABLE finanzas.asientos ADD COLUMN IF NOT EXISTS origen_id TEXT")
             cur.execute("ALTER TABLE mensajes ADD COLUMN IF NOT EXISTS terminal TEXT")
             cur.execute("ALTER TABLE finanzas.gastos_vehiculos ADD COLUMN IF NOT EXISTS base_imponible NUMERIC(12,2) DEFAULT 0")
@@ -830,6 +852,9 @@ def _db():
             cur.execute("ALTER TABLE flota.vehiculos ADD COLUMN IF NOT EXISTS fecha_proxima_revision TEXT")
             cur.execute("ALTER TABLE operaciones.trips ADD COLUMN IF NOT EXISTS fecha_actualizacion TEXT")
             cur.execute("ALTER TABLE operaciones.trips ADD COLUMN IF NOT EXISTS fecha_esperada_carga TEXT")
+            cur.execute("ALTER TABLE operaciones.trips ADD COLUMN IF NOT EXISTS anulado_at TIMESTAMPTZ")
+            cur.execute("ALTER TABLE operaciones.trips ADD COLUMN IF NOT EXISTS anulado_por TEXT")
+            cur.execute("ALTER TABLE operaciones.trips ADD COLUMN IF NOT EXISTS anulado_motivo TEXT")
             cur.execute("ALTER TABLE operaciones.trips ADD COLUMN IF NOT EXISTS fecha_esperada_descarga TEXT")
             cur.execute("ALTER TABLE operaciones.trips ADD COLUMN IF NOT EXISTS km_vacio NUMERIC(10,1) DEFAULT 0")
             cur.execute("ALTER TABLE operaciones.trips ADD COLUMN IF NOT EXISTS semirremolque_id TEXT")

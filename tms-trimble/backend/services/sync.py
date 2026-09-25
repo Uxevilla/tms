@@ -140,23 +140,61 @@ def _parse_props(block):
     return props
 
 
-def _save_file(trip_id, name, ftype, ftime, source, driver, lid, content_b64):
-    g = _guardar_archivo(name, content_b64)
+def _save_file(trip_id, name, ftype, ftime, source, driver, lid, content_b64, error=""):
+    """Guarda un fichero descargado o registra el fallo para reintentar (nunca se descarta).
+
+    - content_b64 no vacío → estado 'descargado' (binario en disco vía _guardar_archivo).
+    - si falla (error) → estado 'error' + ultimo_error + intentos++ (se reintenta en el siguiente ciclo).
+    """
+    g = _guardar_archivo(name, content_b64) if content_b64 else None
     with _db() as conn:
         if g:
-            storage_key, sha, nbytes, _mime = g
+            storage_key, sha, nbytes, mime = g
             conn.execute(
-                "INSERT INTO files (trip_id, name, ftype, ftime, source, driver, lid, storage_key, sha256, bytes) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT (name) DO NOTHING",
-                (trip_id, name, ftype, ftime, source, driver, lid, storage_key, sha, nbytes),
+                "INSERT INTO files (trip_id, name, ftype, ftime, source, driver, lid, storage_key, sha256, bytes, mime, estado_descarga, intentos) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,'descargado',1) ON CONFLICT (name) DO UPDATE SET "
+                "estado_descarga='descargado', storage_key=EXCLUDED.storage_key, sha256=EXCLUDED.sha256, "
+                "bytes=EXCLUDED.bytes, mime=EXCLUDED.mime, intentos=files.intentos+1, ultimo_error=NULL",
+                (trip_id, name, ftype, ftime, source, driver, lid, storage_key, sha, nbytes, mime),
             )
         else:
             conn.execute(
-                "INSERT INTO files (trip_id, name, ftype, ftime, source, driver, lid, content_b64) "
-                "VALUES (?,?,?,?,?,?,?,?) ON CONFLICT (name) DO NOTHING",
-                (trip_id, name, ftype, ftime, source, driver, lid, content_b64),
+                "INSERT INTO files (trip_id, name, ftype, ftime, source, driver, lid, estado_descarga, intentos, ultimo_error) "
+                "VALUES (?,?,?,?,?,?,?,'error',1,?) ON CONFLICT (name) DO UPDATE SET "
+                "estado_descarga='error', intentos=files.intentos+1, ultimo_error=EXCLUDED.ultimo_error",
+                (trip_id, name, ftype, ftime, source, driver, lid, error or "descarga vacía"),
             )
         conn.commit()
+
+
+def _reintentar_descargas(max_intentos=5):
+    """Reintenta descargas con estado 'error' (el mark del poll ya las pasó de largo).
+
+    El pollFiles usa un cursor high-water: una descarga fallida queda ATRÁS del mark y no
+    se re-poll-ea; por eso se reintenta leyendo la tabla y re-descargando por nombre.
+    """
+    with _db() as conn:
+        rows = conn.execute(
+            "SELECT trip_id, name, ftype, ftime, source, driver, lid FROM files "
+            "WHERE estado_descarga='error' AND intentos < ? AND anulado_at IS NULL",
+            (max_intentos,),
+        ).fetchall()
+    for row in rows:
+        dl = get_client().download_file(row["name"])
+        if dl.get("ok"):
+            content = re.search(r"<return>([^<]*)</return>", dl.get("body", ""))
+            if content:
+                _save_file(row["trip_id"], row["name"], row["ftype"] or 0,
+                           row["ftime"] or "", row["source"] or "", row["driver"] or "",
+                           row["lid"] or "", content.group(1))
+                continue
+            err = "contenido vacío"
+        else:
+            fault = re.search(r"<faultstring>([^<]*)</faultstring>", dl.get("body", ""))
+            err = f"SOAP {dl.get('status')} {fault.group(1) if fault else 'sin detalle'}"
+        _save_file(row["trip_id"], row["name"], row["ftype"] or 0,
+                   row["ftime"] or "", row["source"] or "", row["driver"] or "",
+                   row["lid"] or "", "", error=err)
 
 
 def _extraer_reporte_xml(block):
@@ -455,7 +493,9 @@ def _sync_files():
         conn.commit()
         conn.close()
 
-    # 2) poll files + descarga (solo tipo 3 = documentos/escaneos del conductor)
+    # 2) poll files + descarga. Solo se descartan los de tacógrafo (0=tarjeta,1=memoria,2=accidente);
+    #    el resto (documentos/fotos/firmas de cuestionarios y mensajes) se descarga y, si falla,
+    #    queda 'error' para reintentar en el siguiente ciclo (nunca se descarta).
     fmark = _get_sync_state("files_mark") or _mark_inicial()
     for _ in range(10):
         r = get_client().poll_files(fmark)
@@ -464,7 +504,7 @@ def _sync_files():
         for block in re.findall(r"<files>(.*?)</files>", r["body"], re.S):
             name = re.search(r"<name>([^<]*)</name>", block)
             ftype = re.search(r"<type>([^<]*)</type>", block)
-            if not name or (ftype and ftype.group(1) != "3"):
+            if not name or (ftype and ftype.group(1) in ("0", "1", "2")):
                 continue
             ftime = re.search(r"<time>([^<]*)</time>", block)
             source = re.search(r"<source>([^<]*)</source>", block)
@@ -473,6 +513,13 @@ def _sync_files():
             lid = props.get("LID", "")
             trip_id = lid_map.get(lid) if lid else None
             dl = get_client().download_file(name.group(1))
+            if not dl.get("ok"):
+                fault = re.search(r"<faultstring>([^<]*)</faultstring>", dl.get("body", ""))
+                _save_file(trip_id, name.group(1), int(ftype.group(1)) if ftype else 0,
+                           ftime.group(1) if ftime else "", source.group(1) if source else "",
+                           driver.group(1) if driver else "", lid, "",
+                           error=f"SOAP {dl.get('status')} {fault.group(1) if fault else 'sin detalle'}")
+                continue
             content = re.search(r"<return>([^<]*)</return>", dl.get("body", ""))
             _save_file(
                 trip_id, name.group(1),
@@ -481,6 +528,7 @@ def _sync_files():
                 source.group(1) if source else "",
                 driver.group(1) if driver else "",
                 lid, content.group(1) if content else "",
+                error="" if content else "contenido vacío",
             )
         m = re.search(r"<mark>([^<]*)</mark>", r["body"])
         more = re.search(r"<more>([^<]*)</more>", r["body"])
@@ -489,6 +537,9 @@ def _sync_files():
         if not (more and more.group(1) == "true"):
             break
     _set_sync_state("files_mark", fmark or "")
+
+    # 3) Reintentar descargas fallidas (el mark ya pasó; re-descargar desde la tabla).
+    _reintentar_descargas()
 
 
 def _sync_mensajes():
