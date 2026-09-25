@@ -46,7 +46,7 @@ test("arrastre ok → verde → asignar → deshacer (sin llamar a /asignar)", a
 
   const pendiente = page.locator('[data-viaje-pendiente="E2E-PLAN-OK"]');
   await pendiente.waitFor({ timeout: 20_000 });
-  const fila = page.locator('[data-tractora="E2E-TRAC"]');
+  const fila = page.locator('[data-tractora="0003-TST"]');
   await fila.waitFor({ timeout: 20_000 });
 
   await arrastrar(page, pendiente, fila);
@@ -74,7 +74,7 @@ test("bloqueo (tractora solapada) → rojo → soltar → toast con motivo, sin 
 
   const pendiente = page.locator('[data-viaje-pendiente="E2E-PLAN-OK"]');
   await pendiente.waitFor({ timeout: 20_000 });
-  const filaOcupada = page.locator('[data-tractora="E2E-TRAC2"]');
+  const filaOcupada = page.locator('[data-tractora="0004-TST"]');
   await filaOcupada.waitFor({ timeout: 20_000 });
 
   await arrastrar(page, pendiente, filaOcupada);
@@ -92,7 +92,7 @@ test("aviso (ITV caducada) → ámbar → confirmación → popover", async ({ p
 
   const pendiente = page.locator('[data-viaje-pendiente="E2E-PLAN-AVISO"]');
   await pendiente.waitFor({ timeout: 20_000 });
-  const fila = page.locator('[data-tractora="E2E-TRAC"]');
+  const fila = page.locator('[data-tractora="0003-TST"]');
   await fila.waitFor({ timeout: 20_000 });
 
   await arrastrar(page, pendiente, fila);
@@ -111,8 +111,8 @@ test("reasignar un viaje no enviado a otra tractora", async ({ page }) => {
 
   const pendiente = page.locator('[data-viaje-pendiente="E2E-PLAN-OK"]');
   await pendiente.waitFor({ timeout: 20_000 });
-  const fila1 = page.locator('[data-tractora="E2E-TRAC"]');
-  const fila3 = page.locator('[data-tractora="E2E-TRAC3"]');
+  const fila1 = page.locator('[data-tractora="0003-TST"]');
+  const fila3 = page.locator('[data-tractora="0005-TST"]');
   await fila1.waitFor();
   await fila3.waitFor();
 
@@ -141,7 +141,7 @@ test("desasignar soltando en 'Pendientes'", async ({ page }) => {
 
   const pendiente = page.locator('[data-viaje-pendiente="E2E-PLAN-OK"]');
   await pendiente.waitFor({ timeout: 20_000 });
-  const fila = page.locator('[data-tractora="E2E-TRAC"]');
+  const fila = page.locator('[data-tractora="0003-TST"]');
   await fila.waitFor();
 
   // Asignar a E2E-TRAC.
@@ -176,7 +176,7 @@ test("la asignación pendiente sobrevive a un refetch y /asignar se llama una so
 
   const pendiente = page.locator('[data-viaje-pendiente="E2E-PLAN-OK"]');
   await pendiente.waitFor({ timeout: 20_000 });
-  const fila = page.locator('[data-tractora="E2E-TRAC"]');
+  const fila = page.locator('[data-tractora="0003-TST"]');
   await fila.waitFor();
 
   // Asignar (optimista → bloque + toast + temporizador de 10 s).
@@ -213,7 +213,7 @@ test("validar del popover con 500 → Asignar desactivado", async ({ page }) => 
 
   const pendiente = page.locator('[data-viaje-pendiente="E2E-PLAN-OK"]');
   await pendiente.waitFor({ timeout: 20_000 });
-  const fila = page.locator('[data-tractora="E2E-TRAC"]');
+  const fila = page.locator('[data-tractora="0003-TST"]');
   await fila.waitFor();
 
   // Arrastre: el validar del arrastre responde ok (200) → verde.

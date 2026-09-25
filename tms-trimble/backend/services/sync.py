@@ -101,7 +101,7 @@ def _sync_status():
             ).fetchone()
             if dest and dest["lat"] is not None and dest["lng"] is not None:
                 conn.execute(
-                    "UPDATE vehiculos SET last_lat=?, last_lng=? WHERE id=?",
+                    "UPDATE vehiculos SET last_lat=?, last_lng=? WHERE terminal_trimble=?",
                     (dest["lat"], dest["lng"], row["terminal"]),
                 )
     conn.commit()
@@ -430,7 +430,7 @@ def _sync_files():
                 break
         for veh, (lat, lng, ttime) in posiciones.items():
             pos_conn.execute(
-                "UPDATE vehiculos SET last_lat=?, last_lng=?, last_position_time=? WHERE id=?",
+                "UPDATE vehiculos SET last_lat=?, last_lng=?, last_position_time=? WHERE terminal_trimble=?",
                 (lat, lng, ttime, veh),
             )
         pos_conn.commit()

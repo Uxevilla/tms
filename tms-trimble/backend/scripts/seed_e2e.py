@@ -151,9 +151,9 @@ def main() -> None:
 
     # Viaje ya asignado a E2E-TRAC2 hoy (bloqueo tractora_solapada al solapar con otro viaje).
     cur.execute(
-        "INSERT INTO operaciones.trips (codigo, estado, terminal, fecha_esperada_carga, fecha_esperada_descarga, origen, destino) "
-        "VALUES ('E2E-PLAN-SOLAP', 'sin_asignar', 'E2E-TRAC2', %s, %s, 'Madrid', 'Valencia') "
-        "ON CONFLICT (codigo) DO UPDATE SET terminal='E2E-TRAC2', fecha_esperada_carga=EXCLUDED.fecha_esperada_carga, fecha_esperada_descarga=EXCLUDED.fecha_esperada_descarga",
+        "INSERT INTO operaciones.trips (codigo, estado, matricula, fecha_esperada_carga, fecha_esperada_descarga, origen, destino) "
+        "VALUES ('E2E-PLAN-SOLAP', 'sin_asignar', '0004-TST', %s, %s, 'Madrid', 'Valencia') "
+        "ON CONFLICT (codigo) DO UPDATE SET matricula='0004-TST', fecha_esperada_carga=EXCLUDED.fecha_esperada_carga, fecha_esperada_descarga=EXCLUDED.fecha_esperada_descarga",
         (f"{hoy}T09:00", f"{hoy}T11:00"),
     )
 
@@ -161,7 +161,7 @@ def main() -> None:
     cur.execute(
         "INSERT INTO operaciones.trips (codigo, estado, fecha_esperada_carga, fecha_esperada_descarga, origen, destino, kilos) "
         "VALUES ('E2E-PLAN-OK', 'sin_asignar', %s, %s, 'Madrid', 'Barcelona', 0) "
-        "ON CONFLICT (codigo) DO UPDATE SET terminal=NULL, semirremolque_id=NULL, remolque_id=NULL, fecha_esperada_carga=EXCLUDED.fecha_esperada_carga, fecha_esperada_descarga=EXCLUDED.fecha_esperada_descarga",
+        "ON CONFLICT (codigo) DO UPDATE SET matricula=NULL, semirremolque_id=NULL, remolque_id=NULL, fecha_esperada_carga=EXCLUDED.fecha_esperada_carga, fecha_esperada_descarga=EXCLUDED.fecha_esperada_descarga",
         (f"{hoy}T10:00", f"{hoy}T12:00"),
     )
 
@@ -169,7 +169,7 @@ def main() -> None:
     cur.execute(
         "INSERT INTO operaciones.trips (codigo, estado, semirremolque_id, fecha_esperada_carga, fecha_esperada_descarga, origen, destino) "
         "VALUES ('E2E-PLAN-AVISO', 'sin_asignar', 'E2E-SEMI-OLD', %s, %s, 'Madrid', 'Sevilla') "
-        "ON CONFLICT (codigo) DO UPDATE SET terminal=NULL, semirremolque_id='E2E-SEMI-OLD', fecha_esperada_carga=EXCLUDED.fecha_esperada_carga, fecha_esperada_descarga=EXCLUDED.fecha_esperada_descarga",
+        "ON CONFLICT (codigo) DO UPDATE SET matricula=NULL, semirremolque_id='E2E-SEMI-OLD', fecha_esperada_carga=EXCLUDED.fecha_esperada_carga, fecha_esperada_descarga=EXCLUDED.fecha_esperada_descarga",
         (f"{hoy}T14:00", f"{hoy}T16:00"),
     )
 
@@ -177,9 +177,26 @@ def main() -> None:
     cur.execute(
         "INSERT INTO operaciones.trips (codigo, estado, fecha_esperada_carga, fecha_esperada_descarga, origen, destino) "
         "VALUES ('E2E-PLAN-OTRO', 'sin_asignar', %s, %s, 'Madrid', 'Bilbao') "
-        "ON CONFLICT (codigo) DO UPDATE SET terminal=NULL, fecha_esperada_carga=EXCLUDED.fecha_esperada_carga, fecha_esperada_descarga=EXCLUDED.fecha_esperada_descarga",
+        "ON CONFLICT (codigo) DO UPDATE SET matricula=NULL, fecha_esperada_carga=EXCLUDED.fecha_esperada_carga, fecha_esperada_descarga=EXCLUDED.fecha_esperada_descarga",
         (f"{ayer_r}T08:00", f"{ayer_r}T20:00"),
     )
+
+    # Fase 4 — cliente + direcciones para el e2e de "crear viaje de 2 paradas con teclado".
+    # Ciudades únicas (E2EORIGEN/E2EDESTINO/…) para que el viaje creado sea identificable en la lista.
+    cur.execute("SELECT 1 FROM clientes WHERE cif = 'E2E00000A' LIMIT 1")
+    if not cur.fetchone():
+        cur.execute("INSERT INTO clientes (nombre, cif, direccion, poblacion, cp) VALUES ('CLI-E2E', 'E2E00000A', 'Calle Test 1', 'E2EORIGEN', '28001')")
+    cur.execute("SELECT 1 FROM direcciones WHERE nombre = 'DIR-E2E-ORIGEN' LIMIT 1")
+    if not cur.fetchone():
+        cur.execute("INSERT INTO direcciones (nombre, empresa, ciudad, lat, lng) VALUES ('DIR-E2E-ORIGEN', 'CLI-E2E', 'E2EORIGEN', 40.4, -3.7)")
+        cur.execute("INSERT INTO direcciones (nombre, empresa, ciudad, lat, lng) VALUES ('DIR-E2E-PARADA1', 'CLI-E2E', 'E2EPARADA1', 41.65, -0.88)")
+        cur.execute("INSERT INTO direcciones (nombre, empresa, ciudad, lat, lng) VALUES ('DIR-E2E-PARADA2', 'CLI-E2E', 'E2EPARADA2', 41.62, 0.62)")
+        cur.execute("INSERT INTO direcciones (nombre, empresa, ciudad, lat, lng) VALUES ('DIR-E2E-DESTINO', 'CLI-E2E', 'E2EDESTINO', 41.39, 2.17)")
+    else:
+        cur.execute("UPDATE direcciones SET ciudad='E2EORIGEN' WHERE nombre='DIR-E2E-ORIGEN'")
+        cur.execute("UPDATE direcciones SET ciudad='E2EPARADA1' WHERE nombre='DIR-E2E-PARADA1'")
+        cur.execute("UPDATE direcciones SET ciudad='E2EPARADA2' WHERE nombre='DIR-E2E-PARADA2'")
+        cur.execute("UPDATE direcciones SET ciudad='E2EDESTINO' WHERE nombre='DIR-E2E-DESTINO'")
 
     conn.close()
     print("seed e2e OK")

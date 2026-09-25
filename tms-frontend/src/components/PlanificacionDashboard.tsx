@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useSearch } from "@tanstack/react-router";
 import { CalendarDays, CalendarRange, ChevronLeft, ChevronRight, Undo2, X, AlertTriangle } from "lucide-react";
 
 import { api } from "@/api";
@@ -56,6 +57,7 @@ function fmtHora(iso: string): string {
 
 export function PlanificacionDashboard() {
   const qc = useQueryClient();
+  const { viaje: viajeSeleccionado } = useSearch({ from: "/app/planificacion" });
   const [vista, setVista] = useState<Vista>("dia");
   const [pxHora, setPxHora] = useState(48);
   const [anchor, setAnchor] = useState(() => {
@@ -90,18 +92,18 @@ export function PlanificacionDashboard() {
   // Asignaciones pendientes (ventana de deshacer / envío en curso): estado APARTE que se aplica
   // ENCIMA de plan.data con useMemo. Así un refetch (WS o refetchInterval) no devuelve el viaje
   // a Pendientes mientras el envío está pendiente (no se toca la caché).
-  const [enCurso, setEnCurso] = useState<Record<string, { terminal: string; semirremolque_id: string; conductor_id: number | null }>>({});
+  const [enCurso, setEnCurso] = useState<Record<string, { matricula: string; semirremolque_id: string; conductor_id: number | null }>>({});
 
   // Aplicar las asignaciones en curso ENCIMA de los datos del servidor (sin tocar la caché).
   const lista = useMemo(() => {
     if (Object.keys(enCurso).length === 0) return listaBase;
     return listaBase.map((v) => {
       const pend = enCurso[v.id];
-      return pend ? { ...v, terminal: pend.terminal, semirremolque_id: pend.semirremolque_id, conductor_id: pend.conductor_id } : v;
+      return pend ? { ...v, matricula: pend.matricula, semirremolque_id: pend.semirremolque_id, conductor_id: pend.conductor_id } : v;
     });
   }, [listaBase, enCurso]);
-  const pendientes = useMemo(() => lista.filter((v) => !v.terminal), [lista]);
-  const asignados = useMemo(() => lista.filter((v) => !!v.terminal), [lista]);
+  const pendientes = useMemo(() => lista.filter((v) => !v.matricula), [lista]);
+  const asignados = useMemo(() => lista.filter((v) => !!v.matricula), [lista]);
 
   const semirremolques = useQuery({
     queryKey: ["planificacion-semirremolques"],
@@ -163,7 +165,7 @@ export function PlanificacionDashboard() {
         return await api<ValidacionResultado>(REST_PLANIFICACION_VALIDAR, {
           method: "POST",
           body: JSON.stringify({
-            trip_id: v.id, terminal: tractora,
+            trip_id: v.id, matricula: tractora,
             semirremolque_id: semi, remolque_id: v.remolque_id,
             conductor_id: cond, inicio: v.inicio, fin: v.fin,
             kilos: v.kilos, palets: v.palets,
@@ -216,7 +218,7 @@ export function PlanificacionDashboard() {
         await api(REST_ASIGNAR(p.v.id), {
           method: "POST",
           body: JSON.stringify({
-            terminal: p.tractora, semirremolque_id: p.semi, remolque_id: "",
+            matricula: p.tractora, semirremolque_id: p.semi, remolque_id: "",
             conductor: p.conductorNombre, conductor_id: p.cond,
           }),
         });
@@ -263,7 +265,7 @@ export function PlanificacionDashboard() {
       }
       const conductorNombre = conductores.data?.find((c) => c.id === cond)?.nombre ?? "";
       // Optimista en estado aparte (no en la caché): el viaje pasa a la tractora al instante.
-      setEnCurso((cur) => ({ ...cur, [v.id]: { terminal: tractora, semirremolque_id: semi, conductor_id: cond } }));
+      setEnCurso((cur) => ({ ...cur, [v.id]: { matricula: tractora, semirremolque_id: semi, conductor_id: cond } }));
       setPopover(null);
       const pendiente: EnvioPendiente = { timer: 0, v, tractora, semi, cond, conductorNombre };
       pendiente.timer = window.setTimeout(() => enviar(pendiente), 10000);
@@ -336,7 +338,7 @@ export function PlanificacionDashboard() {
       const el = document.elementFromPoint(e.clientX, e.clientY)?.closest?.("[data-tractora]") as HTMLElement | null;
       const tid = el?.getAttribute("data-tractora") ?? null;
       if (v) {
-        if (enPendientes && v.terminal) desasignar(v);
+        if (enPendientes && v.matricula) desasignar(v);
         else if (tid) decidirSoltar(v, tid, e.clientX, e.clientY);
       }
       arrastreRef.current = null;
@@ -444,7 +446,7 @@ export function PlanificacionDashboard() {
                 key={v.id}
                 data-viaje-pendiente={v.id}
                 onPointerDown={(e) => { e.preventDefault(); iniciarArrastre(v); }}
-                className="mb-1.5 cursor-grab select-none rounded-md border bg-card p-2 shadow-sm active:cursor-grabbing"
+                className={`mb-1.5 cursor-grab select-none rounded-md border bg-card p-2 shadow-sm active:cursor-grabbing ${v.id === viajeSeleccionado ? "ring-2 ring-primary" : ""}`}
                 style={{ pointerEvents: arrastre?.id === v.id ? "none" : undefined }}
               >
                 <div className="truncate text-xs font-medium">{v.id}</div>
@@ -473,9 +475,9 @@ export function PlanificacionDashboard() {
             </div>
 
             {tractoras.map((t) => {
-              const viajesDeTractora = asignados.filter((v) => v.terminal === t.id);
+              const viajesDeTractora = asignados.filter((v) => v.matricula === t.matricula);
               return (
-                <div key={t.id} data-tractora={t.id} className={`flex border-b transition-colors ${sobreTractora === t.id ? colorValidacion : ""}`} title={sobreTractora === t.id ? tooltipValidacion : undefined}>
+                <div key={t.matricula} data-tractora={t.matricula} className={`flex border-b transition-colors ${sobreTractora === t.matricula ? colorValidacion : ""}`} title={sobreTractora === t.matricula ? tooltipValidacion : undefined}>
                   <div className="flex w-40 shrink-0 flex-col justify-center px-3">
                     <div className="truncate text-xs font-semibold">{t.matricula || t.id}</div>
                     <div className="text-[10px] text-muted-foreground">{viajesDeTractora.length} viaje(s)</div>
@@ -578,7 +580,7 @@ function PopoverAsignacion({ popover, semirremolques, conductores, viajes, valid
   // Preseleccionar el último semirremolque/conductor usado con esa tractora.
   const ultimo = useMemo(() => {
     const usados = viajes
-      .filter((v) => v.terminal === popover.tractora)
+      .filter((v) => v.matricula === popover.tractora)
       .sort((a, b) => (b.inicio || "").localeCompare(a.inicio || ""));
     return { semi: usados.find((v) => v.semirremolque_id)?.semirremolque_id ?? "", cond: usados.find((v) => v.conductor_id)?.conductor_id ?? null };
   }, [viajes, popover.tractora]);

@@ -103,7 +103,7 @@ def planificacion(desde: str = "", hasta: str = "", conn=Depends(get_conn)):
 
 class ValidarRequest(BaseModel):
     trip_id: str = ""
-    terminal: str = ""            # tractora destino
+    matricula: str = ""            # tractora destino (referencia del TMS)
     semirremolque_id: str = ""
     remolque_id: str = ""
     conductor_id: Optional[int] = None
@@ -112,7 +112,7 @@ class ValidarRequest(BaseModel):
     kilos: float = 0.0
     palets: int = 0
 
-    @field_validator("trip_id", "terminal", "semirremolque_id", "remolque_id", "inicio", "fin", mode="before")
+    @field_validator("trip_id", "matricula", "semirremolque_id", "remolque_id", "inicio", "fin", mode="before")
     @classmethod
     def _nulo_a_vacio(cls, v):
         return "" if v is None else v
@@ -133,7 +133,7 @@ def validar(req: ValidarRequest, conn=Depends(get_conn)):
     """Devuelve {ok, bloqueos, avisos} para la asignación propuesta. NO asigna."""
     bloqueos: list[dict] = []
     avisos: list[dict] = []
-    terminal = _fecha(req.terminal)
+    terminal = _fecha(req.matricula)
 
     # ---- BLOQUEO 1: remolque/semirremolque ocupado en un viaje no finalizado ----
     remolques_ocupados = _vehiculos_en_curso(exclude_trip_id=req.trip_id or None)
@@ -146,7 +146,7 @@ def validar(req: ValidarRequest, conn=Depends(get_conn)):
     if terminal and req.inicio and req.fin:
         otros = conn.execute(
             f"SELECT id, fecha_esperada_carga, fecha_esperada_descarga FROM trips "
-            f"WHERE terminal = ? AND id != ? AND COALESCE(estado,'') NOT IN {_ESTADOS_FINALES_SQL}",
+            f"WHERE matricula = ? AND id != ? AND COALESCE(estado,'') NOT IN {_ESTADOS_FINALES_SQL}",
             (terminal, req.trip_id or ""),
         ).fetchall()
         for o in otros:
@@ -169,7 +169,10 @@ def validar(req: ValidarRequest, conn=Depends(get_conn)):
 
     # ---- AVISO 1: conducción legal ajustada (tacógrafo, reutiliza _dstat_terminal) ----
     if terminal:
-        stats = _dstat_terminal(terminal)
+        # Resuelve el terminal_trimble (ID del proveedor de telemetría) desde la matrícula.
+        vrow = conn.execute("SELECT terminal_trimble FROM vehiculos WHERE matricula=? LIMIT 1", (terminal,)).fetchone()
+        ttrim = (vrow["terminal_trimble"] if vrow and vrow["terminal_trimble"] else terminal)
+        stats = _dstat_terminal(ttrim)
         if stats and req.fin:
             # Duración estimada del viaje: de la ventana o del tiempo PTV (no llega aquí; usamos la ventana).
             duracion_min = 0.0
@@ -199,8 +202,9 @@ def validar(req: ValidarRequest, conn=Depends(get_conn)):
     ids_a_revisar = [i for i in (terminal, _fecha(req.semirremolque_id)) if i]
     for vid in ids_a_revisar:
         vr = conn.execute(
-            "SELECT matricula, fecha_caducidad_itv, fecha_caducidad_seguro FROM vehiculos WHERE id = ?",
-            (vid,),
+            "SELECT matricula, fecha_caducidad_itv, fecha_caducidad_seguro FROM vehiculos "
+            "WHERE matricula = ? OR codigo = ? OR terminal_trimble = ? LIMIT 1",
+            (vid, vid, vid),
         ).fetchone()
         if not vr:
             continue
@@ -213,7 +217,8 @@ def validar(req: ValidarRequest, conn=Depends(get_conn)):
     semi = _fecha(req.semirremolque_id)
     if semi:
         cap = conn.execute(
-            "SELECT matricula, capacidad_peso, capacidad_palets FROM vehiculos WHERE id = ?", (semi,),
+            "SELECT matricula, capacidad_peso, capacidad_palets FROM vehiculos "
+            "WHERE matricula = ? OR codigo = ? OR terminal_trimble = ? LIMIT 1", (semi, semi, semi),
         ).fetchone()
         if cap:
             if float(cap["capacidad_peso"] or 0) > 0 and req.kilos > float(cap["capacidad_peso"]):

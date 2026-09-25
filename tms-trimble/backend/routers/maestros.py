@@ -104,7 +104,6 @@ def buscar_direcciones(q: str = "", conn = Depends(get_conn)):
     """Buscador de origen/destino: primero maestros (direcciones + clientes), luego Photon (externo)."""
     q = (q or "").strip()
     if not q:
-        conn = _db()
         rows = conn.execute("SELECT * FROM direcciones ORDER BY ciudad, nombre LIMIT 20").fetchall()
         return {"sugerencias": [_direccion_dict(r) for r in rows]}
 

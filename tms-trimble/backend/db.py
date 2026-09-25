@@ -757,6 +757,7 @@ def _pool_for(dbname):
                 2, 40,
                 host=config.DB_HOST, port=config.DB_PORT, dbname=dbname,
                 user=config.DB_USER, password=config.DB_PASSWORD,
+                options="-c statement_timeout=30000",
             )
             _pools[dbname] = p
         return p
