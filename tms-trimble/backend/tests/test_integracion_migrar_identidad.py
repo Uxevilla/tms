@@ -42,15 +42,25 @@ def test_matricula_ambigua_no_se_toca(scratch_db, capsys):
             "VALUES ('VH-B', 'VH-B', 'VH-B', 'DUP-1', 'tractora', false)")
         # Viaje con terminal = matrícula (no el codigo): referencia ambigua.
         cur.execute("INSERT INTO operaciones.trips (codigo, estado, terminal) VALUES ('T-DUP', 'sin_asignar', 'DUP-1')")
+        # Mantenimiento con vehiculo_id = matrícula ambigua.
+        cur.execute(
+            "INSERT INTO flota.mantenimientos (vehiculo_id, tipo, fecha, km, coste) "
+            "VALUES ('DUP-1', 'revision', '2026-01-01', 0, 0)"
+        )
 
         migrar._migrar(scratch_db, dry_run=False, backup_ok=True)
 
         # El viaje NO se toca: la matrícula es ambigua entre 2 vehículos.
         cur.execute("SELECT terminal FROM operaciones.trips WHERE codigo='T-DUP'")
         assert cur.fetchone()[0] == "DUP-1"
+        # El mantenimiento NO se toca.
+        cur.execute("SELECT vehiculo_id FROM flota.mantenimientos WHERE vehiculo_id='DUP-1'")
+        assert cur.fetchone()[0] == "DUP-1"
 
-        # Y aparece en el informe de ambiguos.
-        assert "T-DUP" in capsys.readouterr().out
+        # Ambos aparecen en el informe de ambiguos ([1] viajes y [2] mantenimientos).
+        out = capsys.readouterr().out
+        assert "T-DUP" in out
+        assert "mantenimientos con matrícula ambigua" in out and "DUP-1" in out
     finally:
         cur.close()
         conn.close()
