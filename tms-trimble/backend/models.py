@@ -271,6 +271,7 @@ class Conductor(BaseModel):
 
 class Vehiculo(BaseModel):
     id: str = ""
+    terminal_trimble: str = ""
     categoria: str = "tractora"
     matricula: str = ""
     marca: str = ""

@@ -23,6 +23,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "./ui/sheet";
 // ------------------------------------------------------------------ tipos
 interface Vehiculo {
   id: string;
+  terminal_trimble?: string;
   categoria: string;
   matricula: string;
   marca: string;
@@ -55,7 +56,8 @@ const TENENCIAS = ["Propiedad", "Renting", "Leasing"] as const;
 
 // ------------------------------------------------------------------ formulario
 const vehiculoSchema = z.object({
-  id: z.string().trim().min(1, "Requerido (referencia Trimble)"),
+  id: z.string().trim().min(1, "Requerido (referencia interna)"),
+  terminal_trimble: z.string().trim(),
   matricula: z.string().trim().min(1, "Requerido"),
   categoria: z.enum(CATEGORIAS),
   marca: z.string().trim(),
@@ -78,6 +80,7 @@ type VehiculoForm = z.infer<typeof vehiculoSchema>;
 
 const valoresPorDefecto: VehiculoForm = {
   id: "",
+  terminal_trimble: "",
   matricula: "",
   categoria: "tractora",
   marca: "",
@@ -120,6 +123,7 @@ export function VehiculosPage() {
     mutationFn: async ({ editar, valores }: { editar: Vehiculo | null; valores: VehiculoForm }) => {
       if (editar) {
         const body = {
+          terminal_trimble: valores.terminal_trimble,
           fecha_caducidad_itv: valores.fecha_caducidad_itv,
           seguro_compania: valores.seguro_compania,
           fecha_caducidad_seguro: valores.fecha_caducidad_seguro,
@@ -136,6 +140,7 @@ export function VehiculosPage() {
       }
       const body = {
         id: valores.id,
+        terminal_trimble: valores.terminal_trimble,
         matricula: valores.matricula,
         categoria: valores.categoria,
         marca: valores.marca,
@@ -240,6 +245,7 @@ export function VehiculosPage() {
               form.reset({
                 ...valoresPorDefecto,
                 id: row.original.id,
+                terminal_trimble: row.original.terminal_trimble ?? "",
                 matricula: row.original.matricula,
                 categoria: (row.original.categoria as VehiculoForm["categoria"]) ?? "tractora",
                 marca: row.original.marca,
@@ -355,8 +361,8 @@ export function VehiculosPage() {
             {!editando && (
               <div className="grid grid-cols-2 gap-3">
                 <div className="flex flex-col gap-1.5">
-                  <Label htmlFor="id">Referencia Trimble</Label>
-                  <Input id="id" placeholder="ID del terminal" {...form.register("id")} />
+                  <Label htmlFor="id">Código interno</Label>
+                  <Input id="id" placeholder="Ej: VH-001" {...form.register("id")} />
                   {form.formState.errors.id && (
                     <span className="text-xs text-red-600">{form.formState.errors.id.message}</span>
                   )}
@@ -406,6 +412,19 @@ export function VehiculosPage() {
                 </div>
               </div>
             )}
+
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="terminal_trimble">ID de telemetría (Trimble)</Label>
+              <Input
+                id="terminal_trimble"
+                placeholder="ID del terminal en el proveedor de telemetría"
+                {...form.register("terminal_trimble")}
+              />
+              <span className="text-xs text-slate-400">
+                Identifica el vehículo en el proveedor de telemetría (hoy Trimble). Distinto de la
+                matrícula, que es la referencia del vehículo en el TMS.
+              </span>
+            </div>
 
             <div className="grid grid-cols-2 gap-3">
               <div className="flex flex-col gap-1.5">

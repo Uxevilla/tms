@@ -81,12 +81,12 @@ def add_vehiculo(v: Vehiculo, conn = Depends(get_conn)):
     if (v.tipo_tenencia in ("Renting", "Leasing") or coste > 0) and not v.proveedor_id:
         raise HTTPException(status_code=400, detail={"error": "Indica el proveedor (proveedor_id) para este vehículo."})
     conn.execute(
-        "INSERT INTO flota.vehiculos (codigo, categoria, matricula, marca, modelo, anno, itv, seguro, peaje_categoria, "
+        "INSERT INTO flota.vehiculos (codigo, terminal_trimble, categoria, matricula, marca, modelo, anno, itv, seguro, peaje_categoria, "
         "ptv_profile, ejes, mma, clase_euro, capacidad_peso, capacidad_palets, "
         "coste_adquisicion, fecha_adquisicion, vida_util, valor_residual, "
         "fecha_caducidad_itv, seguro_compania, fecha_caducidad_seguro, tipo_tenencia, proveedor_id, fecha_alta, cuota_mensual) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
-        "ON CONFLICT (codigo) DO UPDATE SET categoria=EXCLUDED.categoria, matricula=EXCLUDED.matricula, marca=EXCLUDED.marca, "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
+        "ON CONFLICT (codigo) DO UPDATE SET terminal_trimble=EXCLUDED.terminal_trimble, categoria=EXCLUDED.categoria, matricula=EXCLUDED.matricula, marca=EXCLUDED.marca, "
         "modelo=EXCLUDED.modelo, anno=EXCLUDED.anno, itv=EXCLUDED.itv, seguro=EXCLUDED.seguro, "
         "peaje_categoria=EXCLUDED.peaje_categoria, ptv_profile=EXCLUDED.ptv_profile, "
         "ejes=EXCLUDED.ejes, mma=EXCLUDED.mma, clase_euro=EXCLUDED.clase_euro, "
@@ -96,7 +96,7 @@ def add_vehiculo(v: Vehiculo, conn = Depends(get_conn)):
         "fecha_caducidad_itv=EXCLUDED.fecha_caducidad_itv, seguro_compania=EXCLUDED.seguro_compania, "
         "fecha_caducidad_seguro=EXCLUDED.fecha_caducidad_seguro, tipo_tenencia=EXCLUDED.tipo_tenencia, "
         "proveedor_id=EXCLUDED.proveedor_id, fecha_alta=EXCLUDED.fecha_alta, cuota_mensual=EXCLUDED.cuota_mensual",
-        (v.id, v.categoria, v.matricula, v.marca, v.modelo, v.anno, v.itv, v.seguro, v.peaje_categoria,
+        (v.id, v.terminal_trimble, v.categoria, v.matricula, v.marca, v.modelo, v.anno, v.itv, v.seguro, v.peaje_categoria,
          v.ptv_profile, v.ejes, v.mma, v.clase_euro, v.capacidad_peso, v.capacidad_palets,
          v.coste_adquisicion, v.fecha_adquisicion, v.vida_util, v.valor_residual,
          v.fecha_caducidad_itv, v.seguro_compania, v.fecha_caducidad_seguro, v.tipo_tenencia, v.proveedor_id, v.fecha_alta, v.cuota_mensual),
@@ -627,7 +627,7 @@ def upd_mantenimiento_campos(mid: int, body: dict, conn = Depends(get_conn)):
 @router.patch("/api/vehiculos/{veh_id}")
 def upd_vehiculo(veh_id: str, body: dict, conn = Depends(get_conn)):
     """Edita datos técnicos y costes fijos de un vehículo (ITV, seguro, costes...)."""
-    allow = ("itv", "seguro", "coste_adquisicion", "valor_residual", "vida_util",
+    allow = ("terminal_trimble", "itv", "seguro", "coste_adquisicion", "valor_residual", "vida_util",
              "clase_euro", "capacidad_peso", "capacidad_palets", "mma", "ejes",
              "fecha_caducidad_itv", "seguro_compania", "fecha_caducidad_seguro",
              "tipo_tenencia", "proveedor_id", "fecha_alta", "cuota_mensual", "fecha_proxima_revision")
