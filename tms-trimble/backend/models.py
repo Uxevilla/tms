@@ -298,6 +298,7 @@ class Vehiculo(BaseModel):
     fecha_alta: str = ""
     cuota_mensual: float = 0.0
     fecha_proxima_revision: str = ""
+    app_terminal: str = ""
 
 
 class DireccionMaestro(BaseModel):

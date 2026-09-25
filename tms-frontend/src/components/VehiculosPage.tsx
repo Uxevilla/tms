@@ -24,6 +24,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "./ui/sheet";
 interface Vehiculo {
   id: string;
   terminal_trimble?: string;
+  app_terminal?: string;
   categoria: string;
   matricula: string;
   marca: string;
@@ -58,6 +59,7 @@ const TENENCIAS = ["Propiedad", "Renting", "Leasing"] as const;
 const vehiculoSchema = z.object({
   id: z.string().trim().min(1, "Requerido (referencia interna)"),
   terminal_trimble: z.string().trim(),
+  app_terminal: z.string().trim(),
   matricula: z.string().trim().min(1, "Requerido"),
   categoria: z.enum(CATEGORIAS),
   marca: z.string().trim(),
@@ -81,6 +83,7 @@ type VehiculoForm = z.infer<typeof vehiculoSchema>;
 const valoresPorDefecto: VehiculoForm = {
   id: "",
   terminal_trimble: "",
+  app_terminal: "",
   matricula: "",
   categoria: "tractora",
   marca: "",
@@ -141,6 +144,7 @@ export function VehiculosPage() {
       const body = {
         id: valores.id,
         terminal_trimble: valores.terminal_trimble,
+        app_terminal: valores.app_terminal,
         matricula: valores.matricula,
         categoria: valores.categoria,
         marca: valores.marca,
@@ -425,6 +429,21 @@ export function VehiculosPage() {
                 matrícula, que es la referencia del vehículo en el TMS.
               </span>
             </div>
+
+            {!editando && (
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="app_terminal">Terminal APP (Fleet XPS)</Label>
+                <Input
+                  id="app_terminal"
+                  placeholder="ID de la app del conductor en Trimble"
+                  {...form.register("app_terminal")}
+                />
+                <span className="text-xs text-slate-400">
+                  Terminal donde el conductor recibe el viaje y los formularios. Si se deja vacío se
+                  usa el terminal por defecto.
+                </span>
+              </div>
+            )}
 
             <div className="grid grid-cols-2 gap-3">
               <div className="flex flex-col gap-1.5">

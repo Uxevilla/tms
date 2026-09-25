@@ -79,3 +79,47 @@ def test_edicion_vehiculo_actualiza_terminal_trimble(scratch_db):
     finally:
         conn.close()
         main._tenant_ctx.reset(tok)
+
+
+@pytest.mark.integration
+def test_alta_vehiculo_guarda_app_terminal(scratch_db):
+    """El terminal APP (Fleet XPS) se guarda en el alta (POST)."""
+    tok, conn = _conn(scratch_db)
+    try:
+        v = Vehiculo(
+            id="VH-004",
+            terminal_trimble="TRIMBLE-124",
+            app_terminal="APP-CONDUCTOR-1",
+            matricula="1111-AAA",
+            categoria="tractora",
+        )
+        flota.add_vehiculo(v, conn=conn)
+
+        row = conn.execute(
+            "SELECT terminal_trimble, app_terminal FROM flota.vehiculos WHERE codigo = 'VH-004'"
+        ).fetchone()
+        assert row is not None
+        assert row["app_terminal"] == "APP-CONDUCTOR-1", "el terminal APP debe guardarse en el alta"
+    finally:
+        conn.close()
+        main._tenant_ctx.reset(tok)
+
+
+@pytest.mark.integration
+def test_app_terminal_no_se_edita_por_patch(scratch_db):
+    """El terminal APP es de alta: el PATCH no debe tocarlo (solo en la ficha de alta)."""
+    tok, conn = _conn(scratch_db)
+    try:
+        conn.execute(
+            "INSERT INTO flota.vehiculos (codigo, terminal_trimble, matricula, app_terminal, activo) "
+            "VALUES ('VH-005', 'TRIMBLE-125', '2222-BBB', 'APP-ORIGINAL', true)"
+        )
+        flota.upd_vehiculo("VH-005", {"app_terminal": "APP-CAMBIADA"}, conn=conn)
+
+        row = conn.execute(
+            "SELECT app_terminal FROM flota.vehiculos WHERE codigo = 'VH-005'"
+        ).fetchone()
+        assert row["app_terminal"] == "APP-ORIGINAL", "el PATCH no debe permitir editar el terminal APP"
+    finally:
+        conn.close()
+        main._tenant_ctx.reset(tok)

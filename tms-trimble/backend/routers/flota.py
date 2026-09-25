@@ -84,8 +84,8 @@ def add_vehiculo(v: Vehiculo, conn = Depends(get_conn)):
         "INSERT INTO flota.vehiculos (codigo, terminal_trimble, categoria, matricula, marca, modelo, anno, itv, seguro, peaje_categoria, "
         "ptv_profile, ejes, mma, clase_euro, capacidad_peso, capacidad_palets, "
         "coste_adquisicion, fecha_adquisicion, vida_util, valor_residual, "
-        "fecha_caducidad_itv, seguro_compania, fecha_caducidad_seguro, tipo_tenencia, proveedor_id, fecha_alta, cuota_mensual) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
+        "fecha_caducidad_itv, seguro_compania, fecha_caducidad_seguro, tipo_tenencia, proveedor_id, fecha_alta, cuota_mensual, app_terminal) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
         "ON CONFLICT (codigo) DO UPDATE SET terminal_trimble=EXCLUDED.terminal_trimble, categoria=EXCLUDED.categoria, matricula=EXCLUDED.matricula, marca=EXCLUDED.marca, "
         "modelo=EXCLUDED.modelo, anno=EXCLUDED.anno, itv=EXCLUDED.itv, seguro=EXCLUDED.seguro, "
         "peaje_categoria=EXCLUDED.peaje_categoria, ptv_profile=EXCLUDED.ptv_profile, "
@@ -95,11 +95,11 @@ def add_vehiculo(v: Vehiculo, conn = Depends(get_conn)):
         "vida_util=EXCLUDED.vida_util, valor_residual=EXCLUDED.valor_residual, "
         "fecha_caducidad_itv=EXCLUDED.fecha_caducidad_itv, seguro_compania=EXCLUDED.seguro_compania, "
         "fecha_caducidad_seguro=EXCLUDED.fecha_caducidad_seguro, tipo_tenencia=EXCLUDED.tipo_tenencia, "
-        "proveedor_id=EXCLUDED.proveedor_id, fecha_alta=EXCLUDED.fecha_alta, cuota_mensual=EXCLUDED.cuota_mensual",
+        "proveedor_id=EXCLUDED.proveedor_id, fecha_alta=EXCLUDED.fecha_alta, cuota_mensual=EXCLUDED.cuota_mensual, app_terminal=EXCLUDED.app_terminal",
         (v.id, v.terminal_trimble, v.categoria, v.matricula, v.marca, v.modelo, v.anno, v.itv, v.seguro, v.peaje_categoria,
          v.ptv_profile, v.ejes, v.mma, v.clase_euro, v.capacidad_peso, v.capacidad_palets,
          v.coste_adquisicion, v.fecha_adquisicion, v.vida_util, v.valor_residual,
-         v.fecha_caducidad_itv, v.seguro_compania, v.fecha_caducidad_seguro, v.tipo_tenencia, v.proveedor_id, v.fecha_alta, v.cuota_mensual),
+         v.fecha_caducidad_itv, v.seguro_compania, v.fecha_caducidad_seguro, v.tipo_tenencia, v.proveedor_id, v.fecha_alta, v.cuota_mensual, v.app_terminal),
     )
     # Asiento de adquisición (solo compra en Propiedad): Debe 218 / Haber 400, una sola vez.
     if coste > 0 and v.proveedor_id:
