@@ -941,9 +941,9 @@ def _get_config(key, default=""):
 def _valores_proveedor(conn, codigo):
     """{clave: valor} de los valores de configuración de un proveedor de integración (descifrados)."""
     rows = conn.execute(
-        "SELECT c.clave, v.valor FROM integracion_proveedores p "
-        "JOIN integracion_campos c ON c.proveedor_id = p.id "
-        "LEFT JOIN integracion_valores v ON v.campo_id = c.id "
+        "SELECT c.clave, v.valor FROM sistema.integracion_proveedores p "
+        "JOIN sistema.integracion_campos c ON c.proveedor_id = p.id "
+        "LEFT JOIN sistema.integracion_valores v ON v.campo_id = c.id "
         "WHERE p.codigo=?",
         (codigo,),
     ).fetchall()
