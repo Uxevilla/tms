@@ -267,6 +267,7 @@ class Conductor(BaseModel):
     dni: str = ""
     telefono: str = ""
     email: str = ""
+    did: str = ""
 
 
 class Vehiculo(BaseModel):

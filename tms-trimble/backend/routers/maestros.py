@@ -50,8 +50,8 @@ def add_cliente(c: Cliente, conn = Depends(get_conn)):
 @router.post("/api/conductores")
 def add_conductor(c: Conductor, conn = Depends(get_conn)):
     conn.execute(
-        "INSERT INTO conductores (nombre, dni, telefono, email) VALUES (?,?,?,?)",
-        (c.nombre, c.dni, c.telefono, c.email),
+        "INSERT INTO conductores (nombre, dni, telefono, email, did) VALUES (?,?,?,?,?)",
+        (c.nombre, c.dni, c.telefono, c.email, c.did),
     )
     conn.commit()
     return {"ok": True}
@@ -293,8 +293,8 @@ def upd_cliente(cli_id: int, body: dict, conn = Depends(get_conn)):
 
 @router.patch("/api/conductores/{con_id}")
 def upd_conductor(con_id: int, c: Conductor, conn = Depends(get_conn)):
-    conn.execute("UPDATE conductores SET nombre=?, dni=?, telefono=?, email=? WHERE id=?",
-                 (c.nombre, c.dni, c.telefono, c.email, con_id))
+    conn.execute("UPDATE conductores SET nombre=?, dni=?, telefono=?, email=?, did=? WHERE id=?",
+                 (c.nombre, c.dni, c.telefono, c.email, c.did, con_id))
     conn.commit()
     return {"ok": True}
 

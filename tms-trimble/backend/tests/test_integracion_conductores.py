@@ -111,3 +111,27 @@ def test_list_conductores_con_fecha_incluye_caducidades(scratch_db):
     finally:
         conn.close()
         main._tenant_ctx.reset(tok)
+
+
+@pytest.mark.integration
+def test_conductor_guarda_y_edita_did(scratch_db):
+    """El DID (ID Trimble del conductor) se guarda en alta y se edita (clave del tacógrafo)."""
+    from routers.maestros import add_conductor, upd_conductor, list_conductores
+    from models import Conductor
+
+    tok, conn = _conn(scratch_db)
+    try:
+        add_conductor(Conductor(nombre="Eusebio Álvarez", dni="", telefono="", email="", did="001"), conn=conn)
+
+        res = list_conductores(conn=conn)
+        assert len(res["conductores"]) == 1
+        assert res["conductores"][0]["did"] == "001"
+
+        cid = res["conductores"][0]["id"]
+        upd_conductor(cid, Conductor(nombre="Eusebio Álvarez", dni="", telefono="", email="", did="002"), conn=conn)
+
+        res = list_conductores(conn=conn)
+        assert res["conductores"][0]["did"] == "002"
+    finally:
+        conn.close()
+        main._tenant_ctx.reset(tok)

@@ -42,6 +42,7 @@ const conductorSchema = z.object({
   dni: z.string().trim().min(1, "Requerido"),
   telefono: z.string().trim().min(1, "Requerido"),
   email: z.string().trim().email("Email inválido").or(z.string().trim().length(0)),
+  did: z.string().trim(),
 });
 
 type ConductorForm = z.infer<typeof conductorSchema>;
@@ -51,6 +52,7 @@ const valoresPorDefecto: ConductorForm = {
   dni: "",
   telefono: "",
   email: "",
+  did: "",
 };
 
 // ------------------------------------------------------------------ formulario caducidades (edita empleado)
@@ -94,6 +96,7 @@ export function ConductoresPage() {
           dni: valores.dni,
           telefono: valores.telefono,
           email: valores.email,
+          did: valores.did,
         };
         return api(`/api/conductores/${editar.id}`, { method: "PATCH", body: JSON.stringify(body) });
       }
@@ -102,6 +105,7 @@ export function ConductoresPage() {
         dni: valores.dni,
         telefono: valores.telefono,
         email: valores.email,
+        did: valores.did,
       };
       return api(REST_CONDUCTORES, { method: "POST", body: JSON.stringify(body) });
     },
@@ -153,7 +157,7 @@ export function ConductoresPage() {
       },
       {
         accessorKey: "did",
-        header: "Tarjeta tacógrafo",
+        header: "ID Trimble",
         cell: ({ row }) => <span className="font-mono text-sm">{row.original.did ?? "—"}</span>,
       },
       {
@@ -205,6 +209,7 @@ export function ConductoresPage() {
                   dni: row.original.dni,
                   telefono: row.original.telefono,
                   email: row.original.email,
+                  did: row.original.did ?? "",
                 });
                 setAbierto(true);
               }}
@@ -380,6 +385,14 @@ export function ConductoresPage() {
                   <span className="text-xs text-red-600">{form.formState.errors.email.message}</span>
                 )}
               </div>
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="did">ID Trimble (DID)</Label>
+              <Input id="did" placeholder="001" {...form.register("did")} />
+              <span className="text-xs text-slate-400">
+                ID del conductor en Trimble. Los datos del tacógrafo (T4U) quedan asociados a este ID.
+              </span>
             </div>
 
             {guardar.isError && (
