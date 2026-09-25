@@ -201,7 +201,7 @@ def atencion(user: dict = Depends(require_role(["admin", "dispatcher"])), conn: 
         "SELECT d.did, d.vehiculo_id, d.driving_coupure_min, d.day_driving_min, d.remaining_week_available_min, "
         "       c.id AS conductor_id, c.nombre "
         "FROM (SELECT DISTINCT ON (vehiculo_id) * FROM tacografo_dstat "
-        "      WHERE COALESCE(time, creado) >= ? "
+        "      WHERE decode_ok AND COALESCE(time, creado) >= ? "
         "      ORDER BY vehiculo_id, COALESCE(time, creado) DESC) d "
         "LEFT JOIN conductores c ON c.did = d.did "
         "WHERE COALESCE(d.driving_coupure_min,0) >= 240 OR COALESCE(d.day_driving_min,0) >= 510 "
@@ -483,7 +483,7 @@ def entidad_vehiculo(codigo: str, user: dict = Depends(require_role(["admin", "d
 
     dstat = conn.execute(
         "SELECT d.*, c.nombre AS conductor_nombre FROM (SELECT DISTINCT ON (vehiculo_id) * FROM tacografo_dstat "
-        "WHERE vehiculo_id = ? ORDER BY vehiculo_id, COALESCE(time, creado) DESC) d "
+        "WHERE decode_ok AND vehiculo_id = ? ORDER BY vehiculo_id, COALESCE(time, creado) DESC) d "
         "LEFT JOIN conductores c ON c.did = d.did", (terminal,),
     ).fetchone()
 
@@ -537,10 +537,10 @@ def entidad_vehiculo(codigo: str, user: dict = Depends(require_role(["admin", "d
         r = conn.execute(
             "SELECT "
             "  (SELECT COALESCE(SUM(COALESCE(t.precio,0)),0) FROM operaciones.trips t "
-            "   WHERE (t.matricula = ? OR t.terminal = ?) AND substr(COALESCE(t.fecha_actualizacion, t.creado),1,7) = ?) AS ingresos, "
+            "   WHERE t.terminal = ? AND substr(COALESCE(t.fecha_actualizacion, t.creado),1,7) = ?) AS ingresos, "
             "  (SELECT COALESCE(SUM(COALESCE(g.importe_total,0)),0) FROM finanzas.gastos_vehiculos g "
             "   WHERE g.vehiculo_id = ? AND substr(COALESCE(g.fecha,''),1,7) = ?) AS costes",
-            (matr, terminal, mes, veh, mes),
+            (veh, mes, veh, mes),
         ).fetchone()
         ingresos = float(r["ingresos"] or 0)
         costes = float(r["costes"] or 0)
@@ -608,7 +608,7 @@ def entidad_conductor(conductor_id: int, user: dict = Depends(require_role(["adm
         raise HTTPException(status_code=404, detail={"error": "Conductor no encontrado"})
 
     dstat = conn.execute(
-        "SELECT * FROM tacografo_dstat WHERE did = ? ORDER BY COALESCE(time, creado) DESC LIMIT 1",
+        "SELECT * FROM tacografo_dstat WHERE decode_ok AND did = ? ORDER BY COALESCE(time, creado) DESC LIMIT 1",
         (c["did"],),
     ).fetchone()
 

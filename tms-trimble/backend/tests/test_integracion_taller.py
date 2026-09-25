@@ -276,3 +276,44 @@ def test_edicion_campos_solo_allow(scratch_db):
     finally:
         conn.close()
         main._tenant_ctx.reset(tok)
+
+
+@pytest.mark.integration
+def test_mantenimiento_generar_gasto(scratch_db):
+    """Completar un mantenimiento con 'generar gasto' → gasto en gastos_vehiculos (cuenta 622)."""
+    from routers.flota import add_mantenimiento
+    from models import Mantenimiento
+
+    tok, conn = _conn(scratch_db)
+    conn.set_autocommit(False)  # transacción: el asiento 622/472/400 debe cuadrar al commit
+    try:
+        conn.execute(
+            "INSERT INTO flota.vehiculos (codigo, terminal_trimble, matricula, categoria, activo) "
+            "VALUES ('VH-GASTO', 'T-GASTO', 'MAT-GASTO', 'tractora', true)"
+        )
+        m = Mantenimiento(
+            vehiculo_id="VH-GASTO",
+            tipo="revision",
+            fecha="2026-01-01",
+            km=0,
+            coste=0,
+            hecho=True,
+            generar_gasto=True,
+            base_imponible=100.0,
+            iva=21.0,
+            proveedor_id=None,
+        )
+        res = add_mantenimiento(m, conn=conn)
+        assert res["ok"] is True
+
+        row = conn.execute(
+            "SELECT cuenta_contable_gasto, base_imponible, importe_total FROM finanzas.gastos_vehiculos "
+            "WHERE vehiculo_id='VH-GASTO'"
+        ).fetchone()
+        assert row is not None
+        assert row["cuenta_contable_gasto"] == "622"
+        assert float(row["base_imponible"]) == 100.0
+        assert float(row["importe_total"]) == 121.0  # 100 + 21% IVA
+    finally:
+        conn.close()
+        main._tenant_ctx.reset(tok)

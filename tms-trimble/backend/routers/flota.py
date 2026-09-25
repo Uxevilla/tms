@@ -47,11 +47,8 @@ def add_mantenimiento(m: Mantenimiento, conn = Depends(get_conn)):
     mid = cur.fetchone()["id"]
     # Integración contable: si se marca Completado y se pide generar gasto → gastos_vehiculos + asiento 622/472/400.
     if m.hecho and m.generar_gasto and m.base_imponible > 0:
-        # mantenimientos referencia el vehículo por matrícula; gastos_vehiculos (finanzas) por código interno.
+        # mantenimientos.vehiculo_id referencia el vehículo por CÓDIGO interno (mismo que gastos_vehiculos).
         codigo_veh = m.vehiculo_id
-        _vrow = conn.execute("SELECT id FROM vehiculos WHERE matricula = ?", (m.vehiculo_id,)).fetchone()
-        if _vrow:
-            codigo_veh = _vrow["id"]
         iva_pct = round(float(m.iva or 21), 2)
         importe = round(float(m.base_imponible) * (1 + iva_pct / 100.0), 2)
         cuota = round(importe - float(m.base_imponible), 2)

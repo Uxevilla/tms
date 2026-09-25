@@ -9,7 +9,7 @@ import {
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { Plus, Pencil } from "lucide-react";
+import { Download, Plus, Pencil } from "lucide-react";
 
 import { api } from "../api";
 import { REST_MANTENIMIENTOS, REST_VEHICULOS_DISPONIBLES } from "../config";
@@ -57,6 +57,11 @@ const mantenimientoSchema = z.object({
   km: z.number().int().min(0),
   coste: z.number().min(0),
   notas: z.string().optional(),
+  hecho: z.boolean().optional(),
+  generar_gasto: z.boolean().optional(),
+  base_imponible: z.number().min(0).optional(),
+  iva: z.number().min(0).optional(),
+  proveedor_id: z.number().int().positive().optional().nullable(),
 });
 
 type MantenimientoForm = z.infer<typeof mantenimientoSchema>;
@@ -68,6 +73,11 @@ const valoresPorDefecto: MantenimientoForm = {
   km: 0,
   coste: 0,
   notas: "",
+  hecho: false,
+  generar_gasto: false,
+  base_imponible: 0,
+  iva: 21,
+  proveedor_id: null,
 };
 
 const fmtEuro = new Intl.NumberFormat("es-ES", { style: "currency", currency: "EUR" });
@@ -130,6 +140,28 @@ export function TallerPage() {
       queryClient.invalidateQueries({ queryKey: ["mantenimientos"] });
     },
   });
+
+  function exportarCsv() {
+    const encabezados = ["Vehículo", "Tipo", "Fecha", "Km", "Coste (€)", "Completado", "Notas"];
+    const filas = mantenimientos.map((m) => [
+      m.matricula,
+      m.tipo,
+      m.fecha,
+      m.km,
+      m.coste,
+      m.hecho ? "Sí" : "No",
+      m.notas ?? "",
+    ]);
+    const esc = (v: unknown) => `"${String(v).replace(/"/g, '""')}"`;
+    const csv = [encabezados.join(","), ...filas.map((f) => f.map(esc).join(","))].join("\n");
+    const blob = new Blob(["\ufeff" + csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "mantenimientos.csv";
+    a.click();
+    URL.revokeObjectURL(url);
+  }
 
   const columns = useMemo<ColumnDef<Mantenimiento>[]>(
     () => [
@@ -245,6 +277,10 @@ export function TallerPage() {
               ))}
             </select>
           </div>
+          <Button variant="outline" onClick={exportarCsv}>
+            <Download size={16} className="mr-1.5" />
+            Exportar CSV
+          </Button>
           <Button onClick={abrirAlta}>
             <Plus size={16} className="mr-1.5" />
             Nuevo mantenimiento
@@ -378,6 +414,64 @@ export function TallerPage() {
                 />
               </div>
             </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="flex items-center gap-2">
+                <input
+                  id="hecho"
+                  type="checkbox"
+                  checked={form.watch("hecho")}
+                  onChange={(e) => form.setValue("hecho", e.target.checked)}
+                  className="h-4 w-4 rounded border-slate-300 text-primary focus:ring-primary"
+                />
+                <Label htmlFor="hecho">Completado</Label>
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  id="generar-gasto"
+                  type="checkbox"
+                  checked={form.watch("generar_gasto")}
+                  onChange={(e) => form.setValue("generar_gasto", e.target.checked)}
+                  className="h-4 w-4 rounded border-slate-300 text-primary focus:ring-primary"
+                />
+                <Label htmlFor="generar-gasto">Generar gasto</Label>
+              </div>
+            </div>
+
+            {form.watch("generar_gasto") && (
+              <div className="grid grid-cols-2 gap-3 rounded-md border border-slate-200 p-3">
+                <div className="flex flex-col gap-1.5">
+                  <Label htmlFor="base_imponible">Base imponible (€)</Label>
+                  <Input
+                    id="base_imponible"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    {...form.register("base_imponible", { valueAsNumber: true })}
+                  />
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <Label htmlFor="iva">IVA (%)</Label>
+                  <Input
+                    id="iva"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    {...form.register("iva", { valueAsNumber: true })}
+                  />
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <Label htmlFor="proveedor_id">Proveedor ID</Label>
+                  <Input
+                    id="proveedor_id"
+                    type="number"
+                    min="1"
+                    step="1"
+                    {...form.register("proveedor_id", { setValueAs: (v) => (v === "" || v == null ? null : Number(v)) })}
+                  />
+                </div>
+              </div>
+            )}
 
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="notas">Notas</Label>

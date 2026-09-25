@@ -306,6 +306,7 @@ CREATE TABLE IF NOT EXISTS tacografo_dstat (
     remaining_week_available_min NUMERIC(10,1) DEFAULT 0,
     week_long_driving_count INTEGER DEFAULT 0,
     next_rest_due_ts BIGINT DEFAULT 0,
+    decode_ok BOOLEAN NOT NULL DEFAULT true,
     time TEXT,
     creado TEXT
 );
@@ -819,6 +820,7 @@ def _db():
             cur.execute("ALTER TABLE finanzas.asientos ADD COLUMN IF NOT EXISTS origen_id TEXT")
             cur.execute("ALTER TABLE mensajes ADD COLUMN IF NOT EXISTS terminal TEXT")
             cur.execute("ALTER TABLE finanzas.gastos_vehiculos ADD COLUMN IF NOT EXISTS base_imponible NUMERIC(12,2) DEFAULT 0")
+            cur.execute("ALTER TABLE tacografo_dstat ADD COLUMN IF NOT EXISTS decode_ok BOOLEAN NOT NULL DEFAULT true")
             cur.execute("ALTER TABLE finanzas.gastos_vehiculos ADD COLUMN IF NOT EXISTS iva NUMERIC(6,2) DEFAULT 21")
             cur.execute("ALTER TABLE finanzas.gastos_vehiculos ADD COLUMN IF NOT EXISTS cuenta_contable_gasto TEXT")
             cur.execute("ALTER TABLE finanzas.gastos_vehiculos ADD COLUMN IF NOT EXISTS estado_pago TEXT DEFAULT 'Pendiente'")
