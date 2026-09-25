@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import {
@@ -23,11 +23,9 @@ import { ChatViaje } from "./ChatViaje";
 import { DetalleViaje } from "./DetalleViaje";
 import { panelCell } from "./panelCell";
 
-// Sheet de creación/edición en chunk aparte (react-leaflet + dnd-kit + react-hook-form).
-const NuevoViajeSheet = lazy(() => import("./NuevoViajeSheet").then((m) => ({ default: m.NuevoViajeSheet })));
-// Prefetch del chunk: al abrir el Sheet con el atajo "n" el módulo ya está en caché,
-// sin petición pendiente que retrase el settle del `keyboard.press` (sobre todo en CI).
-void import("./NuevoViajeSheet");
+// Sheet de creación/edición: importación estática para que el settle del `keyboard.press`
+// no dependa del lazy chunk + Suspense (se colgaba en CI al abrir con el atajo "n").
+import { NuevoViajeSheet } from "./NuevoViajeSheet";
 
 // Filtro por rango de fecha sobre fecha_esperada_carga: compara SOLO la fecha (YYYY-MM-DD).
 const filtroFecha: FilterFn<Viaje> = (row, columnId, filterValue) => {
@@ -423,18 +421,16 @@ export function ViajesDashboard() {
       {chatTripId && <ChatViaje tripId={chatTripId} onClose={() => setChatTripId(null)} />}
       {tripDetalle && <DetalleViaje trip={tripDetalle} onClose={() => setTripDetalle(null)} />}
       {sheet.abierto && (
-        <Suspense fallback={null}>
-          <NuevoViajeSheet
-            editTripId={sheet.editTripId}
+        <NuevoViajeSheet
+          editTripId={sheet.editTripId}
             onClose={() => setSheet({ abierto: false, editTripId: null })}
             onGuardado={(id, abrirPlanificacion) => {
               setSheet({ abierto: false, editTripId: null });
               qc.invalidateQueries({ queryKey: ["viajes"] });
               if (id && abrirPlanificacion) navigate({ to: "/planificacion", search: { viaje: id } });
             }}
-          />
-        </Suspense>
-      )}
+            />
+            )}
     </div>
   );
 }
