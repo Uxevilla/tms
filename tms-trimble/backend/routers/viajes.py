@@ -76,7 +76,7 @@ def api_telemetria_activa(user: dict = Depends(require_role(["admin", "dispatche
         f"), activa AS ("
         f"  SELECT DISTINCT ON (terminal) terminal, id, estado, fecha_esperada_descarga, "
         f"         conductor, matricula "
-        f"  FROM trips WHERE COALESCE(estado,'') NOT IN {_ESTADOS_FINALES_SQL} "
+        f"  FROM trips WHERE estado = 'enviado' OR estado IN ('Llegada_Origen','Cargando','En_Transito','Llegada_Destino','Descargando') "
         f"  ORDER BY terminal, creado DESC"
         f"), dstat AS ("
         f"  SELECT DISTINCT ON (vehiculo_id) vehiculo_id, did "
@@ -91,7 +91,7 @@ def api_telemetria_activa(user: dict = Depends(require_role(["admin", "dispatche
         f"       c.nombre AS conductor_taco "
         f"FROM ultima u "
         f"LEFT JOIN vehiculos v ON v.terminal_trimble = u.vehiculo_id "
-        f"LEFT JOIN activa a ON a.terminal = u.vehiculo_id "
+        f"LEFT JOIN activa a ON a.terminal = v.codigo "
         f"LEFT JOIN dstat d ON d.vehiculo_id = u.vehiculo_id "
         f"LEFT JOIN conductores c ON c.did = d.did "
         f"ORDER BY u.time DESC"
@@ -152,9 +152,9 @@ def asignar_trip(trip_id: str, req: AsignarRequest, conn = Depends(get_conn)):
         raise HTTPException(status_code=409, detail={"error": f"El viaje ya está asignado (estado: {row['estado']})"})
 
     viaje = ViajeRequest(**json.loads(row["payload"] or "{}"))
-    terminal = (req.terminal or "").strip()
-    if not terminal:
-        raise HTTPException(status_code=400, detail={"error": "Indica la tractora (terminal) para asignar."})
+    codigo = (req.codigo or "").strip()
+    if not codigo:
+        raise HTTPException(status_code=400, detail={"error": "Indica la tractora para asignar."})
 
     # Fusionar ediciones en línea (columnas de trips) sobre el payload original
     viaje.cliente = row["cliente"] or viaje.cliente
@@ -166,7 +166,7 @@ def asignar_trip(trip_id: str, req: AsignarRequest, conn = Depends(get_conn)):
     viaje.conductor = req.conductor or row["conductor"] or viaje.conductor or ""
     viaje.conductor_id = req.conductor_id if req.conductor_id is not None else row["conductor_id"]
 
-    viaje.terminal = terminal
+    viaje.matricula = row["matricula"] or viaje.matricula or ""
     viaje.semirremolque_id = (req.semirremolque_id or row["semirremolque_id"] or "").strip()
     viaje.remolque_id = (req.remolque_id or row["remolque_id"] or "").strip()
     viaje.conduccion_acumulada_min = req.conduccion_acumulada_min
@@ -178,7 +178,7 @@ def asignar_trip(trip_id: str, req: AsignarRequest, conn = Depends(get_conn)):
     if not req.force:
         _chequear_conduccion_legal(viaje, row)
 
-    return _enviar_viaje(trip_id, viaje, terminal, viaje.semirremolque_id, viaje.remolque_id)
+    return _enviar_viaje(trip_id, viaje, codigo, viaje.semirremolque_id, viaje.remolque_id)
 
 
 
@@ -199,15 +199,15 @@ def create_tarifa(t: TarifaRequest, conn = Depends(get_conn)):
 @router.post("/api/trips")
 def create_trip(viaje: ViajeRequest):
     trip_id = "VIAJE-" + uuid.uuid4().hex[:10].upper()
-    terminal = (viaje.terminal or "").strip()
+    matricula = (viaje.matricula or "").strip()
     semirremolque = (viaje.semirremolque_id or "").strip()
     remolque = (viaje.remolque_id or "").strip()
 
     # Sin camión asignado → pedido (se planifica, aún no se envía a Trimble)
-    if not terminal:
+    if not matricula:
         return _crear_pedido(trip_id, viaje)
 
-    return _enviar_viaje(trip_id, viaje, terminal, semirremolque, remolque)
+    return _enviar_viaje(trip_id, viaje, matricula, semirremolque, remolque)
 
 
 
@@ -240,14 +240,24 @@ def delete_tarifa(tarifa_id: int, conn = Depends(get_conn)):
 
 
 @router.delete("/api/trips/{trip_id}")
-def delete_trip(trip_id: str, user: dict = Depends(require_role(["admin", "dispatcher"])), conn = Depends(get_conn)):
-    """Elimina un viaje. Los viajes finalizados solo puede eliminarlos un administrador."""
-    row = conn.execute("SELECT estado FROM trips WHERE id=?", (trip_id,)).fetchone()
+def delete_trip(trip_id: str, force: bool = False, user: dict = Depends(require_role(["admin", "dispatcher"])), conn = Depends(get_conn)):
+    """Elimina un viaje. Los viajes finalizados solo puede eliminarlos un administrador.
+    Si el viaje ya está en Trimble, lo borra del servidor (removeTrips) antes de la BD."""
+    row = conn.execute("SELECT estado, terminal FROM trips WHERE id=?", (trip_id,)).fetchone()
     if not row:
         raise HTTPException(status_code=404, detail={"error": f"Viaje {trip_id} no encontrado"})
     estado = (row["estado"] or "").lower()
     if estado in _ESTADOS_FINALES and user.get("rol") != "admin":
         raise HTTPException(status_code=403, detail={"error": "Solo un administrador puede eliminar un viaje finalizado."})
+
+    # Si estaba en el terminal, borrarlo de Trimble ANTES (si Trimble falla, la BD no cambia).
+    in_trimble = estado == "enviado" or estado in ("llegada_origen", "cargando", "en_transito", "llegada_destino", "descargando")
+    if in_trimble:
+        r = get_client().remove_trips([trip_id])
+        if not r["ok"] and not force:
+            raise HTTPException(status_code=502, detail={
+                "error": f"Trimble: no se pudo borrar del terminal ({r['fault'] or r['status']})"})
+
     # Limpiar tablas hijas sin ON DELETE CASCADE.
     conn.execute("DELETE FROM files WHERE trip_id=?", (trip_id,))
     conn.execute("DELETE FROM mensajes WHERE trip_id=?", (trip_id,))
@@ -283,7 +293,7 @@ def duplicar_trip(trip_id: str):
             iva=float(row["iva"] or 21),
         )
     # Forzar sin asignar (sin vehículo ni conductor)
-    viaje.terminal = ""
+    viaje.matricula = ""
     viaje.conductor = ""
     viaje.conductor_id = None
     viaje.semirremolque_id = ""
@@ -323,17 +333,20 @@ def enviar_trip(trip_id: str, force: bool = False, conn = Depends(get_conn)):
     row = conn.execute("SELECT * FROM trips WHERE id=?", (trip_id,)).fetchone()
     if not row:
         raise HTTPException(status_code=404, detail={"error": f"Viaje {trip_id} no encontrado"})
-    terminal = (row["terminal"] or "").strip()
-    if not terminal:
-        raise HTTPException(status_code=400, detail={"error": "Asigna la tractora (terminal) antes de enviar el viaje a Trimble."})
     viaje = ViajeRequest(**json.loads(row["payload"] or "{}"))
+    codigo = (row["terminal"] or "").strip()
+    if not codigo:
+        raise HTTPException(status_code=400, detail={"error": "Asigna la tractora antes de enviar el viaje a Trimble."})
     # Fusionar el estado actual de la fila sobre el payload original.
     viaje.cliente = row["cliente"] or viaje.cliente
     viaje.precio = float(row["precio"] or 0)
     viaje.gastos = float(row["gastos"] or 0)
     viaje.iva = float(row["iva"] or 0)
     viaje.conductor = row["conductor"] or viaje.conductor or ""
-    viaje.terminal = terminal
+    viaje.conductor_id = row["conductor_id"] if row["conductor_id"] is not None else viaje.conductor_id
+    viaje.matricula = row["matricula"] or viaje.matricula or ""
+    viaje.fecha_esperada_carga = row["fecha_esperada_carga"] or viaje.fecha_esperada_carga
+    viaje.fecha_esperada_descarga = row["fecha_esperada_descarga"] or viaje.fecha_esperada_descarga
     viaje.semirremolque_id = (row["semirremolque_id"] or "").strip()
     viaje.remolque_id = (row["remolque_id"] or "").strip()
 
@@ -341,7 +354,38 @@ def enviar_trip(trip_id: str, force: bool = False, conn = Depends(get_conn)):
     if not force:
         _chequear_conduccion_legal(viaje, row)
 
-    return _enviar_viaje(trip_id, viaje, terminal, viaje.semirremolque_id, viaje.remolque_id)
+    resp = _enviar_viaje(trip_id, viaje, codigo, viaje.semirremolque_id, viaje.remolque_id)
+    # Limpiar la marca de reenvío SOLO si el envío fue bien (releyendo el payload actual).
+    if resp.get("estado") == "enviado":
+        actual = conn.execute("SELECT payload FROM trips WHERE id=?", (trip_id,)).fetchone()
+        payload = json.loads((actual and actual["payload"]) or "{}")
+        if payload.pop("pendiente_reenvio", None):
+            conn.execute("UPDATE trips SET payload=? WHERE id=?", (json.dumps(payload), trip_id))
+            conn.commit()
+    return resp
+
+
+@router.post("/api/trips/{trip_id}/quitar-terminal")
+def quitar_terminal(trip_id: str, conn = Depends(get_conn)):
+    """Quita el viaje del terminal (unassignTrips) y lo deja planificado, CONSERVANDO
+    la tractora asignada, para volver a enviarlo cuando toque (menú contextual)."""
+    row = conn.execute("SELECT * FROM trips WHERE id=?", (trip_id,)).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail={"error": f"Viaje {trip_id} no encontrado"})
+    estado = (row["estado"] or "").strip()
+    in_trimble = estado == "enviado" or estado in ("Llegada_Origen", "Cargando", "En_Transito", "Llegada_Destino", "Descargando")
+    if not in_trimble:
+        raise HTTPException(status_code=409, detail={"error": "El viaje no está en el terminal"})
+    r = get_client().unassign_trips([trip_id])
+    if not r["ok"]:
+        raise HTTPException(status_code=502, detail={
+            "error": f"Trimble: no se pudo quitar del terminal ({r['fault'] or r['status']})"})
+    terminal = row["terminal"] or ""
+    conn.execute("UPDATE trips SET estado='sin_asignar' WHERE id=?", (trip_id,))
+    conn.commit()
+    _del_viaje_activo(terminal)
+    _auditar(conn, "trips", trip_id, "quitar_terminal", None, {"estado": estado}, {"estado": "sin_asignar"})
+    return {"ok": True}
 
 
 
@@ -489,13 +533,13 @@ def update_trip(trip_id: str, upd: TripUpdate, conn = Depends(get_conn)):
         raise HTTPException(status_code=404, detail={"error": f"Viaje {trip_id} no encontrado"})
     if (row["estado"] or "").lower() in _ESTADOS_FINALES:
         # en viajes finalizados solo se permite el cambio de estado de pago (cobro)
-        otros = [f for f in ("factura", "cliente", "tipo_carga", "conductor", "terminal",
+        otros = [f for f in ("factura", "cliente", "tipo_carga", "conductor", "matricula",
                              "semirremolque_id", "remolque_id", "precio", "gastos", "iva", "origen", "destino")
                  if getattr(upd, f) is not None]
         if otros:
             raise HTTPException(status_code=409, detail={"error": "El viaje está finalizado y no se puede modificar."})
     sets, params = [], []
-    for field in ("factura", "estado_pago", "cliente", "tipo_carga", "conductor", "terminal", "semirremolque_id", "remolque_id", "fecha_esperada_carga", "fecha_esperada_descarga", "origen", "destino"):
+    for field in ("factura", "estado_pago", "cliente", "tipo_carga", "conductor", "matricula", "semirremolque_id", "remolque_id", "fecha_esperada_carga", "fecha_esperada_descarga", "origen", "destino"):
         val = getattr(upd, field)
         if val is not None:
             sets.append(f"{field}=?")

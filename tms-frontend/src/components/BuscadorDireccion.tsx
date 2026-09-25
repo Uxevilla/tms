@@ -84,6 +84,8 @@ export function BuscadorDireccion({ placeholder = "Buscar empresa o lugar…", v
     setSug([]);
     setAbierto(false);
     onSelect({ ...s, id: id as number });
+    // Suelta el foco para que los atajos de teclado globales (p. ej. "p" añadir parada) funcionen.
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
   }
 
   function limpiar() {
@@ -115,6 +117,12 @@ export function BuscadorDireccion({ placeholder = "Buscar empresa o lugar…", v
           value={seleccionado || texto}
           onChange={(e) => onChange(e.target.value)}
           onFocus={() => { setAbierto(true); if (!texto && !seleccionado) buscar(""); }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && abierto && sug.length > 0) {
+              e.preventDefault();
+              elegir(sug[0]);
+            }
+          }}
           placeholder={placeholder}
           className="mt-0.5 w-full rounded-md border border-slate-200 py-1.5 pl-8 pr-7 text-sm focus:border-blue-400 focus:outline-none"
         />

@@ -85,22 +85,36 @@ def _viajes_snapshot() -> dict:
             "COALESCE(t.estado_pago, 'pendiente') AS estado_pago, "
             "t.km_total, t.km_real, t.km_fuente, t.peaje_km, t.peaje_estimado, t.tiempo_min, "
             "t.modo_tarifa, t.tarifa_id, t.precio_unitario, t.kilos, t.subcontratado, t.proveedor_id, t.coste, "
+            "v.terminal_trimble AS terminal_trimble, "
             "(SELECT string_agg(actividad, ' → ' ORDER BY orden) FROM operaciones.paradas WHERE trip_id = t.id) AS itinerario, "
             "(SELECT COUNT(*) FROM files WHERE trip_id = t.id) AS n_documentos, "
-            "(SELECT COUNT(*) FROM operaciones.tramos WHERE trip_id = t.id) AS n_tramos, "
-            "tl.speed_kmh AS velocidad, tl.heading, tl.odometer_km, tl.lat, tl.lng "
+            "(SELECT COUNT(*) FROM operaciones.tramos WHERE trip_id = t.id) AS n_tramos "
             "FROM trips t "
-            "LEFT JOIN vehiculos v ON v.terminal_trimble = t.terminal "
-            "LEFT JOIN LATERAL ("
-            "  SELECT speed_kmh, heading, odometer_km, lat, lng FROM telemetria.posiciones_gps "
-            "  WHERE vehiculo_id = t.terminal ORDER BY time DESC LIMIT 1"
-            ") tl ON true "
+            "LEFT JOIN vehiculos v ON v.codigo = t.terminal "
             "ORDER BY t.creado DESC NULLS LAST LIMIT 500"
         ).fetchall()
+        # Posiciones (última por vehículo) en consulta aparte: si el hypertable de
+        # telemetría se cuelga (p. ej. en CI), el listado de viajes no se bloquea.
+        pos = {}
+        try:
+            conn.execute("SET LOCAL statement_timeout = '3000'")
+            for pr in conn.execute(
+                "SELECT DISTINCT ON (vehiculo_id) vehiculo_id, speed_kmh, heading, odometer_km, lat, lng "
+                "FROM telemetria.posiciones_gps ORDER BY vehiculo_id, time DESC"
+            ).fetchall():
+                pos[pr["vehiculo_id"]] = pr
+        except Exception:
+            pos = {}
+        finally:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
     finally:
         conn.close()
     out = {}
     for r in rows:
+        p = pos.get(r["terminal_trimble"])
         estado = _map_estado(r["estado"])
         out[r["id"]] = {
             "id": r["id"],
@@ -111,11 +125,11 @@ def _viajes_snapshot() -> dict:
             "destino": r["destino"] or "",
             "estado": estado,
             "progreso": _progreso(estado),
-            "velocidad": r["velocidad"],
-            "heading": r["heading"],
-            "odometer_km": (r["odometer_km"] / 1000.0) if r["odometer_km"] is not None else None,
-            "lat": r["lat"],
-            "lng": r["lng"],
+            "velocidad": p["speed_kmh"] if p else None,
+            "heading": p["heading"] if p else None,
+            "odometer_km": (p["odometer_km"] / 1000.0) if p and p["odometer_km"] is not None else None,
+            "lat": p["lat"] if p else None,
+            "lng": p["lng"] if p else None,
             "eta": None,
             "ultima_actualizacion": r["creado"] or "",
             "fecha_esperada_carga": r["fecha_esperada_carga"] or "",
@@ -209,28 +223,28 @@ def _guardar_telemetria(pos, vehiculo_id):
 def _source_a_vehiculo(conn, source):
     """Mapea el 'source' de una traza al terminal_trimble del vehículo.
 
-    El source es el ID del proveedor de telemetría (terminal_trimble) o el serial
-    del OBC (device). Devuelve el `terminal_trimble` (clave de posiciones_gps/tacografo_dstat).
+    El source es el ID del proveedor de telemetría (hoy Trimble: terminal_trimble)
+    o el serial del OBC (device). Devuelve el terminal_trimble (clave de telemetría),
+    no el código interno del vehículo.
     """
     if not source:
         return None
     # 1) match directo por terminal_trimble (ID del proveedor de telemetría)
-    row = conn.execute(
-        "SELECT terminal_trimble FROM vehiculos WHERE terminal_trimble=? LIMIT 1", (source,)
-    ).fetchone()
+    row = conn.execute("SELECT terminal_trimble FROM vehiculos WHERE terminal_trimble=? LIMIT 1", (source,)).fetchone()
     if row:
         return row["terminal_trimble"]
     # 2) match por device (serial OBC)
-    row = conn.execute(
-        "SELECT terminal_trimble FROM vehiculos WHERE device=? LIMIT 1", (source,)
-    ).fetchone()
+    row = conn.execute("SELECT terminal_trimble FROM vehiculos WHERE device=? LIMIT 1", (source,)).fetchone()
     if row:
         return row["terminal_trimble"]
-    # 3) fallback por matricula (referencia TMS)
-    row = conn.execute(
-        "SELECT terminal_trimble FROM vehiculos WHERE matricula=? LIMIT 1", (source,)
-    ).fetchone()
-    if row:
-        return row["terminal_trimble"]
+    # 3) fallback por sufijo (terminal_trimble o matrícula)
+    suffix = source.rsplit("-", 1)[-1].strip().lower()
+    if suffix:
+        row = conn.execute(
+            "SELECT terminal_trimble FROM vehiculos WHERE LOWER(terminal_trimble) LIKE ? OR LOWER(COALESCE(matricula,'')) LIKE ? LIMIT 1",
+            (f"%{suffix}%", f"%{suffix}%"),
+        ).fetchone()
+        if row:
+            return row["terminal_trimble"]
     return None
 

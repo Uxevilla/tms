@@ -15,7 +15,7 @@ def _conn(scratch_db):
 
 
 def _v(**kw):
-    base = dict(trip_id="T1", terminal="TRAC", inicio="2026-09-24T08:00", fin="2026-09-24T12:00")
+    base = dict(trip_id="T1", codigo="TRAC", inicio="2026-09-24T08:00", fin="2026-09-24T12:00")
     base.update(kw)
     return ValidarRequest(**base)
 

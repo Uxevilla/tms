@@ -1,4 +1,4 @@
-import { lazy } from "react";
+import { lazy, useEffect } from "react";
 import {
   createRootRoute,
   createRoute,
@@ -6,6 +6,7 @@ import {
   Outlet,
   redirect,
   useNavigate,
+  useParams,
   useSearch,
 } from "@tanstack/react-router";
 
@@ -14,7 +15,7 @@ import { Login } from "./components/Login";
 import { setToken, getToken, getRol, isTokenValid } from "./auth";
 
 // Carga diferida por sección: cada dashboard antiguo se descarga solo al abrirse.
-const OperacionesDashboard = lazy(() => import("./components/OperacionesDashboard").then((m) => ({ default: m.OperacionesDashboard })));
+const ViajesDashboard = lazy(() => import("./components/ViajesDashboard").then((m) => ({ default: m.ViajesDashboard })));
 const ContabilidadDashboard = lazy(() => import("./components/ContabilidadDashboard").then((m) => ({ default: m.ContabilidadDashboard })));
 const KpiDashboard = lazy(() => import("./components/KpiDashboard").then((m) => ({ default: m.KpiDashboard })));
 const VehiculosDashboard = lazy(() => import("./components/VehiculosDashboard").then((m) => ({ default: m.VehiculosDashboard })));
@@ -37,6 +38,16 @@ function Placeholder({ titulo, fase }: { titulo: string; fase: string }) {
       <div className="text-sm">En construcción — {fase}</div>
     </div>
   );
+}
+
+// /viajes/$codigo → abre el panel de entidad del viaje en la lista (no placeholder).
+function ViajeDetalleRedirect() {
+  const { codigo } = useParams({ from: "/app/viajes/$codigo" });
+  const navigate = useNavigate();
+  useEffect(() => {
+    navigate({ to: "/viajes", search: { panel: `viaje:${codigo}` }, replace: true });
+  }, [codigo, navigate]);
+  return null;
 }
 
 // Guards
@@ -121,16 +132,33 @@ const planificacionRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "/planificacion",
   component: () => <PlanificacionDashboard />,
+  validateSearch: (search: Record<string, unknown>): { panel?: string; viaje?: string } => ({
+    panel: typeof search.panel === "string" && /^(vehiculo|viaje|conductor):.+$/.test(search.panel) ? search.panel : undefined,
+    viaje: typeof search.viaje === "string" && search.viaje ? search.viaje : undefined,
+  }),
 });
+// Filtros de /viajes en la URL (se comparten y sobreviven a recargar).
+function validateViajesSearch(search: Record<string, unknown>): { estado?: string; cliente?: string; vehiculo?: string; desde?: string; hasta?: string } {
+  const s = (v: unknown) => (typeof v === "string" && v ? v : undefined);
+  return {
+    estado: s(search.estado),
+    cliente: s(search.cliente),
+    vehiculo: s(search.vehiculo),
+    desde: s(search.desde),
+    hasta: s(search.hasta),
+  };
+}
+
 const viajesRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "/viajes",
-  component: () => <OperacionesDashboard />,
+  component: () => <ViajesDashboard />,
+  validateSearch: validateViajesSearch,
 });
 const viajeDetalleRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "/viajes/$codigo",
-  component: () => <Placeholder titulo="Detalle de viaje" fase="Fase 4" />,
+  component: () => <ViajeDetalleRedirect />,
 });
 const mensajesRoute = createRoute({
   getParentRoute: () => appRoute,

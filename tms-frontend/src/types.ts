@@ -137,7 +137,6 @@ export interface BuscarResultado {
 export interface ViajePlanificacion {
   id: string;
   codigo: string;
-  terminal: string;
   semirremolque_id: string;
   remolque_id: string;
   conductor: string;
@@ -147,11 +146,13 @@ export interface ViajePlanificacion {
   destino: string;
   cliente: string;
   matricula: string;
+  terminal: string;
   kilos: number;
   palets: number;
   tiempo_min: number;
   inicio: string;
   fin: string;
+  pendiente_reenvio?: boolean;
 }
 
 export interface VehiculoPlanificacion {

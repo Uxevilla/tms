@@ -47,6 +47,7 @@ SUPERADMIN_PASSWORD = os.environ.get("SUPERADMIN_PASSWORD", "")
 # Se copian a la tabla `config` de su base de datos en el arranque si no existen;
 # a partir de ahí cada cliente los edita desde su pantalla de Configuración.
 # ---------------------------------------------------------------------- #
+TMS_ENV = os.environ.get("TMS_ENV", "prod")
 DEFAULT_TRIMBLE_USERNAME = os.environ.get("TRIMBLE_USERNAME", "")
 DEFAULT_TRIMBLE_PASSWORD = os.environ.get("TRIMBLE_PASSWORD", "")
 DEFAULT_TRIMBLE_CUSTOMER = os.environ.get("TRIMBLE_CUSTOMER", "")

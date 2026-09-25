@@ -62,7 +62,7 @@ class ViajeRequest(BaseModel):
     conductor: str = ""
     tipo_carga: str = ""
     documentos: list["Documento"] = Field(default_factory=list)
-    terminal: str = ""
+    matricula: str = ""
     semirremolque_id: str = ""
     remolque_id: str = ""
     tramos: list[TramoRequest] = Field(default_factory=list)
@@ -111,7 +111,7 @@ class PuntoRuta(BaseModel):
 
 class RutaRequest(BaseModel):
     puntos: list[PuntoRuta]
-    terminal: str = ""
+    matricula: str = ""
     conduccion_acumulada_min: float = 0.0
 
 
@@ -121,7 +121,7 @@ class TripUpdate(BaseModel):
     cliente: Optional[str] = None
     tipo_carga: Optional[str] = None
     conductor: Optional[str] = None
-    terminal: Optional[str] = None
+    matricula: Optional[str] = None
     semirremolque_id: Optional[str] = None
     remolque_id: Optional[str] = None
     fecha_esperada_carga: Optional[str] = None
@@ -134,7 +134,7 @@ class TripUpdate(BaseModel):
 
 
 class AsignarRequest(BaseModel):
-    terminal: str = ""
+    codigo: str = ""
     semirremolque_id: str = ""
     remolque_id: str = ""
     conductor: str = ""
@@ -275,6 +275,8 @@ class Vehiculo(BaseModel):
     terminal_trimble: str = ""
     categoria: str = "tractora"
     matricula: str = ""
+    terminal_trimble: str = ""
+    app_terminal: str = ""
     marca: str = ""
     modelo: str = ""
     anno: int = 0

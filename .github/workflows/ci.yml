@@ -105,6 +105,7 @@ jobs:
           E2E_ADMIN_USER: admin
           E2E_ADMIN_PASSWORD: e2e-admin-1
           E2E_SEED_OK: "1"
+          TMS_TRIMBLE_FAKE: "1"
         run: |
           set -e
           # 1. Backend (uvicorn) en segundo plano; _bootstrap siembra esquema + admin.
@@ -145,3 +146,12 @@ jobs:
           npx playwright test
 
           kill $BACK_PID $FRONT_PID 2>/dev/null || true
+
+      - name: Subir trazas de Playwright (e2e)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-traces
+          path: tms-frontend/test-results/
+          if-no-files-found: ignore
+          retention-days: 7

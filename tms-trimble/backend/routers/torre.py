@@ -471,14 +471,14 @@ def entidad_vehiculo(codigo: str, user: dict = Depends(require_role(["admin", "d
 
     viaje_actual = conn.execute(
         "SELECT codigo, estado, origen, destino, cliente, fecha_esperada_descarga FROM operaciones.trips "
-        "WHERE (matricula = ? OR terminal = ?) AND COALESCE(estado,'') NOT IN ('Entregado','Cancelado','sin_asignar','') "
-        "ORDER BY creado DESC LIMIT 1", (matr, terminal),
+        "WHERE terminal = ? AND COALESCE(estado,'') NOT IN ('Entregado','Cancelado','sin_asignar','') "
+        "ORDER BY creado DESC LIMIT 1", (veh,),
     ).fetchone()
 
     proximos = conn.execute(
         "SELECT codigo, estado, origen, destino, fecha_esperada_carga FROM operaciones.trips "
-        "WHERE (matricula = ? OR terminal = ?) AND (estado IN ('sin_asignar','planificado') OR estado IS NULL) "
-        "ORDER BY creado DESC LIMIT 5", (matr, terminal),
+        "WHERE terminal = ? AND (estado IN ('sin_asignar','planificado') OR estado IS NULL) "
+        "ORDER BY creado DESC LIMIT 5", (veh,),
     ).fetchall()
 
     dstat = conn.execute(

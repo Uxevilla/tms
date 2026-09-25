@@ -31,6 +31,7 @@ from services.mensajeria import _save_mensaje, _store_mensaje, _extraer_pales, _
 from services.ocr import _parse_ticket, _parse_documento, _pdf_a_texto, _regex_matricula, _regex_litros, _regex_importe, _regex_fecha
 from services.empresa import _empresa
 from services.documentos import _guardar_archivo, _leer_archivo, _borrar_archivo
+from services.vehiculos import validar_unicidad, terminal_trimble_de, app_terminal_de, codigo_por_terminal_trimble
 
 router = APIRouter(dependencies=[Depends(require_role(["admin", "dispatcher"]))])
 
@@ -88,13 +89,19 @@ def add_vehiculo(v: Vehiculo, conn = Depends(get_conn)):
     # Compra (coste>0) o renting/leasing exigen proveedor vinculado.
     if (v.tipo_tenencia in ("Renting", "Leasing") or coste > 0) and not v.proveedor_id:
         raise HTTPException(status_code=400, detail={"error": "Indica el proveedor (proveedor_id) para este vehículo."})
+    # El código interno (codigo) es la clave FIJA: se genera al alta, NO se deriva de la
+    # matrícula ni del formulario, y no se edita nunca. La matrícula es un dato editable aparte.
+    codigo = "VH-" + uuid.uuid4().hex[:8].upper()
+    _err = validar_unicidad(conn, matricula=v.matricula, terminal_trimble=v.terminal_trimble, app_terminal=v.app_terminal)
+    if _err:
+        raise HTTPException(status_code=409, detail={"error": _err})
     conn.execute(
-        "INSERT INTO flota.vehiculos (codigo, terminal_trimble, categoria, matricula, marca, modelo, anno, itv, seguro, peaje_categoria, "
+        "INSERT INTO flota.vehiculos (codigo, terminal_trimble, app_terminal, categoria, matricula, marca, modelo, anno, itv, seguro, peaje_categoria, "
         "ptv_profile, ejes, mma, clase_euro, capacidad_peso, capacidad_palets, "
         "coste_adquisicion, fecha_adquisicion, vida_util, valor_residual, "
-        "fecha_caducidad_itv, seguro_compania, fecha_caducidad_seguro, tipo_tenencia, proveedor_id, fecha_alta, cuota_mensual, app_terminal) "
+        "fecha_caducidad_itv, seguro_compania, fecha_caducidad_seguro, tipo_tenencia, proveedor_id, fecha_alta, cuota_mensual) "
         "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
-        "ON CONFLICT (codigo) DO UPDATE SET terminal_trimble=EXCLUDED.terminal_trimble, categoria=EXCLUDED.categoria, matricula=EXCLUDED.matricula, marca=EXCLUDED.marca, "
+        "ON CONFLICT (codigo) DO UPDATE SET terminal_trimble=EXCLUDED.terminal_trimble, app_terminal=EXCLUDED.app_terminal, categoria=EXCLUDED.categoria, matricula=EXCLUDED.matricula, marca=EXCLUDED.marca, "
         "modelo=EXCLUDED.modelo, anno=EXCLUDED.anno, itv=EXCLUDED.itv, seguro=EXCLUDED.seguro, "
         "peaje_categoria=EXCLUDED.peaje_categoria, ptv_profile=EXCLUDED.ptv_profile, "
         "ejes=EXCLUDED.ejes, mma=EXCLUDED.mma, clase_euro=EXCLUDED.clase_euro, "
@@ -103,8 +110,8 @@ def add_vehiculo(v: Vehiculo, conn = Depends(get_conn)):
         "vida_util=EXCLUDED.vida_util, valor_residual=EXCLUDED.valor_residual, "
         "fecha_caducidad_itv=EXCLUDED.fecha_caducidad_itv, seguro_compania=EXCLUDED.seguro_compania, "
         "fecha_caducidad_seguro=EXCLUDED.fecha_caducidad_seguro, tipo_tenencia=EXCLUDED.tipo_tenencia, "
-        "proveedor_id=EXCLUDED.proveedor_id, fecha_alta=EXCLUDED.fecha_alta, cuota_mensual=EXCLUDED.cuota_mensual, app_terminal=EXCLUDED.app_terminal",
-        (codigo, v.terminal_trimble, v.categoria, v.matricula, v.marca, v.modelo, v.anno, v.itv, v.seguro, v.peaje_categoria,
+        "proveedor_id=EXCLUDED.proveedor_id, fecha_alta=EXCLUDED.fecha_alta, cuota_mensual=EXCLUDED.cuota_mensual",
+        (codigo, v.terminal_trimble, v.app_terminal, v.categoria, v.matricula, v.marca, v.modelo, v.anno, v.itv, v.seguro, v.peaje_categoria,
          v.ptv_profile, v.ejes, v.mma, v.clase_euro, v.capacidad_peso, v.capacidad_palets,
          v.coste_adquisicion, v.fecha_adquisicion, v.vida_util, v.valor_residual,
          v.fecha_caducidad_itv, v.seguro_compania, v.fecha_caducidad_seguro, v.tipo_tenencia, v.proveedor_id, v.fecha_alta, v.cuota_mensual, v.app_terminal),
@@ -290,12 +297,12 @@ def list_documentos(conn = Depends(get_conn)):
 def list_mantenimientos(vehiculo_id: str = "", conn = Depends(get_conn)):
     if vehiculo_id:
         rows = conn.execute(
-            "SELECT m.*, v.matricula, v.categoria FROM flota.mantenimientos m LEFT JOIN vehiculos v ON v.matricula=m.vehiculo_id "
+            "SELECT m.*, v.matricula, v.categoria FROM flota.mantenimientos m LEFT JOIN vehiculos v ON v.codigo=m.vehiculo_id "
             "WHERE m.vehiculo_id=? ORDER BY m.fecha", (vehiculo_id,),
         ).fetchall()
     else:
         rows = conn.execute(
-            "SELECT m.*, v.matricula, v.categoria FROM flota.mantenimientos m LEFT JOIN vehiculos v ON v.matricula=m.vehiculo_id ORDER BY m.fecha"
+            "SELECT m.*, v.matricula, v.categoria FROM flota.mantenimientos m LEFT JOIN vehiculos v ON v.codigo=m.vehiculo_id ORDER BY m.fecha"
         ).fetchall()
     return {"mantenimientos": [dict(r) for r in rows]}
 
@@ -338,7 +345,7 @@ def list_vehiculos(categoria: str = "", conn = Depends(get_conn)):
         rows = conn.execute("SELECT * FROM vehiculos WHERE categoria=? ORDER BY id", (categoria,)).fetchall()
     else:
         rows = conn.execute("SELECT * FROM vehiculos ORDER BY id").fetchall()
-    activos = _vehiculos_en_curso()
+    activos = _vehiculos_en_curso(conn=conn)
     return {"vehiculos": [{**dict(r), "disponible": r["id"] not in activos} for r in rows]}
 
 
@@ -348,7 +355,7 @@ def list_vehiculos(categoria: str = "", conn = Depends(get_conn)):
 def list_vehiculos_disponibles(fecha_esperada_carga: str = "", categoria: str = "", conn = Depends(get_conn)):
     """Vehículos con disponibilidad para una fecha de carga: bloquea si tiene mantenimiento solapado o viaje en curso."""
     fecha = (fecha_esperada_carga or "")[:10]
-    en_curso = _vehiculos_en_curso()
+    en_curso = _vehiculos_en_curso(conn=conn)
     conds, params = [], []
     if categoria:
         conds.append("v.categoria=?")
@@ -366,7 +373,7 @@ def list_vehiculos_disponibles(fecha_esperada_carga: str = "", categoria: str = 
             )
             SELECT v.*, man.tipo_man
             FROM vehiculos v
-            LEFT JOIN man ON man.vehiculo_id = v.matricula
+            LEFT JOIN man ON man.vehiculo_id = v.codigo
             {where}
             ORDER BY v.id
             """,
@@ -635,18 +642,27 @@ def upd_mantenimiento_campos(mid: int, body: dict, conn = Depends(get_conn)):
 @router.patch("/api/vehiculos/{veh_id}")
 def upd_vehiculo(veh_id: str, body: dict, conn = Depends(get_conn)):
     """Edita datos técnicos y costes fijos de un vehículo (ITV, seguro, costes...)."""
-    allow = ("matricula", "terminal_trimble", "app_terminal", "itv", "seguro", "coste_adquisicion", "valor_residual", "vida_util",
+    # La matrícula y los terminales son editables; el código interno (codigo) NO lo es.
+    allow = ("matricula", "terminal_trimble", "app_terminal",
+             "itv", "seguro", "coste_adquisicion", "valor_residual", "vida_util",
              "clase_euro", "capacidad_peso", "capacidad_palets", "mma", "ejes",
              "fecha_caducidad_itv", "seguro_compania", "fecha_caducidad_seguro",
              "tipo_tenencia", "proveedor_id", "fecha_alta", "cuota_mensual", "fecha_proxima_revision")
     fields = {k: body[k] for k in allow if k in body}
     if not fields:
         return {"ok": False, "error": "Sin campos editables"}
-    # La matrícula es la única referencia: el código interno (id de la vista) la sigue.
-    if "matricula" in fields:
-        fields["codigo"] = fields["matricula"]
+    # Unicidad de matrícula (entre activos) y de terminales (si vienen en el body).
+    _err = validar_unicidad(
+        conn,
+        matricula=fields.get("matricula", ""),
+        terminal_trimble=fields.get("terminal_trimble", ""),
+        app_terminal=fields.get("app_terminal", ""),
+        excluir_codigo=veh_id,
+    )
+    if _err:
+        raise HTTPException(status_code=409, detail={"error": _err})
     sets = ", ".join(f"{k}=?" for k in fields)
-    conn.execute(f"UPDATE vehiculos SET {sets} WHERE id=?", (*fields.values(), veh_id))
+    conn.execute(f"UPDATE vehiculos SET {sets} WHERE codigo=?", (*fields.values(), veh_id))
     conn.commit()
     return {"ok": True}
 
@@ -656,7 +672,7 @@ def upd_vehiculo(veh_id: str, body: dict, conn = Depends(get_conn)):
 @router.get("/api/vehiculos/cercano")
 def vehiculo_cercano(lat: float, lng: float, conn = Depends(get_conn)):
     """Devuelve la tractora libre más cercana al punto dado (por última posición conocida)."""
-    activos = _vehiculos_en_curso()
+    activos = _vehiculos_en_curso(conn=conn)
     rows = conn.execute("SELECT id, last_lat, last_lng, matricula FROM vehiculos WHERE categoria='tractora'").fetchall()
     best = None
     for r in rows:
