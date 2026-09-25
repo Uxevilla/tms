@@ -42,8 +42,8 @@ def main() -> None:
 
     # Vehículo de prueba: ITV caducada (caducidad) + km alto (mantenimiento vencido).
     cur.execute(
-        "INSERT INTO flota.vehiculos (codigo, terminal_trimble, matricula, fecha_caducidad_itv, km_actuales, activo) "
-        "VALUES ('E2E-VEH', 'E2E-VEH', '0001-TST', %s, 12000, true) "
+        "INSERT INTO flota.vehiculos (codigo, terminal_trimble, app_terminal, matricula, fecha_caducidad_itv, km_actuales, activo) "
+        "VALUES ('E2E-VEH', 'E2E-VEH', 'E2E-VEH', '0001-TST', %s, 12000, true) "
         "ON CONFLICT (codigo) DO UPDATE SET fecha_caducidad_itv=EXCLUDED.fecha_caducidad_itv, km_actuales=EXCLUDED.km_actuales",
         (ayer,),
     )
@@ -86,8 +86,8 @@ def main() -> None:
     # Segundo vehículo con posición: para que el test del encuadre pueda rastrear un marcador
     # fijo mientras cambia la posición de OTRO vehículo (la cámara no debe re-encuadrar).
     cur.execute(
-        "INSERT INTO flota.vehiculos (codigo, terminal_trimble, matricula, categoria, activo) "
-        "VALUES ('E2E-VEH2', 'E2E-VEH2', '0002-TST', 'tractora', true) ON CONFLICT (codigo) DO NOTHING",
+        "INSERT INTO flota.vehiculos (codigo, terminal_trimble, app_terminal, matricula, categoria, activo) "
+        "VALUES ('E2E-VEH2', 'E2E-VEH2', 'E2E-VEH2', '0002-TST', 'tractora', true) ON CONFLICT (codigo) DO NOTHING",
     )
     cur.execute("SELECT 1 FROM telemetria.posiciones_gps WHERE vehiculo_id = 'E2E-VEH2' LIMIT 1")
     if not cur.fetchone():
@@ -127,9 +127,9 @@ def main() -> None:
     # matricula 0003-TST → se ordena al inicio del timeline (junto a las de test), visible sin scroll.
     # DO UPDATE (no DO NOTHING) para corregir valores viejos de seeds anteriores.
     cur.execute(
-        "INSERT INTO flota.vehiculos (codigo, terminal_trimble, matricula, categoria, activo) "
-        "VALUES ('E2E-TRAC', 'E2E-TRAC', '0003-TST', 'tractora', true) "
-        "ON CONFLICT (codigo) DO UPDATE SET terminal_trimble=EXCLUDED.terminal_trimble, matricula=EXCLUDED.matricula, categoria=EXCLUDED.categoria, activo=EXCLUDED.activo",
+        "INSERT INTO flota.vehiculos (codigo, terminal_trimble, app_terminal, matricula, categoria, activo) "
+        "VALUES ('E2E-TRAC', 'E2E-TRAC', 'E2E-TRAC', '0003-TST', 'tractora', true) "
+        "ON CONFLICT (codigo) DO UPDATE SET terminal_trimble=EXCLUDED.terminal_trimble, app_terminal=EXCLUDED.app_terminal, matricula=EXCLUDED.matricula, categoria=EXCLUDED.categoria, activo=EXCLUDED.activo",
     )
     cur.execute(
         "INSERT INTO flota.vehiculos (codigo, terminal_trimble, matricula, categoria, activo, capacidad_peso, capacidad_palets) "
@@ -170,9 +170,9 @@ def main() -> None:
 
     # Viaje ya asignado a E2E-TRAC2 hoy (bloqueo tractora_solapada al solapar con otro viaje).
     cur.execute(
-        "INSERT INTO operaciones.trips (codigo, estado, matricula, fecha_esperada_carga, fecha_esperada_descarga, origen, destino) "
-        "VALUES ('E2E-PLAN-SOLAP', 'sin_asignar', '0004-TST', %s, %s, 'Madrid', 'Valencia') "
-        "ON CONFLICT (codigo) DO UPDATE SET matricula='0004-TST', fecha_esperada_carga=EXCLUDED.fecha_esperada_carga, fecha_esperada_descarga=EXCLUDED.fecha_esperada_descarga",
+        "INSERT INTO operaciones.trips (codigo, estado, terminal, fecha_esperada_carga, fecha_esperada_descarga, origen, destino) "
+        "VALUES ('E2E-PLAN-SOLAP', 'sin_asignar', 'E2E-TRAC2', %s, %s, 'Madrid', 'Valencia') "
+        "ON CONFLICT (codigo) DO UPDATE SET terminal='E2E-TRAC2', fecha_esperada_carga=EXCLUDED.fecha_esperada_carga, fecha_esperada_descarga=EXCLUDED.fecha_esperada_descarga",
         (f"{hoy}T09:00", f"{hoy}T11:00"),
     )
 

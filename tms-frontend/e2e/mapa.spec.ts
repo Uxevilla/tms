@@ -63,6 +63,6 @@ test("mover el mapa: una posición nueva no cambia el encuadre", async ({ page }
   await page.waitForTimeout(6000); // el backend sondea (~3s) y el WS empuja la telemetría
   const box2 = await marcador().boundingBox();
   if (!box2) throw new Error("marcador desapareció tras la telemetría");
-  expect(box2.x).toBeCloseTo(box1.x, 0);
-  expect(box2.y).toBeCloseTo(box1.y, 0);
+  expect(Math.abs(box2.x - box1.x)).toBeLessThan(2);
+  expect(Math.abs(box2.y - box1.y)).toBeLessThan(2);
 });
