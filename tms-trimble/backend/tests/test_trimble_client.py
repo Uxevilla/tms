@@ -34,7 +34,7 @@ def test_get_client_lee_config_bd_con_tenant_none(monkeypatch):
     monkeypatch.setattr(tc.config, "DEFAULT_TRIMBLE_USERNAME", "u_env")
     monkeypatch.setattr(tc.config, "DEFAULT_TRIMBLE_CUSTOMER", "c_env")
     tc.get_client()
-    assert ("u_bd", "p_bd", "c_bd", "t_bd") in tc._client_cache
+    assert ("u_bd", "p_bd", "c_bd", "") in tc._client_cache
 
 
 def test_get_client_fallback_env_si_bd_vacia(monkeypatch):
@@ -44,7 +44,7 @@ def test_get_client_fallback_env_si_bd_vacia(monkeypatch):
     monkeypatch.setattr(tc.config, "DEFAULT_TRIMBLE_CUSTOMER", "c_env")
     monkeypatch.setattr(tc.config, "DEFAULT_TRIMBLE_TERMINAL", "t_env")
     tc.get_client()
-    assert ("u_env", "p_env", "c_env", "t_env") in tc._client_cache
+    assert ("u_env", "p_env", "c_env", "") in tc._client_cache
 
 
 def test_get_client_503_sin_credenciales(monkeypatch):
@@ -63,8 +63,8 @@ def test_get_client_cambio_password_invalida_cache(monkeypatch):
     tc.get_client()
     _mock_db(monkeypatch, {"username": "u", "password": "p2", "customer": "c", "terminal": "t"})
     tc.get_client()
-    assert ("u", "p1", "c", "t") in tc._client_cache
-    assert ("u", "p2", "c", "t") in tc._client_cache
+    assert ("u", "p1", "c", "") in tc._client_cache
+    assert ("u", "p2", "c", "") in tc._client_cache
 
 
 def test_mark_inicial_dos_dias_atras():
@@ -90,7 +90,7 @@ def test_get_client_lee_config_del_tenant_activo(scratch_db):
     try:
         with _m._db() as conn:
             prov = conn.execute("SELECT id FROM sistema.integracion_proveedores WHERE codigo='trimble'").fetchone()
-            vals = {"username": "u_tenant", "password": "p_tenant", "customer": "c_tenant", "terminal": "t_tenant"}
+            vals = {"username": "u_tenant", "password": "p_tenant", "customer": "c_tenant"}
             for clave, valor in vals.items():
                 campo = conn.execute("SELECT id FROM sistema.integracion_campos WHERE proveedor_id=? AND clave=?", (prov["id"], clave)).fetchone()
                 conn.execute("INSERT INTO sistema.integracion_valores (campo_id, valor) VALUES (?,?) ON CONFLICT (campo_id) DO UPDATE SET valor=EXCLUDED.valor", (campo["id"], _encrypt_valor(valor)))
@@ -98,7 +98,7 @@ def test_get_client_lee_config_del_tenant_activo(scratch_db):
 
         tc._client_cache.clear()
         tc.get_client()
-        assert ("u_tenant", "p_tenant", "c_tenant", "t_tenant") in tc._client_cache
+        assert ("u_tenant", "p_tenant", "c_tenant", "") in tc._client_cache
     finally:
         _m._tenant_ctx.reset(tok)
         tc._client_cache.clear()

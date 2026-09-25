@@ -26,7 +26,7 @@ def get_client():
     u = cfg.get("username", "") or config.DEFAULT_TRIMBLE_USERNAME or ""
     p = cfg.get("password", "") or config.DEFAULT_TRIMBLE_PASSWORD or ""
     c = cfg.get("customer", "") or config.DEFAULT_TRIMBLE_CUSTOMER or ""
-    term = cfg.get("terminal", "") or config.DEFAULT_TRIMBLE_TERMINAL or ""
+    term = ""  # sin terminal por defecto: el terminal se pasa explícito por operación
     if not u or not c:
         raise HTTPException(status_code=503, detail={"error": "Trimble no configurado para este cliente"})
     # La clave incluye password y terminal: cambiar cualquiera invalida la caché.

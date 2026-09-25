@@ -137,9 +137,6 @@ def mensajeria_terminales(conn = Depends(get_conn)):
         "WHERE app_terminal IS NOT NULL AND app_terminal<>'' ORDER BY app_terminal"
     ).fetchall()
     terminales = [dict(r) for r in rows]
-    default = config.DEFAULT_TRIMBLE_TERMINAL
-    if default and not any(t["id"] == default for t in terminales):
-        terminales.insert(0, {"id": default})
     return {"ok": True, "terminales": terminales}
 
 

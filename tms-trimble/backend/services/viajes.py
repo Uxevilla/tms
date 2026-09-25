@@ -544,14 +544,16 @@ def _enviar_viaje(trip_id, viaje, terminal, semirremolque, remolque):
 def _terminal_app(conn, vehiculo_id):
     """Resuelve el terminal APP (Fleet XPS) para el despacho SOAP, desde un vehículo T4U.
 
-    El T4U (id = matrícula) solo da telemetría/tacógrafo; los viajes y question paths
-    se envían a la APP vinculada (id con sufijo 'APP'). Si no hay APP vinculada,
-    cae al terminal APP por defecto (config.DEFAULT_TRIMBLE_TERMINAL, p. ej. 'demo').
+    La APP es la que recibe viajes/question paths. Si el vehículo no tiene APP
+    vinculada, se usa el propio terminal (caso APP-sin-T4U o fallback al T4U).
     """
-    row = conn.execute("SELECT app_terminal FROM vehiculos WHERE id=?", (vehiculo_id,)).fetchone()
+    row = conn.execute(
+        "SELECT app_terminal FROM vehiculos WHERE terminal_trimble = ? OR id = ? LIMIT 1",
+        (vehiculo_id, vehiculo_id),
+    ).fetchone()
     if row and row["app_terminal"]:
         return row["app_terminal"]
-    return config.DEFAULT_TRIMBLE_TERMINAL or vehiculo_id
+    return vehiculo_id
 
 
 def _vehiculo_ptv(terminal):

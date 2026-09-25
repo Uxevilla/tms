@@ -38,7 +38,6 @@ CAMPOS = {
         ("username", "Usuario SOAP", "texto", True),
         ("password", "Contraseña SOAP", "password", True),
         ("customer", "Customer", "texto", True),
-        ("terminal", "Terminal por defecto", "texto", False),
     ],
     "ptv": [
         ("api_key", "API Key", "password", True),
@@ -98,7 +97,6 @@ MIGRACION_CONFIG = {
     "trimble_username": ("trimble", "username"),
     "trimble_password": ("trimble", "password"),
     "trimble_customer": ("trimble", "customer"),
-    "trimble_terminal": ("trimble", "terminal"),
     "ptv_api_key": ("ptv", "api_key"),
     "transfollow_api_key": ("transfollow", "api_key"),
     "transfollow_base_url": ("transfollow", "base_url"),

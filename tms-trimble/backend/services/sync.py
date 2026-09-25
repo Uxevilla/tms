@@ -53,7 +53,7 @@ def _sync_status():
         "SELECT DISTINCT terminal FROM trips WHERE terminal IS NOT NULL AND terminal != ''"
     ).fetchall()]
     conn.close()
-    terminals = list(set(terminals + [_get_config("trimble_terminal", config.DEFAULT_TRIMBLE_TERMINAL)]))
+    terminals = list(set(terminals))
     states = {}
     for t in terminals:
         states.update(_query_terminal_states(t))

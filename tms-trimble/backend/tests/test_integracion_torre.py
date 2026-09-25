@@ -88,7 +88,7 @@ def test_entidad_vehiculo_posicion_y_margen_admin(scratch_db):
         )
         conn.execute(
             "INSERT INTO telemetria.posiciones_gps (time, vehiculo_id, lat, lng, speed_kmh, heading) "
-            "VALUES (?, ?, ?, ?, ?, ?)", ("2026-09-24T08:00:00Z", "V-3", 40.4, -3.7, 80.0, 90.0),
+            "VALUES (?, ?, ?, ?, ?, ?)", ("2026-09-24T08:00:00Z", "T-3", 40.4, -3.7, 80.0, 90.0),
         )
 
         admin = torre.entidad_vehiculo("V-3", user={"rol": "admin"}, conn=conn)
