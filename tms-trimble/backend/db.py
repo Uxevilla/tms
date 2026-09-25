@@ -149,7 +149,7 @@ CREATE TABLE IF NOT EXISTS mensajes (
 );
 CREATE TABLE IF NOT EXISTS flota.mantenimientos (
     id SERIAL PRIMARY KEY, vehiculo_id TEXT, tipo TEXT, fecha TEXT, km INTEGER,
-    coste NUMERIC(10,2) DEFAULT 0, notas TEXT, hecho BOOLEAN DEFAULT false, fecha_fin TEXT, creado TEXT
+    coste NUMERIC(10,2) DEFAULT 0, notas TEXT, hecho BOOLEAN DEFAULT false, fecha_fin TEXT, gasto_id BIGINT, creado TEXT
 );
 CREATE TABLE IF NOT EXISTS ecmr (
     id BIGSERIAL PRIMARY KEY, viaje_id TEXT, viaje_valido BOOLEAN DEFAULT false,
@@ -825,6 +825,7 @@ def _db():
             cur.execute("ALTER TABLE finanzas.gastos_vehiculos ADD COLUMN IF NOT EXISTS cuenta_contable_gasto TEXT")
             cur.execute("ALTER TABLE finanzas.gastos_vehiculos ADD COLUMN IF NOT EXISTS estado_pago TEXT DEFAULT 'Pendiente'")
             cur.execute("ALTER TABLE flota.mantenimientos ADD COLUMN IF NOT EXISTS fecha_fin TEXT")
+            cur.execute("ALTER TABLE flota.mantenimientos ADD COLUMN IF NOT EXISTS gasto_id BIGINT")
             cur.execute("ALTER TABLE empleados ADD COLUMN IF NOT EXISTS caducidad_carnet TEXT")
             cur.execute("ALTER TABLE empleados ADD COLUMN IF NOT EXISTS caducidad_cap TEXT")
             cur.execute("ALTER TABLE empleados ADD COLUMN IF NOT EXISTS caducidad_medica TEXT")

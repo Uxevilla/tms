@@ -50,3 +50,31 @@ test("completar un mantenimiento con 'generar gasto' → gasto con cuenta 622", 
   // Verifica en BD: aparece el gasto con cuenta 622 para el vehículo filtrado.
   await expect.poll(() => contarGastos622("E2E-VEH2")).toBeGreaterThanOrEqual(1);
 });
+
+test("planificar y luego completar editando → genera 1 gasto 622", async ({ page }) => {
+  await page.goto("/taller");
+  await expect(page.getByRole("button", { name: /Nuevo mantenimiento/i })).toBeVisible();
+
+  const antes = await contarGastos622("E2E-VEH2");
+
+  // 1. Planificar: crear SIN completar (sin generar gasto).
+  await page.getByLabel("Vehículo", { exact: true }).selectOption("E2E-VEH2");
+  await page.getByRole("button", { name: /Nuevo mantenimiento/i }).click();
+  await page.getByLabel("Fecha", { exact: true }).fill("2026-09-25");
+  await page.getByLabel("Notas", { exact: true }).fill("planificar-editar-e2e");
+  await page.getByRole("button", { name: "Guardar", exact: true }).click();
+
+  // Sheet cerrado + sin gasto aún.
+  await expect(page.getByRole("button", { name: /Nuevo mantenimiento/i })).toBeVisible();
+  await expect.poll(() => contarGastos622("E2E-VEH2")).toBe(antes);
+
+  // 2. Editar la fila recién creada: Completado + Generar gasto.
+  await page.getByText("planificar-editar-e2e").click();
+  await page.getByLabel("Completado", { exact: true }).check();
+  await page.getByLabel("Generar gasto", { exact: true }).check();
+  await page.getByLabel("Base imponible (€)", { exact: true }).fill("150");
+  await page.getByRole("button", { name: "Guardar", exact: true }).click();
+
+  // 3. Exactamente 1 gasto más (el backend es idempotente vía gasto_id).
+  await expect.poll(() => contarGastos622("E2E-VEH2")).toBe(antes + 1);
+});

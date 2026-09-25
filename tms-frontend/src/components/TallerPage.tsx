@@ -12,7 +12,7 @@ import { z } from "zod";
 import { Download, Plus, Pencil } from "lucide-react";
 
 import { api } from "../api";
-import { REST_MANTENIMIENTOS, REST_VEHICULOS_DISPONIBLES } from "../config";
+import { REST_MANTENIMIENTOS, REST_PROVEEDORES, REST_VEHICULOS_DISPONIBLES } from "../config";
 import { CaducidadRenderer } from "./CaducidadRenderer";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
@@ -40,6 +40,11 @@ interface Vehiculo {
   categoria: string;
 }
 
+interface Proveedor {
+  id: number;
+  nombre: string;
+}
+
 const TIPO_MANTENIMIENTO = [
   "aceite",
   "frenos",
@@ -51,6 +56,7 @@ const TIPO_MANTENIMIENTO = [
 
 // ------------------------------------------------------------------ formulario
 const mantenimientoSchema = z.object({
+  vehiculo_id: z.string().min(1, "Requerido"),
   tipo: z.enum(TIPO_MANTENIMIENTO),
   fecha: z.string().min(1, "Requerido"),
   fecha_fin: z.string().optional().nullable(),
@@ -67,6 +73,7 @@ const mantenimientoSchema = z.object({
 type MantenimientoForm = z.infer<typeof mantenimientoSchema>;
 
 const valoresPorDefecto: MantenimientoForm = {
+  vehiculo_id: "",
   tipo: "revision",
   fecha: "",
   fecha_fin: "",
@@ -106,6 +113,12 @@ export function TallerPage() {
       (await api<{ vehiculos?: Vehiculo[] }>(REST_VEHICULOS_DISPONIBLES)).vehiculos ?? [],
   });
 
+  const { data: proveedores = [] } = useQuery({
+    queryKey: ["proveedores"],
+    queryFn: async () =>
+      (await api<{ proveedores?: Proveedor[] }>(REST_PROVEEDORES)).proveedores ?? [],
+  });
+
   const form = useForm<MantenimientoForm>({
     resolver: zodResolver(mantenimientoSchema),
     defaultValues: valoresPorDefecto,
@@ -121,7 +134,7 @@ export function TallerPage() {
       }
       return api(REST_MANTENIMIENTOS, {
         method: "POST",
-        body: JSON.stringify({ ...valores, vehiculo_id: filtroVehiculo || "" }),
+        body: JSON.stringify(valores),
       });
     },
     onSuccess: () => {
@@ -241,7 +254,7 @@ export function TallerPage() {
 
   function abrirAlta() {
     setEditando(null);
-    form.reset(valoresPorDefecto);
+    form.reset({ ...valoresPorDefecto, vehiculo_id: filtroVehiculo });
     setAbierto(true);
   }
 
@@ -322,6 +335,7 @@ export function TallerPage() {
                     setEditando(row.original);
                     form.reset({
                       ...valoresPorDefecto,
+                      vehiculo_id: row.original.vehiculo_id,
                       tipo: (row.original.tipo as MantenimientoForm["tipo"]) ?? "revision",
                       fecha: row.original.fecha,
                       fecha_fin: row.original.fecha_fin ?? "",
@@ -351,6 +365,26 @@ export function TallerPage() {
             <SheetTitle>{editando ? "Editar mantenimiento" : "Nuevo mantenimiento"}</SheetTitle>
           </SheetHeader>
           <form onSubmit={form.handleSubmit(onSubmit)} className="mt-4 flex flex-col gap-4">
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="vehiculo_id">Vehículo</Label>
+              <select
+                id="vehiculo_id"
+                value={form.watch("vehiculo_id")}
+                onChange={(e) => form.setValue("vehiculo_id", e.target.value)}
+                className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"
+              >
+                <option value="">Seleccionar vehículo</option>
+                {vehiculos.map((v) => (
+                  <option key={v.id} value={v.id}>
+                    {v.matricula} ({v.categoria})
+                  </option>
+                ))}
+              </select>
+              {form.formState.errors.vehiculo_id && (
+                <span className="text-xs text-red-600">{form.formState.errors.vehiculo_id.message}</span>
+              )}
+            </div>
+
             <div className="grid grid-cols-2 gap-3">
               <div className="flex flex-col gap-1.5">
                 <Label htmlFor="tipo">Tipo</Label>
@@ -461,14 +495,22 @@ export function TallerPage() {
                   />
                 </div>
                 <div className="flex flex-col gap-1.5">
-                  <Label htmlFor="proveedor_id">Proveedor ID</Label>
-                  <Input
+                  <Label htmlFor="proveedor_id">Proveedor</Label>
+                  <select
                     id="proveedor_id"
-                    type="number"
-                    min="1"
-                    step="1"
-                    {...form.register("proveedor_id", { setValueAs: (v) => (v === "" || v == null ? null : Number(v)) })}
-                  />
+                    value={form.watch("proveedor_id") ?? ""}
+                    onChange={(e) =>
+                      form.setValue("proveedor_id", e.target.value === "" ? null : Number(e.target.value))
+                    }
+                    className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"
+                  >
+                    <option value="">Sin proveedor</option>
+                    {proveedores.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.nombre}
+                      </option>
+                    ))}
+                  </select>
                 </div>
               </div>
             )}
@@ -493,7 +535,7 @@ export function TallerPage() {
               <Button type="button" variant="outline" onClick={() => setAbierto(false)}>
                 Cancelar
               </Button>
-              <Button type="submit" disabled={guardar.isPending}>
+              <Button type="submit" disabled={guardar.isPending || !form.watch("vehiculo_id")}>
                 {guardar.isPending ? "Guardando…" : "Guardar"}
               </Button>
             </div>
