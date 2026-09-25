@@ -19,6 +19,7 @@ const ContabilidadDashboard = lazy(() => import("./components/ContabilidadDashbo
 const KpiDashboard = lazy(() => import("./components/KpiDashboard").then((m) => ({ default: m.KpiDashboard })));
 const VehiculosDashboard = lazy(() => import("./components/VehiculosDashboard").then((m) => ({ default: m.VehiculosDashboard })));
 const VehiculosPage = lazy(() => import("./components/VehiculosPage").then((m) => ({ default: m.VehiculosPage })));
+const ConductoresPage = lazy(() => import("./components/ConductoresPage").then((m) => ({ default: m.ConductoresPage })));
 const RrhhDashboard = lazy(() => import("./components/RrhhDashboard").then((m) => ({ default: m.RrhhDashboard })));
 const GastosDashboard = lazy(() => import("./components/GastosDashboard").then((m) => ({ default: m.GastosDashboard })));
 const DocumentosDashboard = lazy(() => import("./components/DocumentosDashboard").then((m) => ({ default: m.DocumentosDashboard })));
@@ -143,7 +144,7 @@ const vehiculosRoute = createRoute({
 const conductoresRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "/conductores",
-  component: () => <Placeholder titulo="Conductores" fase="Fase 5" />,
+  component: () => <ConductoresPage />,
 });
 const tallerRoute = createRoute({
   getParentRoute: () => appRoute,

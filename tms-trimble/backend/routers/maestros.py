@@ -201,7 +201,8 @@ def list_clientes(conn = Depends(get_conn)):
 
 @router.get("/api/conductores")
 def list_conductores(fecha_esperada_carga: str = "", conn = Depends(get_conn)):
-    """Conductores con disponibilidad según ausencias_empleados para la fecha de carga indicada."""
+    """Conductores con disponibilidad según ausencias_empleados para la fecha de carga indicada.
+    Incluye caducidades del empleado (carnet, CAP, médica)."""
     fecha = (fecha_esperada_carga or "")[:10]
     if fecha:
         rows = conn.execute(
@@ -212,8 +213,10 @@ def list_conductores(fecha_esperada_carga: str = "", conn = Depends(get_conn)):
                 WHERE ? >= fecha_inicio AND ? <= fecha_fin
                 ORDER BY empleado_id, fecha_inicio
             )
-            SELECT c.*, (aus.empleado_id IS NULL) AS disponible, aus.tipo AS motivo_ausencia
+            SELECT c.*, e.caducidad_carnet, e.caducidad_cap, e.caducidad_medica,
+                   (aus.empleado_id IS NULL) AS disponible, aus.tipo AS motivo_ausencia
             FROM conductores c
+            JOIN empleados e ON e.id = c.empleado_id
             LEFT JOIN aus ON aus.empleado_id = c.empleado_id
             ORDER BY c.nombre
             """,
@@ -221,7 +224,9 @@ def list_conductores(fecha_esperada_carga: str = "", conn = Depends(get_conn)):
         ).fetchall()
     else:
         rows = conn.execute(
-            "SELECT c.*, true AS disponible, NULL AS motivo_ausencia FROM conductores c ORDER BY c.nombre"
+            "SELECT c.*, e.caducidad_carnet, e.caducidad_cap, e.caducidad_medica, "
+            "true AS disponible, NULL AS motivo_ausencia "
+            "FROM conductores c JOIN empleados e ON e.id = c.empleado_id ORDER BY c.nombre"
         ).fetchall()
     return {"conductores": [dict(r) for r in rows]}
 
