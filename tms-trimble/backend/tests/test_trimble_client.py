@@ -104,3 +104,42 @@ def test_get_client_lee_config_del_tenant_activo(scratch_db):
         _m._tenant_ctx.reset(tok)
         tc._client_cache.clear()
 
+
+def test_unassign_trips_usa_tripIds_plural():
+    """unAssignTrips debe usar <tripIds> (PLURAL) — el WSDL lo exige; <tripId> (singular) es un no-op."""
+    from soap_client import TrimbleClient
+
+    c = TrimbleClient("u", "p", "cust", "term")
+    bodies = []
+
+    def _capture(url, body):
+        bodies.append(body)
+        return {"ok": True, "status": 200, "body": "<ok/>"}
+
+    c._call = _capture
+    r = c.unassign_trips(["TRIP-1", "TRIP-2"])
+    assert r["ok"] is True
+    body = bodies[0]
+    assert "<tripIds>TRIP-1</tripIds>" in body
+    assert "<tripIds>TRIP-2</tripIds>" in body
+    assert "<tripId>" not in body
+
+
+def test_remove_trips_usa_tripId_singular():
+    """removeTrips sí usa <tripId> (SINGULAR) — distinto de unAssignTrips."""
+    from soap_client import TrimbleClient
+
+    c = TrimbleClient("u", "p", "cust", "term")
+    bodies = []
+
+    def _capture(url, body):
+        bodies.append(body)
+        return {"ok": True, "status": 200, "body": "<ok/>"}
+
+    c._call = _capture
+    r = c.remove_trips(["TRIP-1"])
+    assert r["ok"] is True
+    body = bodies[0]
+    assert "<tripId>TRIP-1</tripId>" in body
+    assert "<tripIds>" not in body
+
