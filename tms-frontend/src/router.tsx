@@ -18,6 +18,7 @@ const OperacionesDashboard = lazy(() => import("./components/OperacionesDashboar
 const ContabilidadDashboard = lazy(() => import("./components/ContabilidadDashboard").then((m) => ({ default: m.ContabilidadDashboard })));
 const KpiDashboard = lazy(() => import("./components/KpiDashboard").then((m) => ({ default: m.KpiDashboard })));
 const VehiculosDashboard = lazy(() => import("./components/VehiculosDashboard").then((m) => ({ default: m.VehiculosDashboard })));
+const VehiculosPage = lazy(() => import("./components/VehiculosPage").then((m) => ({ default: m.VehiculosPage })));
 const RrhhDashboard = lazy(() => import("./components/RrhhDashboard").then((m) => ({ default: m.RrhhDashboard })));
 const GastosDashboard = lazy(() => import("./components/GastosDashboard").then((m) => ({ default: m.GastosDashboard })));
 const DocumentosDashboard = lazy(() => import("./components/DocumentosDashboard").then((m) => ({ default: m.DocumentosDashboard })));
@@ -137,7 +138,7 @@ const mensajesRoute = createRoute({
 const vehiculosRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "/vehiculos",
-  component: () => <VehiculosDashboard />,
+  component: () => <VehiculosPage />,
 });
 const conductoresRoute = createRoute({
   getParentRoute: () => appRoute,
