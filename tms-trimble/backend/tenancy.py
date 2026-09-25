@@ -50,7 +50,6 @@ def _ensure_master():
             "trimble_username": config.DEFAULT_TRIMBLE_USERNAME,
             "trimble_password": config.DEFAULT_TRIMBLE_PASSWORD,
             "trimble_customer": config.DEFAULT_TRIMBLE_CUSTOMER,
-            "trimble_terminal": config.DEFAULT_TRIMBLE_TERMINAL,
             "ptv_api_key": config.DEFAULT_PTV_API_KEY,
             "transfollow_api_key": config.DEFAULT_TRANSFOLLOW_API_KEY,
             "transfollow_base_url": config.DEFAULT_TRANSFOLLOW_BASE_URL,

@@ -60,6 +60,7 @@ export const REST_CONFIG_ACTIVIDAD = (codigo: string, id: number) => `/api/confi
 export const REST_CONFIG_USUARIOS = "/api/configuracion/usuarios";
 export const REST_CONFIG_USUARIO = (id: number) => `/api/configuracion/usuarios/${id}`;
 export const REST_CONFIG_ROLES = "/api/configuracion/roles";
+export const PATCH_EMPLEADO = (id: string) => `/api/empleados/${id}`;
 
 export const WS_OPERACIONES = (() => {
   const proto =

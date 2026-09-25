@@ -63,7 +63,7 @@ DEFAULT_AUTH_USERS = [u.strip() for u in os.environ.get("TMS_AUTH_USERS", "").sp
 DEFAULT_AUTH_PASSWORD = os.environ.get("TMS_AUTH_PASSWORD", "")
 
 # Nombres de clave en la tabla `config` de cada cliente para las integraciones
-TRIMBLE_KEYS = ("trimble_username", "trimble_password", "trimble_customer", "trimble_terminal")
+TRIMBLE_KEYS = ("trimble_username", "trimble_password", "trimble_customer")
 PTV_KEYS = ("ptv_api_key",)
 SMTP_KEYS = ("smtp_host", "smtp_port", "smtp_user", "smtp_password", "smtp_from")
 TRANSFOLLOW_KEYS = ("transfollow_api_key", "transfollow_base_url")

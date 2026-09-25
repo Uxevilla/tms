@@ -267,10 +267,12 @@ class Conductor(BaseModel):
     dni: str = ""
     telefono: str = ""
     email: str = ""
+    did: str = ""
 
 
 class Vehiculo(BaseModel):
     id: str = ""
+    terminal_trimble: str = ""
     categoria: str = "tractora"
     matricula: str = ""
     terminal_trimble: str = ""
@@ -299,6 +301,7 @@ class Vehiculo(BaseModel):
     fecha_alta: str = ""
     cuota_mensual: float = 0.0
     fecha_proxima_revision: str = ""
+    app_terminal: str = ""
 
 
 class DireccionMaestro(BaseModel):

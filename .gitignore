@@ -16,6 +16,7 @@
 # Secretos y artefactos (en cualquier nivel)
 **/.env
 **/*.env
+**/docker-compose.fake-e2e.yml
 **/node_modules/
 **/dist/
 **/.venv/

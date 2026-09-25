@@ -91,7 +91,7 @@ def test_get_client_lee_config_del_tenant_activo(scratch_db):
     try:
         with _m._db() as conn:
             prov = conn.execute("SELECT id FROM sistema.integracion_proveedores WHERE codigo='trimble'").fetchone()
-            vals = {"username": "u_tenant", "password": "p_tenant", "customer": "c_tenant", "terminal": "t_tenant"}
+            vals = {"username": "u_tenant", "password": "p_tenant", "customer": "c_tenant"}
             for clave, valor in vals.items():
                 campo = conn.execute("SELECT id FROM sistema.integracion_campos WHERE proveedor_id=? AND clave=?", (prov["id"], clave)).fetchone()
                 conn.execute("INSERT INTO sistema.integracion_valores (campo_id, valor) VALUES (?,?) ON CONFLICT (campo_id) DO UPDATE SET valor=EXCLUDED.valor", (campo["id"], _encrypt_valor(valor)))
@@ -99,7 +99,7 @@ def test_get_client_lee_config_del_tenant_activo(scratch_db):
 
         tc._client_cache.clear()
         tc.get_client()
-        assert ("u_tenant", "p_tenant", "c_tenant", "t_tenant") in tc._client_cache
+        assert ("u_tenant", "p_tenant", "c_tenant", tc.config.DEFAULT_TRIMBLE_TERMINAL) in tc._client_cache
     finally:
         _m._tenant_ctx.reset(tok)
         tc._client_cache.clear()

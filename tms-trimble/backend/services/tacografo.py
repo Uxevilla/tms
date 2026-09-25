@@ -112,9 +112,11 @@ def _decode_dstat(b64):
 
 
 def _ingestar_dstat(did, source, vehiculo_id, raw, decoded, time):
-    """Persiste la foto DSTAT más reciente de un conductor (clave DID) con su terminal."""
-    if not decoded:
-        return
+    """Persiste la foto DSTAT más reciente de un conductor (clave DID) con su terminal.
+
+    Si el decode falla (decoded == {}), persiste igual con valores a 0 conservando
+    `dstat_raw`, para poder depurar el formato real de producción de la traza 82.
+    """
     with _db() as conn:
         conn.execute(
             "INSERT INTO tacografo_dstat (did, source, vehiculo_id, dstat_raw, "

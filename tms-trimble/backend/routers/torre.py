@@ -452,16 +452,17 @@ def buscar(q: Annotated[str, Query(max_length=80)] = "", limite: Annotated[int, 
 @router.get("/api/entidad/vehiculo/{codigo}", response_model=EntidadVehiculo)
 def entidad_vehiculo(codigo: str, user: dict = Depends(require_role(["admin", "dispatcher"])),
                      conn: _Conn = Depends(get_conn)):
-    # Acepta id, codigo o matrícula; resuelve el vehículo UNA vez y usa el resuelto en todas las subconsultas.
+    # Acepta id, codigo, matrícula o terminal_trimble; resuelve el vehículo UNA vez y usa el resuelto en todas las subconsultas.
     v = conn.execute(
-        "SELECT * FROM vehiculos WHERE id = ? OR codigo = ? OR matricula = ? LIMIT 1",
-        (codigo, codigo, codigo),
+        "SELECT * FROM vehiculos WHERE id = ? OR codigo = ? OR matricula = ? OR terminal_trimble = ? LIMIT 1",
+        (codigo, codigo, codigo, codigo),
     ).fetchone()
     if not v:
         raise HTTPException(status_code=404, detail={"error": "Vehículo no encontrado"})
     es_admin = user.get("rol") == "admin"
-    veh = v["codigo"] or ""  # identificador canónico (== matrícula en producción)
-    terminal = v["terminal_trimble"] or ""
+    veh = v["codigo"] or ""  # código interno (referencia en mantenimientos/files/gastos)
+    matr = v["matricula"] or ""  # matrícula = referencia TMS (trips.matricula)
+    terminal = v["terminal_trimble"] or ""  # ID del proveedor de telemetría (posiciones_gps/tacografo_dstat)
 
     pos = conn.execute(
         "SELECT lat, lng, speed_kmh, heading, odometer_km, time FROM telemetria.posiciones_gps "
@@ -539,7 +540,7 @@ def entidad_vehiculo(codigo: str, user: dict = Depends(require_role(["admin", "d
             "   WHERE (t.matricula = ? OR t.terminal = ?) AND substr(COALESCE(t.fecha_actualizacion, t.creado),1,7) = ?) AS ingresos, "
             "  (SELECT COALESCE(SUM(COALESCE(g.importe_total,0)),0) FROM finanzas.gastos_vehiculos g "
             "   WHERE g.vehiculo_id = ? AND substr(COALESCE(g.fecha,''),1,7) = ?) AS costes",
-            (veh, terminal, mes, veh, mes),
+            (matr, terminal, mes, veh, mes),
         ).fetchone()
         ingresos = float(r["ingresos"] or 0)
         costes = float(r["costes"] or 0)

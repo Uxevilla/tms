@@ -133,7 +133,6 @@ def get_empresa(conn = Depends(get_conn)):
 def health():
     return {
         "ok": True,
-        "terminal": _get_config("trimble_terminal", config.DEFAULT_TRIMBLE_TERMINAL),
         "customer": _get_config("trimble_customer", config.DEFAULT_TRIMBLE_CUSTOMER),
     }
 

@@ -185,7 +185,7 @@ def export_xlsx(tipo: str = "trips", user: dict = Depends(require_jwt), conn = D
     elif tipo == "mantenimientos":
         rows = conn.execute(
             "SELECT m.fecha, v.matricula, m.tipo, m.km, m.coste, m.notas, m.hecho "
-            "FROM flota.mantenimientos m LEFT JOIN vehiculos v ON v.id=m.vehiculo_id ORDER BY m.fecha DESC"
+            "FROM flota.mantenimientos m LEFT JOIN vehiculos v ON v.codigo=m.vehiculo_id ORDER BY m.fecha DESC"
         ).fetchall()
         _write(["Fecha", "Vehículo", "Tipo", "Km", "Coste (€)", "Notas", "Hecho"],
                [[r["fecha"], r["matricula"], r["tipo"], r["km"], float(r["coste"] or 0), r["notas"],
