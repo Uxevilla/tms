@@ -121,9 +121,10 @@ def mensajeria_mensajes(terminal: str, conn = Depends(get_conn)):
     """Mensajes de un terminal (recibidos: source=terminal; enviados: terminal=terminal)."""
     rows = conn.execute(
         "SELECT id, trip_id, tipo, messagetype, originid, source, subject, body, time, needreply, terminal "
-        "FROM mensajes WHERE source=? OR terminal=? ORDER BY time LIMIT 300",
+        "FROM mensajes WHERE source=? OR terminal=? ORDER BY time DESC LIMIT 300",
         (terminal, terminal),
     ).fetchall()
+    rows = list(reversed(rows))  # los 300 más recientes, en orden cronológico (ASC)
     return {"ok": True, "terminal": terminal, "mensajes": [dict(r) for r in rows]}
 
 
