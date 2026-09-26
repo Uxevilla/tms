@@ -14,8 +14,24 @@ from core import *
 from models import *
 from services.contabilidad import _costes_reales_viaje, _crear_factura_borrador, _generar_factura_pdf, _liquidar_conductor
 from services.contabilidad import _post_asiento, _gasto_subcontrata, _costes_reales_viaje, _crear_factura_borrador
+from routers.torre import _checklist_documentacion
 
 router = APIRouter(dependencies=[Depends(require_role(["admin"]))])
+
+
+def _hoy_madrid():
+    """Fecha de hoy en Europe/Madrid: expedición y numeración de facturas."""
+    from zoneinfo import ZoneInfo
+    return datetime.datetime.now(ZoneInfo("Europe/Madrid")).date().isoformat()
+
+
+def _documentacion_viaje(conn, trip_id, cliente_id):
+    """Checklist de facturación (PR 0.4) para un viaje: {completa, faltan[]}."""
+    presentes = [r["tipo_documento"] for r in conn.execute(
+        "SELECT tipo_documento FROM files WHERE trip_id=? AND tipo_documento IS NOT NULL", (trip_id,),
+    ).fetchall()]
+    chk = _checklist_documentacion(conn, cliente_id, presentes)
+    return {"completa": bool(chk.get("ok")), "faltan": chk.get("faltan") or []}
 
 # ---------------------------------------------------------------------- #
 # Contabilidad: doble partida (plan contable, asientos, informes, facturas)
@@ -774,16 +790,24 @@ def contabilidad_facturas(conn = Depends(get_conn)):
 
 
 def contabilidad_facturables(conn = Depends(get_conn)):
+    """Viajes Entregado sin factura EMITIDA (los Borrador se descartan al agrupar)."""
     rows = conn.execute(
-        "SELECT t.id, t.referencia, t.cliente, t.precio, t.iva, t.origen, t.destino, t.creado, t.estado "
+        "SELECT t.id, t.referencia, t.cliente, t.cliente_id, t.precio, t.iva, t.origen, t.destino, t.creado, t.estado "
         "FROM trips t "
-        "WHERE NOT EXISTS (SELECT 1 FROM finanzas.facturas f WHERE f.trip_id=t.id) "
-        "AND NOT EXISTS (SELECT 1 FROM finanzas.factura_lineas fl WHERE fl.trip_id=t.id) "
+        "WHERE NOT EXISTS (SELECT 1 FROM finanzas.facturas f WHERE f.trip_id=t.id AND COALESCE(f.estado,'')<>'borrador') "
+        "AND NOT EXISTS (SELECT 1 FROM finanzas.factura_lineas fl JOIN finanzas.facturas f ON f.id=fl.factura_id "
+        "                 WHERE fl.trip_id=t.id AND COALESCE(f.estado,'')<>'borrador') "
         "AND COALESCE(t.precio,0) > 0 "
-        "AND LOWER(COALESCE(t.estado,'')) NOT IN ('sin_asignar','cancelado','canceled','rechazado','refused','error') "
         "ORDER BY t.creado DESC LIMIT 200"
     ).fetchall()
-    return {"viajes": [dict(r) for r in rows]}
+    viajes = []
+    for r in rows:
+        if _map_estado(r["estado"]) != "Entregado":
+            continue
+        d = dict(r)
+        d["documentacion"] = _documentacion_viaje(conn, r["id"], r["cliente_id"])
+        viajes.append(d)
+    return {"viajes": viajes}
 
 
 
@@ -838,10 +862,11 @@ def _crear_factura(conn, trips, cliente_id, cliente_nombre, fecha):
     """Crea una factura (y sus líneas) para una lista de viajes del mismo cliente.
     Devuelve (factura_id, numero, base, cuota, total)."""
     base = round(sum(float(t["precio"] or 0) for t in trips), 2)
-    iva = round(float(trips[0]["iva"] or 21), 2)
+    iva = round(float(trips[0]["iva"] if trips[0]["iva"] is not None else 21), 2)
     cuota = round(base * iva / 100.0, 2)
     total = round(base + cuota, 2)
     numero = _factura_numero(conn, fecha)
+    fecha_op = (trips[0]["creado"] or "")[:10] or fecha
     asiento_id = _post_asiento(
         fecha, f"Factura {numero} - {cliente_nombre or 'varios'}",
         [("430", total, 0, f"Factura {numero}"),
@@ -850,10 +875,10 @@ def _crear_factura(conn, trips, cliente_id, cliente_nombre, fecha):
         origen="viaje", documento=numero, conn=conn,
     )
     cur = conn.execute(
-        "INSERT INTO finanzas.facturas (numero, fecha, trip_id, cliente_id, cliente_nombre, base, iva, cuota_iva, total, estado, asiento_id, creado) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id",
+        "INSERT INTO finanzas.facturas (numero, fecha, trip_id, cliente_id, cliente_nombre, base, iva, cuota_iva, total, estado, asiento_id, creado, fecha_operacion) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id",
         (numero, fecha, trips[0]["id"] if len(trips) == 1 else None, cliente_id, cliente_nombre,
-         base, iva, cuota, total, "emitida", asiento_id, datetime.datetime.utcnow().isoformat() + "Z"),
+         base, iva, cuota, total, "emitida", asiento_id, datetime.datetime.utcnow().isoformat() + "Z", fecha_op),
     )
     factura_id = cur.fetchone()["id"]
     for t in trips:
@@ -878,22 +903,42 @@ def contabilidad_factura_agrupada(req: dict, conn = Depends(get_conn)):
     trip_ids = [t for t in (req.get("trip_ids") or []) if t]
     if not trip_ids:
         raise HTTPException(status_code=400, detail={"error": "Selecciona al menos un viaje para facturar."})
+    force = bool(req.get("force"))
     ph = ",".join("?" for _ in trip_ids)
     trips = conn.execute(f"SELECT * FROM trips WHERE id IN ({ph}) ORDER BY creado", trip_ids).fetchall()
     if len(trips) != len(set(trip_ids)):
         raise HTTPException(status_code=404, detail={"error": "Algún viaje seleccionado no existe."})
-    clientes = {t["cliente_id"] for t in trips}
-    if len(clientes) > 1:
-        raise HTTPException(status_code=409, detail={"error": "Todos los viajes deben ser del mismo cliente para agruparlos."})
+
+    def clave(t):
+        return t["cliente_id"] if t["cliente_id"] is not None else (t["cliente"] or "").strip().lower()
+
+    if len({clave(t) for t in trips}) > 1:
+        raise HTTPException(status_code=409, detail={"error": "Viajes de clientes distintos."})
     for t in trips:
-        if conn.execute("SELECT 1 FROM finanzas.facturas WHERE trip_id=?", (t["id"],)).fetchone() or \
-           conn.execute("SELECT 1 FROM finanzas.factura_lineas WHERE trip_id=?", (t["id"],)).fetchone():
-            raise HTTPException(status_code=409, detail={"error": f"El viaje {t['id']} ya tiene factura."})
-        if float(t["precio"] or 0) <= 0:
-            raise HTTPException(status_code=400, detail={"error": f"El viaje {t['id']} no tiene precio."})
+        if t["cliente_id"] is None and not (t["cliente"] or "").strip():
+            raise HTTPException(status_code=400, detail={"error": f"Asigna el cliente al viaje {t['id']}."})
+    if len({round(float(t["iva"] if t["iva"] is not None else 21), 2) for t in trips}) > 1:
+        raise HTTPException(status_code=409, detail={"error": "IVA distinto (21% y 0%): factúralos por separado."})
+
+    # Documentación completa salvo force=true.
+    if not force:
+        for t in trips:
+            doc = _documentacion_viaje(conn, t["id"], t["cliente_id"])
+            if not doc["completa"]:
+                faltan = ", ".join(doc["faltan"]) or "documentación"
+                raise HTTPException(status_code=409, detail={"error": f"Falta {faltan} en el viaje {t['id']}."})
+
+    # Borrar borradores previos de estos viajes (misma transacción).
+    for t in trips:
+        for fid in [r["id"] for r in conn.execute(
+            "SELECT id FROM finanzas.facturas WHERE trip_id=? AND COALESCE(estado,'')='borrador'", (t["id"],)
+        ).fetchall()]:
+            conn.execute("DELETE FROM finanzas.factura_lineas WHERE factura_id=?", (fid,))
+            conn.execute("DELETE FROM finanzas.facturas WHERE id=?", (fid,))
+
     cliente_nombre = trips[0]["cliente"] or ""
     cliente_id = trips[0]["cliente_id"]
-    fecha = (trips[0]["creado"] or "")[:10] or datetime.date.today().isoformat()
+    fecha = _hoy_madrid()
     try:
         factura_id, numero, base, cuota, total = _crear_factura(conn, trips, cliente_id, cliente_nombre, fecha)
     except ValueError as e:
@@ -908,18 +953,26 @@ def contabilidad_factura_agrupada(req: dict, conn = Depends(get_conn)):
 @router.post("/api/contabilidad/facturas/{trip_id}")
 
 
-def contabilidad_generar_factura(trip_id: str, conn = Depends(get_conn)):
+def contabilidad_generar_factura(trip_id: str, req: dict | None = None, conn = Depends(get_conn)):
     trip = conn.execute("SELECT * FROM trips WHERE id=?", (trip_id,)).fetchone()
     if not trip:
         raise HTTPException(status_code=404, detail={"error": "Viaje no encontrado."})
-    if conn.execute("SELECT 1 FROM finanzas.facturas WHERE trip_id=?", (trip_id,)).fetchone() or \
-       conn.execute("SELECT 1 FROM finanzas.factura_lineas WHERE trip_id=?", (trip_id,)).fetchone():
-        raise HTTPException(status_code=409, detail={"error": "Este viaje ya tiene factura."})
+    force = bool((req or {}).get("force"))
     if float(trip["precio"] or 0) <= 0:
         raise HTTPException(status_code=400, detail={"error": "El viaje no tiene precio."})
-    fecha = (trip["creado"] or "")[:10] or datetime.date.today().isoformat()
+    if not force:
+        doc = _documentacion_viaje(conn, trip_id, trip["cliente_id"])
+        if not doc["completa"]:
+            faltan = ", ".join(doc["faltan"]) or "documentación"
+            raise HTTPException(status_code=409, detail={"error": f"Falta {faltan} en el viaje {trip_id}."})
+    # Borrar borrador previo (misma transacción).
+    for fid in [r["id"] for r in conn.execute(
+        "SELECT id FROM finanzas.facturas WHERE trip_id=? AND COALESCE(estado,'')='borrador'", (trip_id,)
+    ).fetchall()]:
+        conn.execute("DELETE FROM finanzas.factura_lineas WHERE factura_id=?", (fid,))
+        conn.execute("DELETE FROM finanzas.facturas WHERE id=?", (fid,))
+    fecha = _hoy_madrid()
     try:
-        # Subcontratación: generar el gasto (624/410) antes de calcular costes/margen.
         if trip["subcontratado"]:
             _gasto_subcontrata(conn, trip, fecha)
         factura_id, numero, base, cuota, total = _crear_factura(
@@ -939,15 +992,17 @@ def contabilidad_generar_factura(trip_id: str, conn = Depends(get_conn)):
 def contabilidad_borradores(user: dict = Depends(require_role(["admin"])), conn = Depends(get_conn)):
     """Facturas autogeneradas en estado Borrador, listas para validar y emitir."""
     rows = conn.execute(
-        "SELECT f.id, f.numero, f.fecha, f.trip_id, f.cliente_nombre, f.base, f.iva, "
+        "SELECT f.id, f.numero, f.fecha, f.trip_id, f.cliente_id, f.cliente_nombre, f.base, f.iva, "
         "f.cuota_iva, f.total, f.coste, f.margen, f.creado, t.origen, t.destino "
         "FROM finanzas.facturas f LEFT JOIN trips t ON t.id = f.trip_id "
-        "WHERE f.estado='Borrador' ORDER BY f.creado DESC"
+        "WHERE COALESCE(f.estado,'')='borrador' ORDER BY f.creado DESC"
     ).fetchall()
     salida = []
     for r in rows:
         d = dict(r)
         d["desglose"] = _desglose_costes(conn, r["trip_id"])
+        d["documentacion"] = (_documentacion_viaje(conn, r["trip_id"], r["cliente_id"])
+                              if r["trip_id"] else {"completa": True, "faltan": []})
         salida.append(d)
     return {"borradores": salida}
 
@@ -978,6 +1033,7 @@ def contabilidad_liquidaciones(user: dict = Depends(require_role(["admin"])), co
 
 
 def contabilidad_emitir_borrador(factura_id: int,
+                                 req: dict | None = None,
                                  user: dict = Depends(require_role(["admin"]))):
     """Valida y emite un borrador: asigna número, publica el asiento y marca 'emitida'."""
     conn = _db()
@@ -985,10 +1041,18 @@ def contabilidad_emitir_borrador(factura_id: int,
     if not f:
         conn.close()
         raise HTTPException(status_code=404, detail={"error": "Borrador no encontrado"})
-    if f["estado"] != "Borrador":
+    if (f["estado"] or "").lower() != "borrador":
         conn.close()
         raise HTTPException(status_code=409, detail={"error": "La factura ya no está en borrador"})
-    fecha = (f["fecha"] or "")[:10] or datetime.date.today().isoformat()
+    force = bool((req or {}).get("force"))
+    if not force and f["trip_id"]:
+        doc = _documentacion_viaje(conn, f["trip_id"], f["cliente_id"])
+        if not doc["completa"]:
+            faltan = ", ".join(doc["faltan"]) or "documentación"
+            conn.close()
+            raise HTTPException(status_code=409, detail={"error": f"Falta {faltan} en el viaje {f['trip_id']}."})
+    fecha = _hoy_madrid()
+    fecha_op = f["fecha"]  # la fecha del borrador = fecha de la operación (viaje)
     numero = _factura_numero(conn, fecha)
     total = float(f["total"] or 0)
     base = float(f["base"] or 0)
@@ -1001,8 +1065,8 @@ def contabilidad_emitir_borrador(factura_id: int,
         origen="viaje", documento=numero, conn=conn,
     )
     conn.execute(
-        "UPDATE finanzas.facturas SET estado='emitida', numero=?, asiento_id=? WHERE id=?",
-        (numero, asiento_id, factura_id),
+        "UPDATE finanzas.facturas SET estado='emitida', numero=?, asiento_id=?, fecha=?, fecha_operacion=? WHERE id=?",
+        (numero, asiento_id, fecha, fecha_op, factura_id),
     )
     if f["trip_id"]:
         conn.execute("UPDATE trips SET factura=? WHERE id=?", (numero, f["trip_id"]))
@@ -1083,8 +1147,24 @@ def factura_enviar(factura_id: int, req: dict, conn = Depends(get_conn)):
     pdf = _generar_factura_pdf(factura_id)
     asunto = req.get("asunto") or f"Factura {f['numero']}"
     cuerpo = req.get("cuerpo") or f"Adjuntamos la factura {f['numero']}."
+    adjuntos = [(f"factura_{f['numero']}.pdf", pdf)]
+    if req.get("adjuntar_docs") and f["trip_id"]:
+        import base64
+        from services.documentos import _leer_archivo
+        docs = conn.execute(
+            "SELECT name, storage_key FROM files WHERE trip_id=? AND storage_key IS NOT NULL ORDER BY ftime DESC",
+            (f["trip_id"],),
+        ).fetchall()
+        for d in docs:
+            b64 = _leer_archivo(d["storage_key"])
+            if not b64:
+                continue
+            try:
+                adjuntos.append((d["name"] or "documento.pdf", base64.b64decode(b64)))
+            except Exception:
+                continue
     try:
-        _enviar_email(email_to, asunto, cuerpo, [(f"factura_{f['numero']}.pdf", pdf)])
+        _enviar_email(email_to, asunto, cuerpo, adjuntos)
     except Exception as e:
         raise HTTPException(status_code=500, detail={"error": f"No se pudo enviar el email: {e}"})
     return {"ok": True}
@@ -1095,21 +1175,24 @@ def factura_enviar(factura_id: int, req: dict, conn = Depends(get_conn)):
 @router.post("/api/contabilidad/facturas/{factura_id}/cobrar")
 
 
-def contabilidad_cobrar_factura(factura_id: int, conn = Depends(get_conn)):
+def contabilidad_cobrar_factura(factura_id: int, req: dict | None = None, conn = Depends(get_conn)):
     f = conn.execute("SELECT * FROM finanzas.facturas WHERE id=?", (factura_id,)).fetchone()
     if not f:
         raise HTTPException(status_code=404, detail={"error": "Factura no encontrada."})
-    if f["estado"] == "cobrada":
+    estado = (f["estado"] or "").lower()
+    if estado == "cobrada":
         return {"ok": True, "ya_cobrada": True}
+    if estado != "emitida":
+        raise HTTPException(status_code=409, detail={"error": "Solo se cobran facturas emitidas."})
     total = round(float(f["total"] or 0), 2)
-    fecha = (f["fecha"] or "")[:10] or datetime.date.today().isoformat()
+    fecha_cobro = ((req or {}).get("fecha_cobro") or "").strip() or _hoy_madrid()
     asiento_id = _post_asiento(
-        fecha, f"Cobro factura {f['numero']}",
+        fecha_cobro, f"Cobro factura {f['numero']}",
         [("572", total, 0, f"Cobro {f['numero']}"),
          ("430", 0, total, f"Cobro {f['numero']}")],
         origen="cobro", documento=f["numero"], conn=conn,
     )
-    conn.execute("UPDATE finanzas.facturas SET estado='cobrada' WHERE id=?", (factura_id,))
+    conn.execute("UPDATE finanzas.facturas SET estado='cobrada', fecha_cobro=? WHERE id=?", (fecha_cobro, factura_id))
     conn.commit()
     return {"ok": True, "asiento_id": asiento_id}
 

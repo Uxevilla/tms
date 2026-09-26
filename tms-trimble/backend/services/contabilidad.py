@@ -256,16 +256,17 @@ def _crear_factura_borrador(trip, conn=None):
         gconn.close()
     coste, margen = _costes_reales_viaje(trip)
     base = round(float(trip["precio"] or 0), 2)
-    iva = round(float(trip["iva"] or 21), 2)
+    iva = round(float(trip["iva"] if trip["iva"] is not None else 21), 2)
     cuota = round(base * iva / 100.0, 2)
     total = round(base + cuota, 2)
+    fecha_op = (trip["creado"] or "")[:10] or datetime.date.today().isoformat()
     cur = conn.execute(
-        "INSERT INTO finanzas.facturas (numero, fecha, trip_id, cliente_id, cliente_nombre, base, iva, cuota_iva, total, estado, coste, margen, creado) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id",
-        ("", (trip["creado"] or "")[:10] or datetime.date.today().isoformat(),
+        "INSERT INTO finanzas.facturas (numero, fecha, trip_id, cliente_id, cliente_nombre, base, iva, cuota_iva, total, estado, coste, margen, creado, fecha_operacion) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id",
+        ("", fecha_op,
          trip["id"], trip["cliente_id"], trip["cliente"] or "",
-         base, iva, cuota, total, "Borrador", coste, margen,
-         datetime.datetime.utcnow().isoformat() + "Z"),
+         base, iva, cuota, total, "borrador", coste, margen,
+         datetime.datetime.utcnow().isoformat() + "Z", fecha_op),
     )
     factura_id = cur.fetchone()["id"]
     concepto = f"{trip['origen'] or ''} → {trip['destino'] or ''}".strip().strip("→").strip() or trip["id"]
@@ -318,6 +319,8 @@ def _generar_factura_pdf(factura_id, conn=None):
     emp_block = [Paragraph(x, normal) for x in emp_txt]
     fact_block = [Paragraph(f"<b>FACTURA</b> {f['numero']}", title),
                   Paragraph(f"Fecha: {f['fecha']}", normal)]
+    if f.get("fecha_operacion") and f["fecha_operacion"] != f["fecha"]:
+        fact_block.append(Paragraph(f"Fecha operación: {f['fecha_operacion']}", normal))
 
     header = Table([[emp_block, fact_block]], colWidths=[doc.width*0.55, doc.width*0.45])
     header.setStyle(TableStyle([("VALIGN", (0,0), (-1,-1), "TOP"),
