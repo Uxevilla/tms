@@ -262,20 +262,21 @@ def delete_trip(trip_id: str, force: bool = False, motivo: str = "", user: dict 
 
     in_trimble = estado == "enviado" or estado in ("llegada_origen", "cargando", "en_transito", "llegada_destino", "descargando")
 
+    # No borrar (ni siquiera con force) un viaje con factura EMITIDA: primero rectificativa.
+    emitida = conn.execute(
+        "SELECT f.numero FROM finanzas.facturas f WHERE f.trip_id=? AND COALESCE(f.estado,'') NOT IN ('','borrador') "
+        "UNION SELECT f.numero FROM finanzas.factura_lineas fl JOIN finanzas.facturas f ON f.id=fl.factura_id "
+        "WHERE fl.trip_id=? AND COALESCE(f.estado,'') NOT IN ('','borrador') LIMIT 1", (trip_id, trip_id),
+    ).fetchone()
+    if emitida:
+        raise HTTPException(status_code=409, detail={
+            "error": f"El viaje tiene la factura {emitida['numero']} emitida: anúlala con una rectificativa antes."})
+
     if (tiene_docs or tiene_factura) and not force:
         # Soft delete: conservar documentos y mensajes (prueba de cobro).
         motivo = (motivo or "").strip()
         if not motivo:
             raise HTTPException(status_code=400, detail={"error": "El motivo de anulación es obligatorio."})
-        # No anular un viaje con factura EMITIDA (primero rectificativa).
-        emitida = conn.execute(
-            "SELECT f.numero FROM finanzas.facturas f WHERE f.trip_id=? AND COALESCE(f.estado,'') NOT IN ('','borrador') "
-            "UNION SELECT f.numero FROM finanzas.factura_lineas fl JOIN finanzas.facturas f ON f.id=fl.factura_id "
-            "WHERE fl.trip_id=? AND COALESCE(f.estado,'') NOT IN ('','borrador') LIMIT 1", (trip_id, trip_id),
-        ).fetchone()
-        if emitida:
-            raise HTTPException(status_code=409, detail={
-                "error": f"El viaje tiene la factura {emitida['numero']} emitida: anúlala con una rectificativa antes."})
         # Si estaba en el terminal, borrarlo de Trimble ANTES de anular (misma lógica que el borrado:
         # si Trimble falla y no hay force, no se anula).
         if in_trimble:
@@ -509,15 +510,163 @@ def list_tarifas(conn = Depends(get_conn)):
 @router.get("/api/trips/{trip_id}/documentos")
 def list_trip_documentos(trip_id: str, conn = Depends(get_conn)):
     rows = conn.execute(
-        "SELECT id, name, content_b64, storage_key, sha256, source, formato FROM files WHERE trip_id=? ORDER BY id", (trip_id,)
+        "SELECT id, name, content_b64, storage_key, sha256, source, driver, lid, formato, mime, "
+        "tipo_documento, estado_descarga, intentos, ultimo_error, ftime, report_id, question_id, mensaje_id, "
+        "revisado_at, revisado_por, anulado_at, paginas "
+        "FROM files WHERE trip_id=? AND anulado_at IS NULL ORDER BY ftime DESC, id DESC", (trip_id,)
     ).fetchall()
     docs = []
     for r in rows:
         c = _leer_archivo(r["storage_key"], r.get("sha256") or "") if r["storage_key"] else (r["content_b64"] or "")
         name = r["name"]
         nombre = name.split("__", 1)[1] if "__" in name else name
-        docs.append({"id": r["id"], "nombre": nombre, "contenido": c, "size": round(len(c) * 3 / 4), "source": r["source"] or "", "formato": r["formato"] or ""})
+        docs.append({
+            "id": r["id"], "nombre": nombre, "contenido": c, "size": round(len(c) * 3 / 4),
+            "source": r["source"] or "", "formato": r["formato"] or "", "mime": r["mime"] or "",
+            "tipo_documento": r["tipo_documento"] or "", "estado_descarga": r["estado_descarga"] or "",
+            "intentos": r["intentos"] or 0, "ultimo_error": r["ultimo_error"] or "",
+            "ftime": r["ftime"] or "", "report_id": r["report_id"] or "", "question_id": r["question_id"] or "",
+            "mensaje_id": r["mensaje_id"] or "", "revisado_at": r["revisado_at"], "revisado_por": r["revisado_por"],
+            "paginas": r["paginas"] or 0,
+        })
     return {"documentos": docs}
+
+
+@router.post("/api/trips/{trip_id}/documentos/{file_id}/tipo")
+def reclasificar_documento(trip_id: str, file_id: int, body: dict,
+                           user: dict = Depends(require_role(["admin"])), conn = Depends(get_conn)):
+    """Reclasificación manual de un documento (queda en documentos_auditoria)."""
+    tipo = (body or {}).get("tipo_documento") or ""
+    if not tipo:
+        raise HTTPException(status_code=400, detail={"error": "Indica el tipo de documento."})
+    row = conn.execute("SELECT id FROM files WHERE id=? AND trip_id=?", (file_id, trip_id)).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail={"error": "Documento no encontrado."})
+    usuario = user.get("usuario") or user.get("sub") or ""
+    conn.execute("UPDATE files SET tipo_documento=? WHERE id=?", (tipo, file_id))
+    conn.execute(
+        "INSERT INTO documentos_auditoria (file_id, accion, usuario, detalle) VALUES (?,?,?,?)",
+        (file_id, "reclasificar", usuario, json.dumps({"tipo_documento": tipo})),
+    )
+    conn.commit()
+    return {"ok": True}
+
+
+@router.post("/api/trips/{trip_id}/documentos/{file_id}/revisar")
+def marcar_documento_revisado(trip_id: str, file_id: int, body: dict,
+                              user: dict = Depends(require_role(["admin", "dispatcher"])), conn = Depends(get_conn)):
+    """Marca/desmarca un documento como revisado."""
+    row = conn.execute("SELECT id FROM files WHERE id=? AND trip_id=?", (file_id, trip_id)).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail={"error": "Documento no encontrado."})
+    usuario = user.get("usuario") or user.get("sub") or ""
+    revisado = bool((body or {}).get("revisado"))
+    if revisado:
+        conn.execute("UPDATE files SET revisado_at=now(), revisado_por=? WHERE id=?", (usuario, file_id))
+    else:
+        conn.execute("UPDATE files SET revisado_at=NULL, revisado_por=NULL WHERE id=?", (file_id,))
+    conn.commit()
+    return {"ok": True, "revisado": revisado}
+
+
+@router.post("/api/trips/{trip_id}/documentos/manual")
+def subir_documento_manual(trip_id: str, body: dict,
+                           user: dict = Depends(require_role(["admin", "dispatcher"])), conn = Depends(get_conn)):
+    """Subida manual de un documento (papel escaneado en oficina). Body {nombre, tipo_documento, contenido_b64}."""
+    nombre = (body or {}).get("nombre") or ""
+    tipo = (body or {}).get("tipo_documento") or ""
+    b64 = (body or {}).get("contenido_b64") or ""
+    if not nombre or not b64:
+        raise HTTPException(status_code=400, detail={"error": "Nombre y contenido son obligatorios."})
+    if not conn.execute("SELECT id FROM trips WHERE id=?", (trip_id,)).fetchone():
+        raise HTTPException(status_code=404, detail={"error": "Viaje no encontrado."})
+    import uuid as _uuid
+    name = f"{_uuid.uuid4().hex[:10]}__{nombre}"
+    g = _guardar_archivo(name, b64)
+    if not g:
+        raise HTTPException(status_code=400, detail={"error": "Contenido base64 no válido."})
+    storage_key, sha, nbytes, mime = g
+    conn.execute(
+        "INSERT INTO files (trip_id, name, ftype, ftime, source, storage_key, sha256, bytes, mime, estado_descarga, tipo_documento, vinculado_por) "
+        "VALUES (?,?,3,?,?,?,?,?,?,'descargado',?,'manual')",
+        (trip_id, name, datetime.datetime.utcnow().isoformat() + "Z", user.get("usuario") or user.get("sub") or "",
+         storage_key, sha, nbytes, mime, tipo or "otro"),
+    )
+    conn.commit()
+    return {"ok": True, "id": name}
+
+
+@router.get("/api/documentos/sin-viaje")
+def documentos_sin_viaje(user: dict = Depends(require_role(["admin", "dispatcher"])), conn = Depends(get_conn)):
+    """Bandeja de ficheros sin viaje asignado (asignación manual con auditoría)."""
+    rows = conn.execute(
+        "SELECT id, name, source, driver, lid, ftime, tipo_documento, estado_descarga, mime, report_id, question_id "
+        "FROM files WHERE trip_id IS NULL AND anulado_at IS NULL ORDER BY ftime DESC LIMIT 200"
+    ).fetchall()
+    out = []
+    for r in rows:
+        d = dict(r)
+        d["nombre"] = d["name"].split("__", 1)[1] if "__" in d["name"] else d["name"]
+        out.append(d)
+    return {"documentos": out}
+
+
+@router.post("/api/documentos/sin-viaje/{file_id}/vincular")
+def vincular_documento_sin_viaje(file_id: int, body: dict,
+                                 user: dict = Depends(require_role(["admin"])), conn = Depends(get_conn)):
+    """Asigna manualmente un fichero sin viaje a un viaje (auditoría)."""
+    trip_id = (body or {}).get("trip_id") or ""
+    if not trip_id:
+        raise HTTPException(status_code=400, detail={"error": "Indica el viaje de destino."})
+    row = conn.execute("SELECT id FROM files WHERE id=? AND trip_id IS NULL", (file_id,)).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail={"error": "Fichero no encontrado o ya vinculado."})
+    if not conn.execute("SELECT id FROM trips WHERE id=?", (trip_id,)).fetchone():
+        raise HTTPException(status_code=404, detail={"error": "Viaje no encontrado."})
+    usuario = user.get("usuario") or user.get("sub") or ""
+    conn.execute("UPDATE files SET trip_id=?, vinculado_por='manual' WHERE id=?", (trip_id, file_id))
+    conn.execute(
+        "INSERT INTO documentos_auditoria (file_id, accion, usuario, detalle) VALUES (?,?,?,?)",
+        (file_id, "vincular", usuario, json.dumps({"trip_id": trip_id})),
+    )
+    conn.commit()
+    return {"ok": True}
+
+
+def _vincular_por_vehiculo_ventana(conn):
+    """Vincula ficheros sin viaje (trip_id NULL) al viaje del terminal cuya franja horaria
+    contiene la hora del fichero (vinculado_por='vehiculo_ventana'). Devuelve cuántos vinculó."""
+    huerfanos = conn.execute(
+        "SELECT id, source, vehiculo_id, ftime FROM files "
+        "WHERE trip_id IS NULL AND anulado_at IS NULL AND COALESCE(source,'') <> ''"
+    ).fetchall()
+    n = 0
+    for f in huerfanos:
+        ft = (f["ftime"] or "")[:19]
+        if not ft:
+            continue
+        veh = conn.execute(
+            "SELECT codigo FROM vehiculos WHERE terminal_trimble=? OR matricula=? OR codigo=? LIMIT 1",
+            (f["source"], f["source"], f["source"]),
+        ).fetchone()
+        codigo = (veh["codigo"] if veh else (f["vehiculo_id"] or f["source"]))
+        viaje = conn.execute(
+            "SELECT id FROM trips WHERE terminal=? AND anulado_at IS NULL "
+            "AND fecha_esperada_carga IS NOT NULL AND fecha_esperada_carga<>'' "
+            "AND fecha_esperada_descarga IS NOT NULL AND fecha_esperada_descarga<>'' "
+            "AND ? >= substr(fecha_esperada_carga,1,19) AND ? <= substr(fecha_esperada_descarga,1,19) "
+            "ORDER BY creado DESC LIMIT 1",
+            (codigo, ft, ft),
+        ).fetchone()
+        if viaje:
+            conn.execute(
+                "UPDATE files SET trip_id=?, vinculado_por='vehiculo_ventana' WHERE id=?",
+                (viaje["id"], f["id"]),
+            )
+            n += 1
+    if n:
+        conn.commit()
+    return n
 
 
 
@@ -558,26 +707,16 @@ def trip_files(trip_id: str, conn = Depends(get_conn)):
 @router.get("/api/trips/{trip_id}/documentacion")
 def trip_documentacion(trip_id: str, conn = Depends(get_conn)):
     """Checklist de facturación: qué documentos faltan para facturar el viaje."""
-    from services.tipos_documento import checklist_facturacion, docs_requeridos_default
+    from services.tipos_documento import checklist_documentacion
     trip = conn.execute(
         "SELECT cliente_id FROM operaciones.trips WHERE codigo=?", (trip_id,)
     ).fetchone()
     presentes = [r["tipo_documento"] for r in conn.execute(
         "SELECT DISTINCT tipo_documento FROM files "
-        "WHERE trip_id=? AND tipo_documento IS NOT NULL AND tipo_documento<>'tacografo'",
+        "WHERE trip_id=? AND tipo_documento IS NOT NULL",
         (trip_id,),
     ).fetchall()]
-    requeridos = None
-    if trip and trip["cliente_id"]:
-        req = conn.execute(
-            "SELECT tipo_documento FROM cfg_docs_requeridos "
-            "WHERE cliente_id=? AND requerido ORDER BY orden",
-            (trip["cliente_id"],),
-        ).fetchall()
-        requeridos = [r["tipo_documento"] for r in req]
-    if not requeridos:
-        requeridos = docs_requeridos_default()
-    return checklist_facturacion(presentes, requeridos)
+    return checklist_documentacion(conn, trip["cliente_id"] if trip else None, presentes)
 
 
 

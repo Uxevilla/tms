@@ -316,6 +316,26 @@ def test_anular_con_emitida_409(scratch_db):
 
 
 @pytest.mark.integration
+def test_borrar_force_con_emitida_409(scratch_db):
+    """Ni con force=true se puede borrar físicamente un viaje con factura emitida."""
+    from routers.viajes import delete_trip
+
+    tok, conn = _conn(scratch_db)
+    try:
+        conn.execute("INSERT INTO trips (id, estado, factura) VALUES ('T-EMF', 'Entregado', 'F-2026-0001')")
+        conn.execute(
+            "INSERT INTO finanzas.facturas (numero, fecha, trip_id, estado, base, iva, cuota_iva, total, creado) "
+            "VALUES ('F-2026-0001', '2026-09-01', 'T-EMF', 'emitida', 100, 21, 21, 121, '')"
+        )
+        with pytest.raises(HTTPException) as e:
+            delete_trip("T-EMF", force=True, user={"rol": "admin", "usuario": "test"}, conn=conn)
+        assert e.value.status_code == 409
+    finally:
+        conn.close()
+        main._tenant_ctx.reset(tok)
+
+
+@pytest.mark.integration
 def test_borradores_excluyen_anulado(scratch_db):
     """Un borrador de un viaje anulado no sale en /api/contabilidad/borradores."""
     from routers.contabilidad import contabilidad_borradores

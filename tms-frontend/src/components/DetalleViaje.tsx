@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { X, FileText, Download, ClipboardList, Split } from "lucide-react";
+import { X, FileText, Download, ClipboardList, Split, Eye, CheckCircle2 } from "lucide-react";
 import { api } from "../api";
 import type { Viaje } from "../types";
 
@@ -21,6 +21,10 @@ interface Doc {
   size: number;
   source: string;
   formato: string;
+  mime?: string;
+  tipo_documento?: string;
+  revisado_at?: string | null;
+  revisado_por?: string | null;
 }
 interface Tramo {
   id: number;
@@ -70,6 +74,13 @@ export function DetalleViaje({ trip, onClose }: { trip: Viaje; onClose: () => vo
     a.href = `data:application/${ext};base64,${b64}`;
     a.download = d.nombre || `archivo.${ext}`;
     a.click();
+  }
+
+  function ver(d: Doc) {
+    const b64 = (d.contenido || "").replace(/^data:[^;]+;base64,/, "");
+    if (!b64) return;
+    const mime = d.mime || (d.formato === "pdf" ? "application/pdf" : "image/png");
+    window.open(`data:${mime};base64,${b64}`, "_blank");
   }
 
   return (
@@ -161,15 +172,22 @@ export function DetalleViaje({ trip, onClose }: { trip: Viaje; onClose: () => vo
                         <div className="flex min-w-0 items-center gap-2">
                           <FileText size={15} className="shrink-0 text-slate-400" />
                           <div className="min-w-0">
-                            <div className="truncate text-xs font-medium text-slate-700">{d.nombre}</div>
+                            <div className="flex items-center gap-1.5">
+                              <span className="truncate text-xs font-medium text-slate-700">{d.nombre}</span>
+                              {d.tipo_documento && d.tipo_documento !== "otro" && (
+                                <span className="shrink-0 rounded bg-blue-100 px-1.5 py-0.5 text-[10px] font-semibold text-blue-700">{d.tipo_documento}</span>
+                              )}
+                              {d.revisado_at && <span title={`Revisado por ${d.revisado_por || "?"}`}><CheckCircle2 size={13} className="shrink-0 text-emerald-500" /></span>}
+                            </div>
                             <div className="text-[11px] text-slate-400">
                               {d.source || "archivo"} · {(d.size / 1024).toFixed(0)} KB
                             </div>
                           </div>
                         </div>
-                        <button onClick={() => descargar(d)} title="Descargar" className="shrink-0 rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-blue-600">
-                          <Download size={15} />
-                        </button>
+                        <div className="flex shrink-0 items-center gap-1">
+                          <button onClick={() => ver(d)} title="Ver" className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-blue-600"><Eye size={15} /></button>
+                          <button onClick={() => descargar(d)} title="Descargar" className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-blue-600"><Download size={15} /></button>
+                        </div>
                       </li>
                     ))}
                   </ul>

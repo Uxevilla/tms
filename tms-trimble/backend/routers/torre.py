@@ -371,6 +371,19 @@ def atencion(user: dict = Depends(require_role(["admin", "dispatcher"])), conn: 
             {"tipo": "viaje", "id": r["codigo"], "codigo": r["codigo"]},
         ))
 
+    # 9. documento_descarga_error: descarga fallida repetida (>=5 intentos).
+    for r in conn.execute(
+        "SELECT trip_id, name, ultimo_error, intentos FROM files "
+        "WHERE estado_descarga='error' AND intentos >= 5 AND anulado_at IS NULL AND trip_id IS NOT NULL "
+        "ORDER BY ftime DESC LIMIT 50",
+    ).fetchall():
+        items.append(_item(
+            "documento_descarga_error", "critico",
+            f"Documento sin descargar: {r['name']}",
+            f"{r['intentos']} intentos · {r['ultimo_error'] or 'error desconocido'}",
+            {"tipo": "viaje", "id": r["trip_id"], "codigo": r["trip_id"]},
+        ))
+
     # Orden: por severidad (critico > aviso > info) y, dentro, por antigüedad.
     items.sort(key=lambda it: (_ORDEN_SEVERIDAD.get(it["severidad"], 9), it.get("ts") or ""))
 
@@ -379,6 +392,10 @@ def atencion(user: dict = Depends(require_role(["admin", "dispatcher"])), conn: 
         resumen[it["severidad"]] += 1
     if es_admin:
         resumen["facturacion_pendiente"] = round(facturacion_pendiente, 2)
+        sin_viaje = conn.execute(
+            "SELECT count(*) AS n FROM files WHERE trip_id IS NULL AND anulado_at IS NULL"
+        ).fetchone()["n"]
+        resumen["documentos_sin_viaje"] = sin_viaje
 
     return {"items": items, "resumen": resumen}
 
@@ -504,7 +521,7 @@ def entidad_vehiculo(codigo: str, user: dict = Depends(require_role(["admin", "d
     ).fetchall()
 
     documentos = conn.execute(
-        "SELECT name, formato, bytes FROM files WHERE vehiculo_id = ? ORDER BY ftime DESC LIMIT 20",
+        "SELECT name, formato, bytes FROM files WHERE vehiculo_id = ? AND anulado_at IS NULL ORDER BY ftime DESC",
         (veh,),
     ).fetchall()
 
@@ -555,18 +572,9 @@ def entidad_vehiculo(codigo: str, user: dict = Depends(require_role(["admin", "d
 
 
 def _checklist_documentacion(conn, cliente_id, presentes):
-    """Checklist de facturación (PR 0.4): docs requeridos del cliente vs presentes."""
-    from services.tipos_documento import checklist_facturacion, docs_requeridos_default
-    requeridos = None
-    if cliente_id:
-        req = conn.execute(
-            "SELECT tipo_documento FROM cfg_docs_requeridos "
-            "WHERE cliente_id=? AND requerido ORDER BY orden", (cliente_id,)
-        ).fetchall()
-        requeridos = [r["tipo_documento"] for r in req]
-    if not requeridos:
-        requeridos = docs_requeridos_default()
-    return checklist_facturacion(presentes, requeridos)
+    """(compat) delega en services.tipos_documento.checklist_documentacion (unificado)."""
+    from services.tipos_documento import checklist_documentacion
+    return checklist_documentacion(conn, cliente_id, presentes)
 
 
 @router.get("/api/entidad/viaje/{codigo}", response_model=EntidadViaje)
@@ -583,8 +591,8 @@ def entidad_viaje(codigo: str, user: dict = Depends(require_role(["admin", "disp
     ).fetchall()
 
     documentos = conn.execute(
-        "SELECT name, formato, bytes, source, tipo_documento, estado_descarga, mime FROM files "
-        "WHERE trip_id = ? ORDER BY ftime DESC LIMIT 20",
+        "SELECT name, formato, bytes, source, tipo_documento, estado_descarga, mime, revisado_at, revisado_por, report_id, question_id, ftime FROM files "
+        "WHERE trip_id = ? AND anulado_at IS NULL ORDER BY ftime DESC",
         (codigo,),
     ).fetchall()
 
@@ -604,7 +612,8 @@ def entidad_viaje(codigo: str, user: dict = Depends(require_role(["admin", "disp
         "paradas": [dict(p) for p in paradas],
         "documentos": [{"nombre": d["name"], "formato": d["formato"], "bytes": d["bytes"], "origen": d["source"],
                         "tipo_documento": d["tipo_documento"], "estado_descarga": d["estado_descarga"],
-                        "mime": d["mime"]} for d in documentos],
+                        "mime": d["mime"], "revisado_at": d["revisado_at"], "revisado_por": d["revisado_por"],
+                        "report_id": d["report_id"], "question_id": d["question_id"], "ftime": d["ftime"]} for d in documentos],
         "mensajes": [dict(m) for m in mensajes],
         "documentacion": _checklist_documentacion(conn, t["cliente_id"],
                                                   [d["tipo_documento"] for d in documentos if d["tipo_documento"]]),

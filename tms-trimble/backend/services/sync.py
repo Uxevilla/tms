@@ -122,6 +122,43 @@ def _set_sync_state(key, value):
         conn.commit()
 
 
+def migrar_lid_map_json(conn=None):
+    """Migra el JSON antiguo de sync_state (key 'lid_map') a la tabla lid_map, una sola vez.
+
+    Re-vincula ficheros con trip_id NULL y lid conocido. Devuelve cuántos mapeos migró.
+    """
+    owns = conn is None
+    if owns:
+        conn = _db()
+    try:
+        raw = conn.execute("SELECT value FROM sistema.sync_state WHERE key='lid_map'").fetchone()
+        if not raw:
+            return 0
+        try:
+            data = json.loads(raw["value"] or "{}")
+        except (json.JSONDecodeError, TypeError):
+            data = {}
+        n = 0
+        if isinstance(data, dict):
+            for lid, trip in data.items():
+                if lid and trip:
+                    conn.execute(
+                        "INSERT INTO lid_map (lid, trip_id) VALUES (?,?) ON CONFLICT (lid) DO NOTHING",
+                        (lid, trip),
+                    )
+                    n += 1
+        conn.execute(
+            "UPDATE files f SET trip_id=l.trip_id, vinculado_por='lid' "
+            "FROM lid_map l WHERE f.lid=l.lid AND f.trip_id IS NULL AND l.trip_id IS NOT NULL"
+        )
+        conn.execute("DELETE FROM sistema.sync_state WHERE key='lid_map'")
+        conn.commit()
+        return n
+    finally:
+        if owns:
+            conn.close()
+
+
 def _mark_inicial():
     """Cursor de arranque: 2 días atrás en UTC (formato del cursor de Trimble).
 
@@ -142,32 +179,47 @@ def _parse_props(block):
     return props
 
 
-def _save_file(trip_id, name, ftype, ftime, source, driver, lid, content_b64, error=""):
+def _save_file(trip_id, name, ftype, ftime, source, driver, lid, content_b64, error="",
+               report_id="", question_id="", mensaje_id=""):
     """Guarda un fichero descargado o registra el fallo para reintentar (nunca se descarta).
 
     - content_b64 no vacío → estado 'descargado' (binario en disco vía _guardar_archivo).
     - si falla (error) → estado 'error' + ultimo_error + intentos++ (se reintenta en el siguiente ciclo).
+    - report_id/question_id/mensaje_id: se rellenan al vincular el fichero con la respuesta del
+      cuestionario (nombres de fichero en las trazas 12/13/300, §8.4) y permiten clasificar por
+      pregunta (cfg_tipo_documento_pregunta) en vez de por el nombre del fichero.
     """
     g = _guardar_archivo(name, content_b64) if content_b64 else None
     tipo = clasificar_documento(ftype, name)
     with _db() as conn:
+        if report_id and question_id:
+            mp = conn.execute(
+                "SELECT tipo_documento FROM cfg_tipo_documento_pregunta "
+                "WHERE report_id=? AND question_id=? LIMIT 1", (report_id, question_id),
+            ).fetchone()
+            if mp and mp["tipo_documento"]:
+                tipo = mp["tipo_documento"]
         if g:
             storage_key, sha, nbytes, mime = g
             conn.execute(
-                "INSERT INTO files (trip_id, name, ftype, ftime, source, driver, lid, storage_key, sha256, bytes, mime, estado_descarga, intentos, tipo_documento) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,'descargado',1,?) ON CONFLICT (name) DO UPDATE SET "
+                "INSERT INTO files (trip_id, name, ftype, ftime, source, driver, lid, storage_key, sha256, bytes, mime, estado_descarga, intentos, tipo_documento, report_id, question_id, mensaje_id) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,'descargado',1,?,?,?,?) ON CONFLICT (name) DO UPDATE SET "
                 "estado_descarga='descargado', storage_key=EXCLUDED.storage_key, sha256=EXCLUDED.sha256, "
                 "bytes=EXCLUDED.bytes, mime=EXCLUDED.mime, intentos=files.intentos+1, ultimo_error=NULL, "
-                "tipo_documento=EXCLUDED.tipo_documento",
-                (trip_id, name, ftype, ftime, source, driver, lid, storage_key, sha, nbytes, mime, tipo),
+                "tipo_documento=EXCLUDED.tipo_documento, report_id=EXCLUDED.report_id, "
+                "question_id=EXCLUDED.question_id, mensaje_id=EXCLUDED.mensaje_id",
+                (trip_id, name, ftype, ftime, source, driver, lid, storage_key, sha, nbytes, mime, tipo,
+                 report_id or None, question_id or None, mensaje_id or None),
             )
         else:
             conn.execute(
-                "INSERT INTO files (trip_id, name, ftype, ftime, source, driver, lid, estado_descarga, intentos, ultimo_error, tipo_documento) "
-                "VALUES (?,?,?,?,?,?,?,'error',1,?,?) ON CONFLICT (name) DO UPDATE SET "
+                "INSERT INTO files (trip_id, name, ftype, ftime, source, driver, lid, estado_descarga, intentos, ultimo_error, tipo_documento, report_id, question_id, mensaje_id) "
+                "VALUES (?,?,?,?,?,?,?,'error',1,?,?,?,?,?) ON CONFLICT (name) DO UPDATE SET "
                 "estado_descarga='error', intentos=files.intentos+1, ultimo_error=EXCLUDED.ultimo_error, "
-                "tipo_documento=EXCLUDED.tipo_documento",
-                (trip_id, name, ftype, ftime, source, driver, lid, error or "descarga vacía", tipo),
+                "tipo_documento=EXCLUDED.tipo_documento, report_id=EXCLUDED.report_id, "
+                "question_id=EXCLUDED.question_id, mensaje_id=EXCLUDED.mensaje_id",
+                (trip_id, name, ftype, ftime, source, driver, lid, error or "descarga vacía", tipo,
+                 report_id or None, question_id or None, mensaje_id or None),
             )
         conn.commit()
 
@@ -535,7 +587,7 @@ def _sync_files():
     conn.commit()
     conn.close()
 
-    # 2) poll files + descarga. Solo se descartan los de tacógrafo (0=tarjeta,1=memoria,2=accidente);
+    # 2) poll files + descarga. Solo se descartan los de tacógrafo (0=tarjeta, 1=memoria masiva, 2=memoria CSV, 4=registro de accidente);
     #    el resto (documentos/fotos/firmas de cuestionarios y mensajes) se descarga y, si falla,
     #    queda 'error' para reintentar en el siguiente ciclo (nunca se descarta).
     fmark = _get_sync_state("files_mark") or _mark_inicial()
