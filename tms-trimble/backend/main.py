@@ -180,12 +180,25 @@ async def ws_operaciones(websocket: WebSocket):
         pubsub = None
 
     last: dict = {}
+    # Tenant del WS (del JWT) para filtrar los eventos 'mensaje' del canal global.
+    ws_empresa = (_tenant_ctx.get() or {}).get("empresa", "")
     try:
         while True:
             # Espera o bien un evento Pub/Sub (instantáneo) o bien 3s (tick).
             if pubsub is not None:
                 try:
-                    await pubsub.get_message(ignore_subscribe_messages=True, timeout=3.0)
+                    msg = await pubsub.get_message(ignore_subscribe_messages=True, timeout=3.0)
+                    # Solo se reenvía por Pub/Sub el evento 'mensaje' (nuevo); los de
+                    # estado/telemetría salen del diff del snapshot (evita duplicados).
+                    if msg and msg.get("type") == "message":
+                        try:
+                            ev = json.loads(msg.get("data") or "{}")
+                        except Exception:
+                            ev = {}
+                        # Multi-tenant fail-closed: si falta empresa (en el WS o en el
+                        # evento) no se reenvía nada.
+                        if ev.get("tipo") == "mensaje" and ws_empresa and ev.get("empresa") == ws_empresa:
+                            await websocket.send_json(ev)
                 except Exception:
                     pass
             else:

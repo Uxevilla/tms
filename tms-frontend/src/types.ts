@@ -81,7 +81,8 @@ export type ViajeEvent =
       fecha_esperada_descarga?: string;
       disponibilidad?: "Libre" | "En_Viaje";
     }
-  | { tipo: "eliminado"; id: string };
+  | { tipo: "eliminado"; id: string }
+  | { tipo: "mensaje"; id: string; trip_id: string | null; clase: string };
 
 export type WsStatus = "conectando" | "conectado" | "desconectado";
 

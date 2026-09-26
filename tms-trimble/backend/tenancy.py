@@ -202,10 +202,29 @@ def _empresa_por_slug(slug):
         conn.close()
 
 
+def _empresas():
+    """Lista los tenants activos (slug, nombre, db_name) de la BD maestra.
+
+    Fallback (fail-open): si la maestra falla o está vacía, devuelve el primer
+    tenant (FIRST_TENANT_SLUG + config.DB_NAME), para no dejar la ingesta a oscuras.
+    """
+    try:
+        conn = _db_master()
+        try:
+            rows = conn.execute("SELECT slug, nombre, db_name FROM empresas ORDER BY slug").fetchall()
+            if rows:
+                return [dict(r) for r in rows]
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"[tenancy] _empresas falló ({e}); usando el tenant por defecto")
+    return [{"slug": FIRST_TENANT_SLUG, "nombre": FIRST_TENANT_NAME, "db_name": config.DB_NAME}]
+
+
 def _es_superadmin():
     t = _tenant_ctx.get()
     return bool(t and t.get("superadmin"))
 
 __all__ = ["_master_ready", "FIRST_TENANT_SLUG", "FIRST_TENANT_NAME",
            "_ensure_master", "_bootstrap", "_seed_tenant_config", "_seed_rbac",
-           "_provision_tenant", "_db_master", "_empresa_por_slug", "_es_superadmin"]
+           "_provision_tenant", "_db_master", "_empresa_por_slug", "_empresas", "_es_superadmin"]

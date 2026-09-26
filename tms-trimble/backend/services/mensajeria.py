@@ -128,10 +128,13 @@ def _store_mensaje(block, tipo):
                   report_version=report_version, respuestas=respuestas)
 
     # Tiempo real (PR 1.5): publicar el mensaje en Redis Pub/Sub (best-effort).
+    # 'empresa' permite al WS filtrar por tenant (el canal es global).
     try:
+        empresa = (_tenant_ctx.get() or {}).get("empresa", "")
         _get_redis().publish(REDIS_CHANNEL,
                              json.dumps({"tipo": "mensaje", "id": mid,
-                                         "trip_id": trip_id, "clase": clase}))
+                                         "trip_id": trip_id, "clase": clase,
+                                         "empresa": empresa}))
     except Exception:
         pass
     # Estado gobernado por Trimble: los macros estructurados cambian el estado del viaje.
