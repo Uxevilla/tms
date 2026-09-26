@@ -130,7 +130,7 @@ def _store_mensaje(block, tipo):
     # Tiempo real (PR 1.5): publicar el mensaje en Redis Pub/Sub (best-effort).
     # 'empresa' permite al WS filtrar por tenant (el canal es global).
     try:
-        empresa = (_tenant_ctx.get() or {}).get("empresa", "")
+        empresa = (_tenant_ctx.get() or {}).get("empresa") or FIRST_TENANT_SLUG
         _get_redis().publish(REDIS_CHANNEL,
                              json.dumps({"tipo": "mensaje", "id": mid,
                                          "trip_id": trip_id, "clase": clase,

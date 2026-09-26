@@ -181,7 +181,8 @@ async def ws_operaciones(websocket: WebSocket):
 
     last: dict = {}
     # Tenant del WS (del JWT) para filtrar los eventos 'mensaje' del canal global.
-    ws_empresa = (_tenant_ctx.get() or {}).get("empresa", "")
+    # Login sin empresa ("vacío = empresa por defecto") → primer tenant.
+    ws_empresa = (_tenant_ctx.get() or {}).get("empresa") or FIRST_TENANT_SLUG
     try:
         while True:
             # Espera o bien un evento Pub/Sub (instantáneo) o bien 3s (tick).
