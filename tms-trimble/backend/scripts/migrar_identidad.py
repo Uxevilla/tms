@@ -102,6 +102,12 @@ def _migrar(dbname, dry_run, backup_ok):
             "AND NOT EXISTS (SELECT 1 FROM flota.vehiculos x WHERE x.codigo = m.vehiculo_id)"
         )
         print(f"    [2] mantenimientos.vehiculo_id matrícula única -> codigo: {cur.rowcount}")
+        cur.execute(
+            "SELECT m.id, m.vehiculo_id FROM flota.mantenimientos m "
+            "WHERE m.vehiculo_id IN (SELECT matricula FROM flota.vehiculos GROUP BY matricula HAVING count(*) > 1) "
+            "AND NOT EXISTS (SELECT 1 FROM flota.vehiculos x WHERE x.codigo = m.vehiculo_id)"
+        )
+        print(f"    [2] mantenimientos con matrícula ambigua (revisar a mano): {cur.fetchall() or 'ninguno'}")
 
         # 3. terminal_trimble NULL/vacío -> codigo (reportando colisiones, sin fallar)
         cur.execute(
