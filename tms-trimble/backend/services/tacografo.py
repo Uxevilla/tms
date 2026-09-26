@@ -114,27 +114,36 @@ def _decode_dstat(b64):
 def _ingestar_dstat(did, source, vehiculo_id, raw, decoded, time):
     """Persiste la foto DSTAT más reciente de un conductor (clave DID) con su terminal.
 
-    Si el decode falla (decoded == {}), persiste igual con valores a 0 conservando
-    `dstat_raw`, para poder depurar el formato real de producción de la traza 82.
+    Si el decode falla (decoded == {}), se guarda solo el raw con decode_ok=false y las
+    columnas *_min a NULL (no 0), para que NINGÚN lector lo use.
     """
+    decode_ok = bool(decoded)
+
+    def val(key):
+        return float(decoded.get(key) or 0) if decode_ok else None
+
+    def ival(key):
+        return int(decoded.get(key) or 0) if decode_ok else None
+
     with _db() as conn:
         conn.execute(
             "INSERT INTO tacografo_dstat (did, source, vehiculo_id, dstat_raw, "
             "driving_coupure_min, day_driving_min, day_working_min, day_resting_min, "
             "week_driving_min, remaining_week_available_min, week_long_driving_count, "
-            "next_rest_due_ts, time, creado) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "next_rest_due_ts, time, creado, decode_ok) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 did, source, vehiculo_id or "", raw,
-                float(decoded.get("driving_coupure") or 0),
-                float(decoded.get("day_driving") or 0),
-                float(decoded.get("day_working") or 0),
-                float(decoded.get("day_resting") or 0),
-                float(decoded.get("week_driving") or 0),
-                float(decoded.get("remaining_week_available") or 0),
-                int(decoded.get("week_long_driving_count") or 0),
-                int(decoded.get("next_rest_due_ts") or 0),
+                val("driving_coupure"),
+                val("day_driving"),
+                val("day_working"),
+                val("day_resting"),
+                val("week_driving"),
+                val("remaining_week_available"),
+                ival("week_long_driving_count"),
+                ival("next_rest_due_ts"),
                 time or "",
                 datetime.datetime.utcnow().isoformat() + "Z",
+                decode_ok,
             ),
         )
         conn.commit()
@@ -144,7 +153,7 @@ def _dstat_terminal(terminal):
     """Devuelve el DSTAT más reciente del conductor logueado en el terminal (o None)."""
     with _db() as conn:
         row = conn.execute(
-            "SELECT * FROM tacografo_dstat WHERE vehiculo_id=? ORDER BY COALESCE(time, creado) DESC LIMIT 1",
+            "SELECT * FROM tacografo_dstat WHERE decode_ok AND vehiculo_id=? ORDER BY COALESCE(time, creado) DESC LIMIT 1",
             (terminal,),
         ).fetchone()
     if not row:

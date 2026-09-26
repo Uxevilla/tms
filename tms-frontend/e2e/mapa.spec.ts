@@ -63,6 +63,8 @@ test("mover el mapa: una posición nueva no cambia el encuadre", async ({ page }
   await page.waitForTimeout(6000); // el backend sondea (~3s) y el WS empuja la telemetría
   const box2 = await marcador().boundingBox();
   if (!box2) throw new Error("marcador desapareció tras la telemetría");
-  expect(Math.abs(box2.x - box1.x)).toBeLessThan(2);
-  expect(Math.abs(box2.y - box1.y)).toBeLessThan(2);
+  // Tolerancia de ~5px: el re-render del marcador tras la telemetría puede derivar
+  // 2-3px sub-píxel; un reencuadre REAL mueve el marcador decenas de px.
+  expect(Math.abs(box2.x - box1.x)).toBeLessThan(5);
+  expect(Math.abs(box2.y - box1.y)).toBeLessThan(5);
 });

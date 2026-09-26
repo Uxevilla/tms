@@ -59,10 +59,12 @@ async function restoreTripFecha(codigo: string, fecha: string): Promise<void> {
   await c.end();
 }
 
-// Fecha de HOY en local (misma lógica que `datetime.date.today()` del seed).
+// Fecha de HOY en la zona de España (Europe/Madrid), igual que el seed
+// (`datetime.now(ZoneInfo('Europe/Madrid'))`). Si el test usara la hora local del
+// navegador (UTC en CI), los viajes sembrados "hoy" caen fuera del filtro entre
+// las 22:00 y las 24:00 UTC (00:00–02:00 en España) y el test falla de forma intermitente.
 function hoyLocal(): string {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  return new Date().toLocaleDateString("en-CA", { timeZone: "Europe/Madrid" });
 }
 
 test.describe("Viajes (Fase 4)", () => {
@@ -194,7 +196,8 @@ test.describe("Viajes (Fase 4)", () => {
 
   test("validación en vivo: el botón se habilita solo con los obligatorios", async ({ page }) => {
     await abrirViajes(page);
-    await page.waitForTimeout(400); // deja asentar la página tras el goto (evita el click flaky en CI)
+    // Deja asentar la página tras el goto (mismo patrón que abrirSheetConN: evita el hang del click).
+    await page.waitForTimeout(400);
     // Abre el Sheet con el botón (más robusto que el atajo "n"; la validación no es el test de teclado).
     await page.getByRole("button", { name: /Nuevo viaje/i }).click();
     await expect(page.getByPlaceholder("Buscar cliente…")).toBeVisible({ timeout: 15000 });

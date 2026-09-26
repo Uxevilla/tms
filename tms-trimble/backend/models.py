@@ -275,7 +275,6 @@ class Vehiculo(BaseModel):
     terminal_trimble: str = ""
     categoria: str = "tractora"
     matricula: str = ""
-    terminal_trimble: str = ""
     app_terminal: str = ""
     marca: str = ""
     modelo: str = ""

@@ -80,7 +80,7 @@ def api_telemetria_activa(user: dict = Depends(require_role(["admin", "dispatche
         f"  ORDER BY terminal, creado DESC"
         f"), dstat AS ("
         f"  SELECT DISTINCT ON (vehiculo_id) vehiculo_id, did "
-        f"  FROM tacografo_dstat ORDER BY vehiculo_id, COALESCE(time, creado) DESC"
+        f"  FROM tacografo_dstat WHERE decode_ok ORDER BY vehiculo_id, COALESCE(time, creado) DESC"
         f") "
         f"SELECT u.vehiculo_id, u.lat, u.lng, u.speed_kmh AS velocidad, "
         f"       u.heading, u.odometer_km, u.time, "

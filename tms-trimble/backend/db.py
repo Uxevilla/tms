@@ -181,7 +181,7 @@ CREATE TABLE IF NOT EXISTS mensajes (
 );
 CREATE TABLE IF NOT EXISTS flota.mantenimientos (
     id SERIAL PRIMARY KEY, vehiculo_id TEXT, tipo TEXT, fecha TEXT, km INTEGER,
-    coste NUMERIC(10,2) DEFAULT 0, notas TEXT, hecho BOOLEAN DEFAULT false, fecha_fin TEXT, creado TEXT
+    coste NUMERIC(10,2) DEFAULT 0, notas TEXT, hecho BOOLEAN DEFAULT false, fecha_fin TEXT, gasto_id BIGINT, creado TEXT
 );
 CREATE TABLE IF NOT EXISTS ecmr (
     id BIGSERIAL PRIMARY KEY, viaje_id TEXT, viaje_valido BOOLEAN DEFAULT false,
@@ -338,6 +338,7 @@ CREATE TABLE IF NOT EXISTS tacografo_dstat (
     remaining_week_available_min NUMERIC(10,1) DEFAULT 0,
     week_long_driving_count INTEGER DEFAULT 0,
     next_rest_due_ts BIGINT DEFAULT 0,
+    decode_ok BOOLEAN NOT NULL DEFAULT true,
     time TEXT,
     creado TEXT
 );
@@ -886,10 +887,12 @@ def _db():
             cur.execute("ALTER TABLE mensajes ADD COLUMN IF NOT EXISTS leido_operador_por TEXT")
             cur.execute("ALTER TABLE mensajes ADD COLUMN IF NOT EXISTS incidencia BOOLEAN NOT NULL DEFAULT false")
             cur.execute("ALTER TABLE finanzas.gastos_vehiculos ADD COLUMN IF NOT EXISTS base_imponible NUMERIC(12,2) DEFAULT 0")
+            cur.execute("ALTER TABLE tacografo_dstat ADD COLUMN IF NOT EXISTS decode_ok BOOLEAN NOT NULL DEFAULT true")
             cur.execute("ALTER TABLE finanzas.gastos_vehiculos ADD COLUMN IF NOT EXISTS iva NUMERIC(6,2) DEFAULT 21")
             cur.execute("ALTER TABLE finanzas.gastos_vehiculos ADD COLUMN IF NOT EXISTS cuenta_contable_gasto TEXT")
             cur.execute("ALTER TABLE finanzas.gastos_vehiculos ADD COLUMN IF NOT EXISTS estado_pago TEXT DEFAULT 'Pendiente'")
             cur.execute("ALTER TABLE flota.mantenimientos ADD COLUMN IF NOT EXISTS fecha_fin TEXT")
+            cur.execute("ALTER TABLE flota.mantenimientos ADD COLUMN IF NOT EXISTS gasto_id BIGINT")
             cur.execute("ALTER TABLE empleados ADD COLUMN IF NOT EXISTS caducidad_carnet TEXT")
             cur.execute("ALTER TABLE empleados ADD COLUMN IF NOT EXISTS caducidad_cap TEXT")
             cur.execute("ALTER TABLE empleados ADD COLUMN IF NOT EXISTS caducidad_medica TEXT")

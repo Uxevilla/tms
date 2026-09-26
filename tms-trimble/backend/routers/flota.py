@@ -36,8 +36,44 @@ from services.vehiculos import validar_unicidad, terminal_trimble_de, app_termin
 router = APIRouter(dependencies=[Depends(require_role(["admin", "dispatcher"]))])
 
 
+def _generar_gasto_mantenimiento(conn, mid, vehiculo_id, fecha, base_imponible, iva, proveedor_id):
+    """Crea el gasto + asiento 622/472/400 de un mantenimiento y guarda su gasto_id.
+
+    Idempotente: si el mantenimiento ya tiene gasto_id, no crea nada (devuelve None).
+    Lanza ValueError si el asiento no cuadra (lo maneja el caller).
+    """
+    row = conn.execute("SELECT gasto_id, tipo FROM flota.mantenimientos WHERE id=?", (mid,)).fetchone()
+    if not row or row["gasto_id"]:
+        return None  # ya tiene gasto: idempotente
+    iva_pct = round(float(iva or 21), 2)
+    importe = round(float(base_imponible) * (1 + iva_pct / 100.0), 2)
+    cuota = round(importe - float(base_imponible), 2)
+    concepto = (row["tipo"] or "Reparación").strip()
+    gcur = conn.execute(
+        "INSERT INTO finanzas.gastos_vehiculos (vehiculo_id, proveedor_id, fecha, tipo, litros, base_imponible, iva, "
+        "importe_total, factura_ref, cuenta_contable_gasto, estado_pago, creado) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id",
+        (vehiculo_id, proveedor_id, fecha, "reparaciones", 0, base_imponible, iva_pct, importe,
+         "", "622", "Pendiente", datetime.datetime.utcnow().isoformat() + "Z"),
+    )
+    gid = gcur.fetchone()["id"]
+    lineas: list = [("622", float(base_imponible), 0, concepto)]
+    if cuota > 0:
+        lineas.append(("472", cuota, 0, "IVA soportado"))
+    lineas.append(("400", 0, importe, "Proveedor"))
+    _registrar_asiento((fecha or "")[:10], f"Gasto taller: {concepto}", lineas,
+                       origen="Gasto_Vehiculo", origen_id=str(gid), conn=conn)
+    conn.execute("UPDATE flota.mantenimientos SET gasto_id=? WHERE id=?", (gid, mid))
+    return gid
+
+
 @router.post("/api/mantenimientos")
 def add_mantenimiento(m: Mantenimiento, conn = Depends(get_conn)):
+    # Vehículo obligatorio y debe existir (por codigo).
+    if not m.vehiculo_id:
+        raise HTTPException(status_code=422, detail={"error": "vehiculo_id es obligatorio"})
+    if not conn.execute("SELECT 1 FROM flota.vehiculos WHERE codigo=?", (m.vehiculo_id,)).fetchone():
+        raise HTTPException(status_code=422, detail={"error": f"vehículo '{m.vehiculo_id}' no existe"})
     cur = conn.execute(
         "INSERT INTO flota.mantenimientos (vehiculo_id, tipo, fecha, fecha_fin, km, coste, notas, hecho, creado) "
         "VALUES (?,?,?,?,?,?,?,?,?) RETURNING id",
@@ -45,32 +81,10 @@ def add_mantenimiento(m: Mantenimiento, conn = Depends(get_conn)):
          datetime.datetime.utcnow().isoformat() + "Z"),
     )
     mid = cur.fetchone()["id"]
-    # Integración contable: si se marca Completado y se pide generar gasto → gastos_vehiculos + asiento 622/472/400.
+    # Completado + generar gasto → gastos_vehiculos + asiento 622/472/400 (idempotente).
     if m.hecho and m.generar_gasto and m.base_imponible > 0:
-        # mantenimientos referencia el vehículo por matrícula; gastos_vehiculos (finanzas) por código interno.
-        codigo_veh = m.vehiculo_id
-        _vrow = conn.execute("SELECT id FROM vehiculos WHERE matricula = ?", (m.vehiculo_id,)).fetchone()
-        if _vrow:
-            codigo_veh = _vrow["id"]
-        iva_pct = round(float(m.iva or 21), 2)
-        importe = round(float(m.base_imponible) * (1 + iva_pct / 100.0), 2)
-        cuota = round(importe - float(m.base_imponible), 2)
-        concepto = (m.tipo or "Reparación").strip()
-        gcur = conn.execute(
-            "INSERT INTO finanzas.gastos_vehiculos (vehiculo_id, proveedor_id, fecha, tipo, litros, base_imponible, iva, "
-            "importe_total, factura_ref, cuenta_contable_gasto, estado_pago, creado) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id",
-            (codigo_veh, m.proveedor_id, m.fecha, "reparaciones", 0, m.base_imponible, iva_pct, importe,
-             "", "622", "Pendiente", datetime.datetime.utcnow().isoformat() + "Z"),
-        )
-        gid = gcur.fetchone()["id"]
-        lineas = [("622", float(m.base_imponible), 0, concepto)]
-        if cuota > 0:
-            lineas.append(("472", cuota, 0, "IVA soportado"))
-        lineas.append(("400", 0, importe, "Proveedor"))
         try:
-            _registrar_asiento((m.fecha or "")[:10], f"Gasto taller: {concepto}", lineas,
-                               origen="Gasto_Vehiculo", origen_id=str(gid), conn=conn)
+            _generar_gasto_mantenimiento(conn, mid, m.vehiculo_id, m.fecha, m.base_imponible, m.iva, m.proveedor_id)
         except ValueError as e:
             conn.rollback()
             raise HTTPException(status_code=400, detail={"error": str(e)})
@@ -623,13 +637,33 @@ def upd_mantenimiento(mid: int, m: Optional[Mantenimiento] = None, conn = Depend
 
 @router.patch("/api/mantenimientos/{mid}/campos")
 def upd_mantenimiento_campos(mid: int, body: dict, conn = Depends(get_conn)):
-    """Edición en línea parcial: estado (hecho), coste, km, fechas, tipo o notas."""
+    """Edición en línea parcial: estado (hecho), coste, km, fechas, tipo o notas.
+
+    generar_gasto/base_imponible/iva/proveedor_id NO entran en el UPDATE de columnas:
+    solo se usan para disparar el gasto al completar (idempotente vía gasto_id).
+    """
     allow = ("hecho", "coste", "km", "fecha", "fecha_fin", "notas", "tipo")
     fields = {k: body[k] for k in allow if k in body}
-    if not fields:
+    generar_gasto = bool(body.get("generar_gasto"))
+    base_imponible = float(body.get("base_imponible") or 0)
+    iva = float(body.get("iva") or 21)
+    proveedor_id = body.get("proveedor_id")
+    if not fields and not (generar_gasto and base_imponible > 0):
         return {"ok": False, "error": "Sin campos editables"}
-    sets = ", ".join(f"{k}=?" for k in fields)
-    conn.execute(f"UPDATE flota.mantenimientos SET {sets} WHERE id=?", (*fields.values(), mid))
+    if fields:
+        sets = ", ".join(f"{k}=?" for k in fields)
+        conn.execute(f"UPDATE flota.mantenimientos SET {sets} WHERE id=?", (*fields.values(), mid))
+    if generar_gasto and base_imponible > 0:
+        row = conn.execute(
+            "SELECT vehiculo_id, fecha, hecho, gasto_id FROM flota.mantenimientos WHERE id=?", (mid,)
+        ).fetchone()
+        if row and row["hecho"] and not row["gasto_id"]:
+            try:
+                _generar_gasto_mantenimiento(conn, mid, row["vehiculo_id"], row["fecha"],
+                                             base_imponible, iva, proveedor_id)
+            except ValueError as e:
+                conn.rollback()
+                raise HTTPException(status_code=400, detail={"error": str(e)})
     conn.commit()
     return {"ok": True}
 
