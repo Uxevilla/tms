@@ -1,18 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { Send, Paperclip, MessageCircle, Loader2 } from "lucide-react";
 import { api } from "../api";
+import { FormularioCard, Mensaje } from "./ChatViaje";
 
 interface Terminal {
   id: string;
-}
-
-interface Mensaje {
-  id: string;
-  tipo: string;
-  source: string;
-  subject: string;
-  body: string;
-  time: string;
 }
 
 export function MensajeriaDashboard() {
@@ -139,6 +131,14 @@ export function MensajeriaDashboard() {
           )}
           {mensajes.map((m) => {
             const propio = m.tipo === "enviado";
+            const esFormulario = m.clase === "formulario" || m.clase === "informe_actividad";
+            if (esFormulario) {
+              return (
+                <div key={m.id} className="flex justify-start">
+                  <FormularioCard m={m} />
+                </div>
+              );
+            }
             return (
               <div key={m.id} className={`flex ${propio ? "justify-end" : "justify-start"}`}>
                 <div
