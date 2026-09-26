@@ -282,7 +282,7 @@ def list_documentos(conn = Depends(get_conn)):
             "referencia": ref or "—",
             "formato": formato,
             "fecha": (r["fecha"] or "")[:10],
-            "content_b64": (_leer_archivo(r["storage_key"]) if r["storage_key"] else (r["content_b64"] or "")),
+            "content_b64": (_leer_archivo(r["storage_key"], r.get("sha256") or "") if r["storage_key"] else (r["content_b64"] or "")),
             "source": src,
         })
     return {"documentos": out}
@@ -324,11 +324,11 @@ def list_tarifas_peaje(conn = Depends(get_conn)):
 @router.get("/api/vehiculos/{veh_id}/documentos")
 def list_vehiculo_documentos(veh_id: str, conn = Depends(get_conn)):
     rows = conn.execute(
-        "SELECT id, name, content_b64, storage_key FROM files WHERE vehiculo_id=? AND source='vehiculo' ORDER BY id", (veh_id,)
+        "SELECT id, name, content_b64, storage_key, sha256 FROM files WHERE vehiculo_id=? AND source='vehiculo' ORDER BY id", (veh_id,)
     ).fetchall()
     docs = []
     for r in rows:
-        c = _leer_archivo(r["storage_key"]) if r["storage_key"] else (r["content_b64"] or "")
+        c = _leer_archivo(r["storage_key"], r.get("sha256") or "") if r["storage_key"] else (r["content_b64"] or "")
         nombre = r["name"].split("__", 1)[1] if "__" in r["name"] else r["name"]
         docs.append({"id": r["id"], "nombre": nombre, "contenido": c, "size": round(len(c) * 3 / 4)})
     return {"documentos": docs}

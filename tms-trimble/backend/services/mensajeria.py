@@ -30,20 +30,53 @@ import redis
 from models import *
 from config import REDIS_URL, REDIS_STREAM, REDIS_CHANNEL, ACTIVITY_TYPES
 from config import TRANSFOLLOW_WEBHOOK_USER, TRANSFOLLOW_WEBHOOK_PASSWORD
+from services.cuestionarios import parse_report
+from services.telemetria import _get_redis
 
 
-def _save_mensaje(mid, trip_id, tipo, messagetype, originid, source, subject, body, mtime, needreply):
+def _save_mensaje(mid, trip_id, tipo, messagetype, originid, source, subject, body, mtime, needreply,
+                  clase=None, direccion=None, report_id=None, report_version=None, respuestas=None):
+    # Normalizar: <source>PM52 (V3 Bart)</source> → terminal = 'PM52' (el filtro source/terminal no pierde mensajes).
+    terminal = (source or "").split(" (")[0].strip()
     with _db() as conn:
         conn.execute(
-            "INSERT INTO mensajes (id, trip_id, tipo, messagetype, originid, source, subject, body, time, needreply, creado) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT (id) DO NOTHING",
-            (mid, trip_id, tipo, messagetype, originid, source, subject, body, mtime, needreply,
-             datetime.datetime.utcnow().isoformat()),
+            "INSERT INTO mensajes (id, trip_id, tipo, messagetype, originid, source, terminal, subject, body, time, needreply, creado, "
+            "clase, direccion, report_id, report_version, respuestas) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?::jsonb) ON CONFLICT (id) DO NOTHING",
+            (mid, trip_id, tipo, messagetype, originid, source, terminal, subject, body, mtime, needreply,
+             datetime.datetime.utcnow().isoformat(), clase, direccion, report_id, report_version,
+             json.dumps(respuestas) if respuestas is not None else None),
         )
         conn.commit()
 
 
-def _store_mensaje(block, tipo, lid_map):
+def _aplicar_reglas_configuradas(report_id, respuestas):
+    """Devuelve el estado a aplicar según cfg_reglas (o None si no hay regla que case).
+
+    Regla: si el report (report_id) trae una respuesta con question_id (y opción si
+    está definida) → ese estado. Sin regla no se hardcodea nada aquí.
+    """
+    if not report_id or not respuestas:
+        return None
+    conn = _db()
+    rules = conn.execute(
+        "SELECT question_id, option_id, estado FROM cfg_reglas "
+        "WHERE report_id=? AND activa ORDER BY id", (report_id,),
+    ).fetchall()
+    conn.close()
+    if not rules:
+        return None
+    for rule in rules:
+        for r in respuestas:
+            if r.get("question") != rule["question_id"]:
+                continue
+            if rule["option_id"] and r.get("option") != rule["option_id"]:
+                continue
+            return rule["estado"]
+    return None
+
+
+def _store_mensaje(block, tipo):
     def f(tag):
         m = re.search(rf"<{tag}>(.*?)</{tag}>", block, re.S)
         return m.group(1).strip() if m else ""
@@ -51,7 +84,13 @@ def _store_mensaje(block, tipo, lid_map):
     if not mid:
         return
     originid = f("originid")
-    trip_id = lid_map.get(originid) if originid else None
+    trip_id = None
+    if originid:
+        # originid puede ser un LID (mapeado en la tabla lid_map) o el id de un mensaje enviado.
+        conn = _db()
+        row = conn.execute("SELECT trip_id FROM lid_map WHERE lid=?", (originid,)).fetchone()
+        conn.close()
+        trip_id = row["trip_id"] if row else None
     # Referencia directa del viaje si el macro la incluye (TRID / reference).
     if not trip_id:
         trip_id = f("reference") or f("trip") or f("trip_id") or f("trid")
@@ -66,19 +105,49 @@ def _store_mensaje(block, tipo, lid_map):
             trip_id = row["trip_id"]
     messagetype = f("messagetype")
     mtime = f("time")
+    body = f("body")
+
+    # Clase de comunicación (Fase 5b): estructurado = formulario; libre = chat.
+    clase = "formulario" if tipo == "estructurado" else "libre"
+    direccion = "entrante"
+    report_id = report_version = None
+    respuestas = None
+    if tipo == "estructurado" and body:
+        try:
+            rep = parse_report(body)
+            report_id = rep["report_id"]
+            report_version = rep["version"]
+            respuestas = rep["respuestas"]
+        except ValueError:
+            # body no es un <Report>: se conserva crudo y se marca incidencia en la UI.
+            pass
+
     _save_mensaje(mid, trip_id, tipo, messagetype, originid, f("source"),
-                  f("subject"), f("body"), mtime, f("needreply") == "true")
+                  f("subject"), body, mtime, f("needreply") == "true",
+                  clase=clase, direccion=direccion, report_id=report_id,
+                  report_version=report_version, respuestas=respuestas)
+
+    # Tiempo real (PR 1.5): publicar el mensaje en Redis Pub/Sub (best-effort).
+    try:
+        _get_redis().publish(REDIS_CHANNEL,
+                             json.dumps({"tipo": "mensaje", "id": mid,
+                                         "trip_id": trip_id, "clase": clase}))
+    except Exception:
+        pass
     # Estado gobernado por Trimble: los macros estructurados cambian el estado del viaje.
     if tipo == "estructurado" and trip_id and messagetype:
         # Automatización Inteligente: dietas (RRHH) + cuenta corriente de palés.
         _procesar_dieta(trip_id, messagetype, mtime)
         if re.search(r"descarga|descarreg|unload", messagetype or "", re.I):
-            _procesar_pales(trip_id, f("body"), mtime)
-        estado = _estado_desde_codigo(messagetype)
+            _procesar_pales(trip_id, body, mtime)
+        # Reglas configurables (cfg_reglas) tienen prioridad; sin regla → hardcode legado.
+        estado = _aplicar_reglas_configuradas(report_id, respuestas)
+        if not estado:
+            estado = _estado_desde_codigo(messagetype)
         if estado:
             _aplicar_estado_viaje(trip_id, estado, mtime)
             if estado == "Entregado":
-                doc = _extraer_documento_ecmr(f("body"))
+                doc = _extraer_documento_ecmr(body)
                 if doc:
                     _guardar_documento_entrega(trip_id, doc[0], doc[1], doc[2], mtime)
 

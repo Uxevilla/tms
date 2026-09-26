@@ -87,6 +87,9 @@ class Documento(BaseModel):
     nombre: Optional[str] = None
     formato: Optional[str] = None
     bytes: Optional[int] = None
+    tipo_documento: Optional[str] = None
+    estado_descarga: Optional[str] = None
+    mime: Optional[str] = None
     origen: Optional[str] = None
 
 
@@ -114,6 +117,7 @@ class EntidadViaje(BaseModel):
     documentos: list[Documento] = []
     mensajes: list[dict] = []
     rentabilidad: Optional[Margen] = None
+    documentacion: dict = {}
 
 
 class EntidadConductor(BaseModel):
@@ -549,6 +553,21 @@ def entidad_vehiculo(codigo: str, user: dict = Depends(require_role(["admin", "d
     return resultado
 
 
+def _checklist_documentacion(conn, cliente_id, presentes):
+    """Checklist de facturación (PR 0.4): docs requeridos del cliente vs presentes."""
+    from services.tipos_documento import checklist_facturacion, docs_requeridos_default
+    requeridos = None
+    if cliente_id:
+        req = conn.execute(
+            "SELECT tipo_documento FROM cfg_docs_requeridos "
+            "WHERE cliente_id=? AND requerido ORDER BY orden", (cliente_id,)
+        ).fetchall()
+        requeridos = [r["tipo_documento"] for r in req]
+    if not requeridos:
+        requeridos = docs_requeridos_default()
+    return checklist_facturacion(presentes, requeridos)
+
+
 @router.get("/api/entidad/viaje/{codigo}", response_model=EntidadViaje)
 def entidad_viaje(codigo: str, user: dict = Depends(require_role(["admin", "dispatcher"])),
                   conn: _Conn = Depends(get_conn)):
@@ -563,7 +582,8 @@ def entidad_viaje(codigo: str, user: dict = Depends(require_role(["admin", "disp
     ).fetchall()
 
     documentos = conn.execute(
-        "SELECT name, formato, bytes, source FROM files WHERE trip_id = ? ORDER BY ftime DESC LIMIT 20",
+        "SELECT name, formato, bytes, source, tipo_documento, estado_descarga, mime FROM files "
+        "WHERE trip_id = ? ORDER BY ftime DESC LIMIT 20",
         (codigo,),
     ).fetchall()
 
@@ -581,8 +601,12 @@ def entidad_viaje(codigo: str, user: dict = Depends(require_role(["admin", "disp
             "fecha_esperada_descarga": t["fecha_esperada_descarga"],
         },
         "paradas": [dict(p) for p in paradas],
-        "documentos": [{"nombre": d["name"], "formato": d["formato"], "bytes": d["bytes"], "origen": d["source"]} for d in documentos],
+        "documentos": [{"nombre": d["name"], "formato": d["formato"], "bytes": d["bytes"], "origen": d["source"],
+                        "tipo_documento": d["tipo_documento"], "estado_descarga": d["estado_descarga"],
+                        "mime": d["mime"]} for d in documentos],
         "mensajes": [dict(m) for m in mensajes],
+        "documentacion": _checklist_documentacion(conn, t["cliente_id"],
+                                                  [d["tipo_documento"] for d in documentos if d["tipo_documento"]]),
     }
 
     if es_admin:

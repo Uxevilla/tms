@@ -194,6 +194,7 @@ test.describe("Viajes (Fase 4)", () => {
 
   test("validación en vivo: el botón se habilita solo con los obligatorios", async ({ page }) => {
     await abrirViajes(page);
+    await page.waitForTimeout(400); // deja asentar la página tras el goto (evita el click flaky en CI)
     // Abre el Sheet con el botón (más robusto que el atajo "n"; la validación no es el test de teclado).
     await page.getByRole("button", { name: /Nuevo viaje/i }).click();
     await expect(page.getByPlaceholder("Buscar cliente…")).toBeVisible({ timeout: 15000 });
