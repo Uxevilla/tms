@@ -29,16 +29,8 @@ const ConfiguracionDashboard = lazy(() => import("./components/ConfiguracionDash
 const TorreDashboard = lazy(() => import("./components/TorreDashboard").then((m) => ({ default: m.TorreDashboard })));
 const PlanificacionDashboard = lazy(() => import("./components/PlanificacionDashboard").then((m) => ({ default: m.PlanificacionDashboard })));
 const TallerPage = lazy(() => import("./components/TallerPage").then((m) => ({ default: m.TallerPage })));
+const FacturacionPage = lazy(() => import("./components/FacturacionPage").then((m) => ({ default: m.FacturacionPage })));
 import { NotFound } from "./components/NotFound";
-
-function Placeholder({ titulo, fase }: { titulo: string; fase: string }) {
-  return (
-    <div className="flex h-full flex-col items-center justify-center gap-2 text-muted-foreground">
-      <div className="text-lg font-semibold">{titulo}</div>
-      <div className="text-sm">En construcción — {fase}</div>
-    </div>
-  );
-}
 
 // /viajes/$codigo → abre el panel de entidad del viaje en la lista (no placeholder).
 function ViajeDetalleRedirect() {
@@ -189,7 +181,7 @@ const facturacionRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "/facturacion",
   beforeLoad: adminGuard,
-  component: () => <Placeholder titulo="Facturación" fase="Fase 6" />,
+  component: () => <FacturacionPage />,
 });
 const gastosRoute = createRoute({
   getParentRoute: () => appRoute,
