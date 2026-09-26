@@ -26,12 +26,12 @@ def _hoy_madrid():
 
 
 def _documentacion_viaje(conn, trip_id, cliente_id):
-    """Checklist de facturación (PR 0.4) para un viaje: {completa, faltan[]}."""
+    """Checklist de facturación (PR 0.4) para un viaje: {ok, faltan[]}."""
     presentes = [r["tipo_documento"] for r in conn.execute(
         "SELECT tipo_documento FROM files WHERE trip_id=? AND tipo_documento IS NOT NULL", (trip_id,),
     ).fetchall()]
     chk = _checklist_documentacion(conn, cliente_id, presentes)
-    return {"completa": bool(chk.get("ok")), "faltan": chk.get("faltan") or []}
+    return {"ok": bool(chk.get("ok")), "faltan": chk.get("faltan") or []}
 
 # ---------------------------------------------------------------------- #
 # Contabilidad: doble partida (plan contable, asientos, informes, facturas)
@@ -797,6 +797,7 @@ def contabilidad_facturables(conn = Depends(get_conn)):
         "WHERE NOT EXISTS (SELECT 1 FROM finanzas.facturas f WHERE f.trip_id=t.id AND COALESCE(f.estado,'')<>'borrador') "
         "AND NOT EXISTS (SELECT 1 FROM finanzas.factura_lineas fl JOIN finanzas.facturas f ON f.id=fl.factura_id "
         "                 WHERE fl.trip_id=t.id AND COALESCE(f.estado,'')<>'borrador') "
+        "AND t.anulado_at IS NULL "
         "AND COALESCE(t.precio,0) > 0 "
         "ORDER BY t.creado DESC LIMIT 200"
     ).fetchall()
@@ -924,7 +925,7 @@ def contabilidad_factura_agrupada(req: dict, conn = Depends(get_conn)):
     if not force:
         for t in trips:
             doc = _documentacion_viaje(conn, t["id"], t["cliente_id"])
-            if not doc["completa"]:
+            if not doc["ok"]:
                 faltan = ", ".join(doc["faltan"]) or "documentación"
                 raise HTTPException(status_code=409, detail={"error": f"Falta {faltan} en el viaje {t['id']}."})
 
@@ -962,7 +963,7 @@ def contabilidad_generar_factura(trip_id: str, req: dict | None = None, conn = D
         raise HTTPException(status_code=400, detail={"error": "El viaje no tiene precio."})
     if not force:
         doc = _documentacion_viaje(conn, trip_id, trip["cliente_id"])
-        if not doc["completa"]:
+        if not doc["ok"]:
             faltan = ", ".join(doc["faltan"]) or "documentación"
             raise HTTPException(status_code=409, detail={"error": f"Falta {faltan} en el viaje {trip_id}."})
     # Borrar borrador previo (misma transacción).
@@ -1002,7 +1003,7 @@ def contabilidad_borradores(user: dict = Depends(require_role(["admin"])), conn 
         d = dict(r)
         d["desglose"] = _desglose_costes(conn, r["trip_id"])
         d["documentacion"] = (_documentacion_viaje(conn, r["trip_id"], r["cliente_id"])
-                              if r["trip_id"] else {"completa": True, "faltan": []})
+                              if r["trip_id"] else {"ok": True, "faltan": []})
         salida.append(d)
     return {"borradores": salida}
 
@@ -1047,7 +1048,7 @@ def contabilidad_emitir_borrador(factura_id: int,
     force = bool((req or {}).get("force"))
     if not force and f["trip_id"]:
         doc = _documentacion_viaje(conn, f["trip_id"], f["cliente_id"])
-        if not doc["completa"]:
+        if not doc["ok"]:
             faltan = ", ".join(doc["faltan"]) or "documentación"
             conn.close()
             raise HTTPException(status_code=409, detail={"error": f"Falta {faltan} en el viaje {f['trip_id']}."})

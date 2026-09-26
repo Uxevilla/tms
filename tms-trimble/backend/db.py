@@ -670,6 +670,8 @@ CREATE TABLE IF NOT EXISTS finanzas.facturas_recibidas_lineas (
     concepto TEXT, litros NUMERIC(10,2) DEFAULT 0, base NUMERIC(12,2) DEFAULT 0, iva_pct NUMERIC(5,2) DEFAULT 21
 );
 INSERT INTO finanzas.series (codigo, ultimo) VALUES ('F', 0), ('A', 0) ON CONFLICT (codigo) DO NOTHING;
+-- Normalizar estados de factura a minúsculas (migración de datos históricos).
+UPDATE finanzas.facturas SET estado='borrador' WHERE estado='Borrador';
 """
 
 _SCHEMA_VIEWS = """

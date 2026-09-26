@@ -72,6 +72,23 @@ def test_facturables_entregado_sin_emitida(scratch_db):
 
 
 @pytest.mark.integration
+def test_facturables_excluye_anulados(scratch_db):
+    """Un viaje anulado (anulado_at NOT NULL) no aparece en facturables."""
+    from routers.contabilidad import contabilidad_facturables
+
+    tok, conn = _conn(scratch_db)
+    try:
+        _trip(conn, "T-ANULADO", estado="Entregado")
+        _trip(conn, "T-VIVO", estado="Entregado")
+        conn.execute("UPDATE operaciones.trips SET anulado_at='2026-09-26' WHERE codigo='T-ANULADO'")
+        ids = {v["id"] for v in contabilidad_facturables(conn)["viajes"]}
+        assert "T-ANULADO" not in ids
+        assert "T-VIVO" in ids
+    finally:
+        main._tenant_ctx.reset(tok)
+
+
+@pytest.mark.integration
 def test_agrupada_clientes_distintos_409(scratch_db):
     """Agrupar viajes de clientes distintos → 409."""
     from routers.contabilidad import contabilidad_factura_agrupada

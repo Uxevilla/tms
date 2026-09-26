@@ -21,7 +21,7 @@ import { Label } from "./ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "./ui/dialog";
 
 // ------------------------------------------------------------------ tipos
-interface Documentacion { completa: boolean; faltan: string[] }
+interface Documentacion { ok: boolean; faltan: string[] }
 
 interface Borrador {
   id: number;
@@ -95,7 +95,7 @@ function EstadoBadge({ estado }: { estado: string }) {
 }
 
 function DocBadge({ doc }: { doc?: Documentacion }) {
-  if (!doc || doc.completa) return null;
+  if (!doc || doc.ok) return null;
   return (
     <span title={`Falta: ${doc.faltan.join(", ")}`} className="inline-flex items-center gap-1 rounded-full bg-red-100 px-2 py-0.5 text-[11px] font-medium text-red-700">
       <AlertTriangle size={11} />
@@ -123,6 +123,9 @@ export function FacturacionPage() {
   const [fAdjDocs, setFAdjDocs] = useState(false);
 
   const [filtroCliente, setFiltroCliente] = useState("");
+  const [fDesde, setFDesde] = useState("");
+  const [fHasta, setFHasta] = useState("");
+  const [limite, setLimite] = useState(50);
 
   useEffect(() => {
     if (!toast) return;
@@ -172,7 +175,7 @@ export function FacturacionPage() {
     setConfirmar({
       titulo: "Emitir factura",
       detalle: `${b.cliente_nombre || "Cliente"} — 1 viaje · Base ${fmtEUR(b.base)} · IVA ${b.iva}% · Total ${fmtEUR(b.total)} · Fecha ${fmtFecha(new Date().toISOString())}`,
-      faltan: b.documentacion?.completa === false ? b.documentacion.faltan : undefined,
+      faltan: b.documentacion?.ok === false ? b.documentacion.faltan : undefined,
       accion: () => emitirMut.mutate([b.id]),
     });
   }
@@ -182,7 +185,7 @@ export function FacturacionPage() {
     if (!lista.length) return;
     const base = lista.reduce((s, b) => s + Number(b.base || 0), 0);
     const total = lista.reduce((s, b) => s + Number(b.total || 0), 0);
-    const faltan = [...new Set(lista.flatMap((b) => (b.documentacion?.completa === false ? b.documentacion.faltan : [])))];
+    const faltan = [...new Set(lista.flatMap((b) => (b.documentacion?.ok === false ? b.documentacion.faltan : [])))];
     setConfirmar({
       titulo: `Emitir ${lista.length} borrador(es)`,
       detalle: `${[...new Set(lista.map((b) => b.cliente_nombre))].join(", ") || "varios"} — Base ${fmtEUR(base)} · Total ${fmtEUR(total)}`,
@@ -205,7 +208,7 @@ export function FacturacionPage() {
     const base = viajes.reduce((s, v) => s + Number(v.precio || 0), 0);
     const iva = viajes[0]?.iva ?? 21;
     const total = base * (1 + Number(iva) / 100);
-    const faltan = [...new Set(viajes.flatMap((v) => (v.documentacion?.completa === false ? v.documentacion.faltan : [])))];
+    const faltan = [...new Set(viajes.flatMap((v) => (v.documentacion?.ok === false ? v.documentacion.faltan : [])))];
     setConfirmar({
       titulo: `Facturar ${viajes.length} viaje(s)`,
       detalle: `${[...new Set(viajes.map((v) => v.cliente || "—"))].join(", ") || "varios"} — Base ${fmtEUR(base)} · IVA ${iva}% · Total ${fmtEUR(total)} · Fecha ${fmtFecha(new Date().toISOString())}`,
@@ -279,11 +282,18 @@ export function FacturacionPage() {
 
   const facturasFiltradas = useMemo(() => {
     const q = filtroCliente.trim().toLowerCase();
-    return facturas.filter((f) => !q || (f.cliente_nombre || "").toLowerCase().includes(q));
-  }, [facturas, filtroCliente]);
+    return facturas.filter((f) => {
+      if (q && !(f.cliente_nombre || "").toLowerCase().includes(q)) return false;
+      if (fDesde && (f.fecha || "") < fDesde) return false;
+      if (fHasta && (f.fecha || "") > fHasta) return false;
+      return true;
+    });
+  }, [facturas, filtroCliente, fDesde, fHasta]);
 
-  const emitidas = facturasFiltradas.filter((f) => f.estado === "emitida");
-  const cobradas = facturasFiltradas.filter((f) => f.estado === "cobrada" || f.estado === "pagada");
+  const emitidas = facturasFiltradas.filter((f) => f.estado === "emitida").slice(0, limite);
+  const cobradas = facturasFiltradas.filter((f) => f.estado === "cobrada" || f.estado === "pagada").slice(0, limite);
+  const totalEmitidas = facturasFiltradas.filter((f) => f.estado === "emitida").length;
+  const totalCobradas = facturasFiltradas.filter((f) => f.estado === "cobrada" || f.estado === "pagada").length;
 
   function toggleSet<T>(s: Set<T>, v: T): Set<T> {
     const n = new Set(s);
@@ -302,7 +312,7 @@ export function FacturacionPage() {
               onClick={() => setPestana(p)}
               className={`rounded px-2.5 py-1 text-xs font-medium capitalize transition ${pestana === p ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}
             >
-              {p === "pendientes" ? `Pendientes (${borradores.length + facturables.length})` : p === "emitidas" ? `Emitidas (${emitidas.length})` : `Cobradas (${cobradas.length})`}
+              {p === "pendientes" ? `Pendientes (${borradores.length + facturables.length})` : p === "emitidas" ? `Emitidas (${totalEmitidas})` : `Cobradas (${totalCobradas})`}
             </button>
           ))}
         </div>
@@ -321,7 +331,11 @@ export function FacturacionPage() {
           </div>
         )}
         {(pestana === "emitidas" || pestana === "cobradas") && (
-          <Input value={filtroCliente} onChange={(e) => setFiltroCliente(e.target.value)} placeholder="Filtrar por cliente…" className="h-8 w-56" />
+          <div className="flex items-center gap-2">
+            <Input value={filtroCliente} onChange={(e) => setFiltroCliente(e.target.value)} placeholder="Cliente…" className="h-8 w-40" />
+            <Input type="date" value={fDesde} onChange={(e) => setFDesde(e.target.value)} className="h-8 w-36" />
+            <Input type="date" value={fHasta} onChange={(e) => setFHasta(e.target.value)} className="h-8 w-36" />
+          </div>
         )}
       </div>
 
@@ -453,6 +467,11 @@ export function FacturacionPage() {
                 )}
               </tbody>
             </table>
+          )}
+          {pestana !== "pendientes" && ((pestana === "emitidas" ? totalEmitidas : totalCobradas) > limite) && (
+            <div className="p-2 text-center">
+              <Button variant="ghost" size="sm" onClick={() => setLimite((l) => l + 50)}>Mostrar más</Button>
+            </div>
           )}
         </div>
       </div>
