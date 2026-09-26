@@ -53,7 +53,7 @@ interface MantenimientoEvento extends Event {
   hecho: boolean;
 }
 
-export function TallerCalendario({ vehiculos }: { vehiculos: Vehiculo[] }) {
+export function TallerCalendario({ vehiculos, onChange }: { vehiculos: Vehiculo[]; onChange?: () => void }) {
   const [eventos, setEventos] = useState<MantenimientoEvento[]>([]);
   const [drawer, setDrawer] = useState<{ inicio: string; fin: string } | null>(null);
   const [detalle, setDetalle] = useState<MantenimientoEvento | null>(null);
@@ -152,6 +152,7 @@ export function TallerCalendario({ vehiculos }: { vehiculos: Vehiculo[] }) {
         setBanner({ tipo: "ok", texto: "Cita de taller registrada." });
         setDrawer(null);
         cargar();
+        onChange?.();
       } else {
         setBanner({ tipo: "error", texto: d?.detail?.error || d?.error || "Error" });
       }
@@ -170,6 +171,7 @@ export function TallerCalendario({ vehiculos }: { vehiculos: Vehiculo[] }) {
       setBanner({ tipo: "ok", texto: "Cita eliminada." });
       setDetalle(null);
       cargar();
+      onChange?.();
     } catch {
       setBanner({ tipo: "error", texto: "Error de red al eliminar." });
     } finally {

@@ -322,7 +322,7 @@ export function TallerPage() {
 
       {vista === "calendario" ? (
         <div className="min-h-0 flex-1">
-          <TallerCalendario vehiculos={vehiculos} />
+          <TallerCalendario vehiculos={vehiculos} onChange={() => queryClient.invalidateQueries({ queryKey: ["mantenimientos"] })} />
         </div>
       ) : (
       <div className="overflow-hidden rounded-lg border border-slate-200">
