@@ -1,6 +1,11 @@
 import { test, expect, type Page } from "@playwright/test";
 import { Client } from "pg";
 
+// Facturación es solo admin (guard en frontend + require_role en backend).
+test.beforeEach(async ({}, testInfo) => {
+  test.skip(testInfo.project.name === "dispatcher", "Facturación es solo admin");
+});
+
 // Auth vía storageState (global-setup). El backend corre en modo falso de Trimble.
 
 function dbClient(): Client {
@@ -70,7 +75,7 @@ test("entregar viaje → Pendientes → facturar → F-<año>-NNNN con asiento 4
   await insertarViaje(codigo, "E2E-Cliente-Fact", 200);
 
   await page.goto("/facturacion");
-  await expect(page.getByText("Pendientes", { exact: false })).toBeVisible();
+  await expect(page.getByRole("button", { name: /Pendientes/ })).toBeVisible();
 
   // El viaje aparece en "Viajes pendientes de facturar".
   const fila = page.locator("tr", { hasText: codigo });
@@ -140,7 +145,7 @@ test("agrupar viajes de 2 clientes distintos → error visible", async ({ page }
   await insertarViaje(b, "E2E-Cliente-B", 100);
 
   await page.goto("/facturacion");
-  await expect(page.getByText("Pendientes", { exact: false })).toBeVisible();
+  await expect(page.getByRole("button", { name: /Pendientes/ })).toBeVisible();
 
   // Seleccionar ambos viajes (checkbox de cada fila).
   await page.locator("tr", { hasText: a }).getByRole("checkbox").check();
