@@ -130,6 +130,12 @@ def _store_mensaje(block, tipo):
                   clase=clase, direccion=direccion, report_id=report_id,
                   report_version=report_version, respuestas=respuestas)
 
+    # Enlace respuesta→fichero (manual §8.4): traza 300 y mensajes estructurados.
+    if es_formulario and respuestas:
+        from services.sync import _registrar_files_origen
+        with _db() as conn:
+            _registrar_files_origen(conn, respuestas, report_id or "", trip_id or "", mid, originid)
+
     # Tiempo real (PR 1.5): publicar el mensaje en Redis Pub/Sub (best-effort).
     # 'empresa' permite al WS filtrar por tenant (el canal es global).
     try:

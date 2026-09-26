@@ -73,3 +73,19 @@ def test_checklist_normaliza_guiones_espacios():
 
 def test_checklist_normaliza_mayusculas():
     assert checklist_facturacion(["CMR"], ["cmr"])["ok"] is True
+
+
+def test_clasificar_con_mapeo_manda_sobre_nombre():
+    from services.tipos_documento import clasificar_con_mapeo
+    # nombre 'pod-*.png' no da pista; el mapeo a CMR manda.
+    assert clasificar_con_mapeo(3, "pod-1428065934030.png", "CMR") == "CMR"
+    # sin mapeo → cae al nombre/ftype.
+    assert clasificar_con_mapeo(3, "cmr_scan.png", "") == "CMR"
+
+
+def test_sugerir_tipo_documento():
+    from services.tipos_documento import sugerir_tipo_documento
+    assert sugerir_tipo_documento("docuscan", "Firma del CMR") == "CMR"
+    assert sugerir_tipo_documento("photo", "Carta de porte escaneada") == "carta_porte"
+    assert sugerir_tipo_documento("signature", "Firma del conductor") == "firma"
+    assert sugerir_tipo_documento("text", "Observaciones") == ""

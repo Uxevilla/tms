@@ -148,6 +148,10 @@ CREATE TABLE IF NOT EXISTS documentos_auditoria (
 CREATE TABLE IF NOT EXISTS lid_map (
     lid TEXT PRIMARY KEY, trip_id TEXT, task_id TEXT, terminal TEXT, desde TEXT
 );
+CREATE TABLE IF NOT EXISTS files_origen (
+    name TEXT PRIMARY KEY, report_id TEXT, question_id TEXT,
+    trip_id TEXT, mensaje_id TEXT, lid TEXT, creado TIMESTAMPTZ DEFAULT now()
+);
 CREATE TABLE IF NOT EXISTS qp_definiciones (
     id BIGSERIAL PRIMARY KEY, report_id TEXT NOT NULL, version TEXT NOT NULL DEFAULT '',
     nombre TEXT, firstquestion TEXT, activa BOOLEAN NOT NULL DEFAULT true,
@@ -173,6 +177,11 @@ CREATE TABLE IF NOT EXISTS cfg_reglas (
 CREATE TABLE IF NOT EXISTS cfg_docs_requeridos (
     id BIGSERIAL PRIMARY KEY, cliente_id INTEGER, tipo_documento TEXT NOT NULL,
     requerido BOOLEAN NOT NULL DEFAULT true, orden INT DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS cfg_tipo_documento_pregunta (
+    id BIGSERIAL PRIMARY KEY, report_id TEXT NOT NULL, question_id TEXT NOT NULL,
+    tipo_documento TEXT NOT NULL, sugerido BOOLEAN DEFAULT true,
+    UNIQUE (report_id, question_id)
 );
 CREATE TABLE IF NOT EXISTS mensajes (
     id TEXT PRIMARY KEY, trip_id TEXT, tipo TEXT, messagetype TEXT,

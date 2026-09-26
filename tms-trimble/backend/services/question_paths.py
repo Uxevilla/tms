@@ -6,6 +6,7 @@ traducir las respuestas crudas (QID/OID) a texto legible y validar los reportes.
 
 from db import _db
 from services.cuestionarios import parse_report_definition, validar_definicion
+from services.tipos_documento import sugerir_tipo_documento
 
 
 def importar_definicion(xml_str, importado_por=""):
@@ -55,6 +56,19 @@ def importar_definicion(xml_str, importado_por=""):
                     (pid, o["option_id"], o["texto"], o["valuetype"], o["inputmask"],
                      o["readonly"], o["nextquestion"], oi),
                 )
+                # Sugerir mapeo pregunta→tipo_documento desde el inputmask de captura/firma.
+                if (o["inputmask"] or "").lower() in ("docuscan", "multidocuscan", "picturescan",
+                                                       "photo", "signature", "doc-edit", "annotate",
+                                                       "signoff", "special"):
+                    tipo = sugerir_tipo_documento(o["inputmask"], q["texto"])
+                    if tipo:
+                        conn.execute(
+                            "INSERT INTO cfg_tipo_documento_pregunta (report_id, question_id, tipo_documento, sugerido) "
+                            "VALUES (?,?,?,true) ON CONFLICT (report_id, question_id) DO UPDATE SET "
+                            "tipo_documento=EXCLUDED.tipo_documento, sugerido=true "
+                            "WHERE cfg_tipo_documento_pregunta.sugerido = true",
+                            (report_id, q["question_id"], tipo),
+                        )
 
     return {"ok": True, "definicion_id": defid, "preguntas": len(d["preguntas"]),
             "report_id": report_id, "version": version}

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
-import { X, FileText, Download, ClipboardList, Split } from "lucide-react";
+import { X, FileText, Download, ClipboardList, Split, Eye, CheckCircle2, Loader2 } from "lucide-react";
 import { api } from "../api";
+import { getRol } from "../auth";
 import type { Viaje } from "../types";
 
 interface Mensaje {
@@ -17,10 +18,13 @@ interface Mensaje {
 interface Doc {
   id: string;
   nombre: string;
-  contenido: string;
   size: number;
   source: string;
   formato: string;
+  mime?: string;
+  tipo_documento?: string;
+  revisado_at?: string | null;
+  revisado_por?: string | null;
 }
 interface Tramo {
   id: number;
@@ -41,6 +45,7 @@ export function DetalleViaje({ trip, onClose }: { trip: Viaje; onClose: () => vo
   const [docs, setDocs] = useState<Doc[]>([]);
   const [tramos, setTramos] = useState<Tramo[]>([]);
   const [cargando, setCargando] = useState(true);
+  const [visor, setVisor] = useState<{ url: string; mime: string; nombre: string } | null>(null);
 
   useEffect(() => {
     (async () => {
@@ -62,14 +67,75 @@ export function DetalleViaje({ trip, onClose }: { trip: Viaje; onClose: () => vo
 
   const qps = mensajes.filter((m) => m.tipo === "cuestionario");
 
-  function descargar(d: Doc) {
-    const b64 = (d.contenido || "").replace(/^data:[^;]+;base64,/, "");
-    if (!b64) return;
-    const ext = d.formato || (d.nombre.includes(".") ? d.nombre.split(".").pop() : "pdf");
-    const a = document.createElement("a");
-    a.href = `data:application/${ext};base64,${b64}`;
-    a.download = d.nombre || `archivo.${ext}`;
-    a.click();
+  async function contenido(d: Doc): Promise<string> {
+    const r = await api<{ contenido: string; mime: string }>(`/api/files/${d.id}/contenido`);
+    return r.contenido || "";
+  }
+
+  async function ver(d: Doc) {
+    try {
+      const b64 = (await contenido(d)).replace(/^data:[^;]+;base64,/, "");
+      if (!b64) return;
+      const r = await api<{ mime: string }>(`/api/files/${d.id}/contenido`);
+      const mime = r.mime || (d.formato === "pdf" ? "application/pdf" : "image/png");
+      const bin = atob(b64);
+      const arr = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+      const url = URL.createObjectURL(new Blob([arr], { type: mime }));
+      setVisor({ url, mime, nombre: d.nombre });
+    } catch {
+      /* noop */
+    }
+  }
+
+  function cerrarVisor() {
+    if (visor?.url) URL.revokeObjectURL(visor.url);
+    setVisor(null);
+  }
+
+  async function descargar(d: Doc) {
+    try {
+      const b64 = (await contenido(d)).replace(/^data:[^;]+;base64,/, "");
+      if (!b64) return;
+      const ext = d.formato || (d.nombre.includes(".") ? d.nombre.split(".").pop() : "pdf");
+      const bin = atob(b64);
+      const arr = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+      const url = URL.createObjectURL(new Blob([arr]));
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = d.nombre || `archivo.${ext}`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      /* noop */
+    }
+  }
+
+  async function revisar(d: Doc) {
+    try {
+      await api(`/api/trips/${encodeURIComponent(trip.id)}/documentos/${d.id}/revisar`, {
+        method: "POST",
+        body: JSON.stringify({ revisado: !d.revisado_at }),
+      });
+      const r = await api<{ documentos: Doc[] }>(`/api/trips/${encodeURIComponent(trip.id)}/documentos`);
+      setDocs(r.documentos ?? []);
+    } catch {
+      /* noop */
+    }
+  }
+
+  async function reclasificar(d: Doc, tipo: string) {
+    try {
+      await api(`/api/trips/${encodeURIComponent(trip.id)}/documentos/${d.id}/tipo`, {
+        method: "POST",
+        body: JSON.stringify({ tipo_documento: tipo }),
+      });
+      const r = await api<{ documentos: Doc[] }>(`/api/trips/${encodeURIComponent(trip.id)}/documentos`);
+      setDocs(r.documentos ?? []);
+    } catch {
+      /* noop */
+    }
   }
 
   return (
@@ -161,15 +227,35 @@ export function DetalleViaje({ trip, onClose }: { trip: Viaje; onClose: () => vo
                         <div className="flex min-w-0 items-center gap-2">
                           <FileText size={15} className="shrink-0 text-slate-400" />
                           <div className="min-w-0">
-                            <div className="truncate text-xs font-medium text-slate-700">{d.nombre}</div>
+                            <div className="flex items-center gap-1.5">
+                              <span className="truncate text-xs font-medium text-slate-700">{d.nombre}</span>
+                              {d.tipo_documento && d.tipo_documento !== "otro" && (
+                                <span className="shrink-0 rounded bg-blue-100 px-1.5 py-0.5 text-[10px] font-semibold text-blue-700">{d.tipo_documento}</span>
+                              )}
+                              {d.revisado_at && <span title={`Revisado por ${d.revisado_por || "?"}`}><CheckCircle2 size={13} className="shrink-0 text-emerald-500" /></span>}
+                            </div>
                             <div className="text-[11px] text-slate-400">
                               {d.source || "archivo"} · {(d.size / 1024).toFixed(0)} KB
                             </div>
                           </div>
                         </div>
-                        <button onClick={() => descargar(d)} title="Descargar" className="shrink-0 rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-blue-600">
-                          <Download size={15} />
-                        </button>
+                        <div className="flex shrink-0 items-center gap-1">
+                          <button onClick={() => ver(d)} title="Ver" className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-blue-600"><Eye size={15} /></button>
+                          <button onClick={() => descargar(d)} title="Descargar" className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-blue-600"><Download size={15} /></button>
+                          <button onClick={() => revisar(d)} title={d.revisado_at ? "Desmarcar revisado" : "Marcar revisado"} className={`rounded p-1 ${d.revisado_at ? "text-emerald-500 hover:bg-emerald-50" : "text-slate-400 hover:bg-slate-100"}`}><CheckCircle2 size={15} /></button>
+                          {getRol() === "admin" && (
+                            <select
+                              value={d.tipo_documento || "otro"}
+                              onChange={(e) => reclasificar(d, e.target.value)}
+                              className="rounded border px-1 py-0.5 text-[11px] text-slate-600"
+                              title="Reclasificar"
+                            >
+                              {["CMR", "carta_porte", "albaran", "ticket", "firma", "escaner", "tacografo", "otro"].map((t) => (
+                                <option key={t} value={t}>{t}</option>
+                              ))}
+                            </select>
+                          )}
+                        </div>
                       </li>
                     ))}
                   </ul>
@@ -179,6 +265,24 @@ export function DetalleViaje({ trip, onClose }: { trip: Viaje; onClose: () => vo
           )}
         </div>
       </div>
+
+      {visor && (
+        <div className="fixed inset-0 z-[2200] flex items-center justify-center bg-black/60" onClick={cerrarVisor}>
+          <div className="flex h-[85vh] w-[80vw] flex-col overflow-hidden rounded-lg bg-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between border-b px-4 py-2">
+              <span className="truncate text-sm font-semibold text-slate-700">{visor.nombre}</span>
+              <button onClick={cerrarVisor} className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600"><X size={18} /></button>
+            </div>
+            <div className="min-h-0 flex-1 bg-slate-100">
+              {visor.mime === "application/pdf" ? (
+                <iframe src={visor.url} title={visor.nombre} className="h-full w-full" />
+              ) : (
+                <img src={visor.url} alt={visor.nombre} className="mx-auto max-h-full max-w-full object-contain" />
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }

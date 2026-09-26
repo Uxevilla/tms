@@ -122,6 +122,142 @@ def _set_sync_state(key, value):
         conn.commit()
 
 
+def migrar_lid_map_json(conn=None):
+    """Migra el JSON antiguo de sync_state (key 'lid_map') a la tabla lid_map, una sola vez.
+
+    Re-vincula ficheros con trip_id NULL y lid conocido. Devuelve cuántos mapeos migró.
+    """
+    owns = conn is None
+    if owns:
+        conn = _db()
+    try:
+        raw = conn.execute("SELECT value FROM sistema.sync_state WHERE key='lid_map'").fetchone()
+        if not raw:
+            return 0
+        try:
+            data = json.loads(raw["value"] or "{}")
+        except (json.JSONDecodeError, TypeError):
+            data = {}
+        n = 0
+        if isinstance(data, dict):
+            for lid, trip in data.items():
+                if lid and trip:
+                    conn.execute(
+                        "INSERT INTO lid_map (lid, trip_id) VALUES (?,?) ON CONFLICT (lid) DO NOTHING",
+                        (lid, trip),
+                    )
+                    n += 1
+        conn.execute(
+            "UPDATE files f SET trip_id=l.trip_id, vinculado_por='lid' "
+            "FROM lid_map l WHERE f.lid=l.lid AND f.trip_id IS NULL AND l.trip_id IS NOT NULL"
+        )
+        conn.execute("DELETE FROM sistema.sync_state WHERE key='lid_map'")
+        conn.commit()
+        return n
+    finally:
+        if owns:
+            conn.close()
+
+
+_FILE_VALUE_RE = re.compile(r"\.(gif|jpe?g|png|pdf|tiff?|mp4)$", re.I)
+
+
+def _registrar_files_origen(conn, respuestas, report_id="", trip_id="", mensaje_id="", lid=""):
+    """Registra el enlace respuesta→fichero (manual §8.4: el value de la respuesta es el nombre
+    del fichero). Re-clasifica los ficheros ya descargados si el informe llegó después."""
+    if not respuestas:
+        return
+    for r in respuestas:
+        val = (r.get("value") or "").strip()
+        if not val or not _FILE_VALUE_RE.search(val):
+            continue
+        qid = r.get("question") or ""
+        conn.execute(
+            "INSERT INTO files_origen (name, report_id, question_id, trip_id, mensaje_id, lid) "
+            "VALUES (?,?,?,?,?,?) ON CONFLICT (name) DO UPDATE SET "
+            "report_id=EXCLUDED.report_id, question_id=EXCLUDED.question_id, trip_id=EXCLUDED.trip_id, "
+            "mensaje_id=EXCLUDED.mensaje_id, lid=EXCLUDED.lid",
+            (val, report_id or None, qid or None, trip_id or None, mensaje_id or None, lid or None),
+        )
+        # Re-clasificar el fichero ya descargado (llegó antes que el informe).
+        tipo = None
+        if report_id and qid:
+            mp = conn.execute(
+                "SELECT tipo_documento FROM cfg_tipo_documento_pregunta "
+                "WHERE report_id=? AND question_id=? LIMIT 1", (report_id, qid),
+            ).fetchone()
+            tipo = mp["tipo_documento"] if mp and mp["tipo_documento"] else None
+        sets = ["report_id=?", "question_id=?", "mensaje_id=?", "lid=?"]
+        params = [report_id or None, qid or None, mensaje_id or None, lid or None]
+        if trip_id:
+            sets.append("trip_id=?")
+            sets.append("vinculado_por='respuesta'")
+            params.append(trip_id)
+        if tipo:
+            sets.append("tipo_documento=?")
+            params.append(tipo)
+        params.append(val)
+        conn.execute(f"UPDATE files SET {', '.join(sets)} WHERE name=? AND anulado_at IS NULL", params)
+
+
+def _madrid_a_utc(s):
+    """'YYYY-MM-DDTHH:MM' en Europe/Madrid → 'YYYY-MM-DDTHH:MM' en UTC (para comparar con ftime)."""
+    if not s:
+        return ""
+    try:
+        dt = datetime.datetime.fromisoformat(s)
+    except ValueError:
+        return ""
+    if dt.tzinfo is None:
+        from zoneinfo import ZoneInfo
+        dt = dt.replace(tzinfo=ZoneInfo("Europe/Madrid"))
+    return dt.astimezone(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M")
+
+
+def _vincular_por_vehiculo_ventana(conn):
+    """Vincula ficheros sin viaje (trip_id NULL) al viaje del terminal cuya franja horaria
+    contiene la hora del fichero (vinculado_por='vehiculo_ventana'). Compara en UTC."""
+    huerfanos = conn.execute(
+        "SELECT id, source, vehiculo_id, ftime FROM files "
+        "WHERE trip_id IS NULL AND anulado_at IS NULL AND COALESCE(source,'') <> '' "
+        "AND COALESCE(source,'') NOT IN ('vehiculo','conductor','empresa') AND vehiculo_id IS NULL"
+    ).fetchall()
+    n = 0
+    for f in huerfanos:
+        ft = (f["ftime"] or "")[:16]  # YYYY-MM-DDTHH:MM (sin segundos, igual que _madrid_a_utc)
+        if not ft:
+            continue
+        veh = conn.execute(
+            "SELECT codigo FROM vehiculos WHERE terminal_trimble=? OR matricula=? OR codigo=? LIMIT 1",
+            (f["source"], f["source"], f["source"]),
+        ).fetchone()
+        codigo = (veh["codigo"] if veh else (f["vehiculo_id"] or f["source"]))
+        candidatos = conn.execute(
+            "SELECT id, fecha_esperada_carga, fecha_esperada_descarga FROM trips "
+            "WHERE terminal=? AND anulado_at IS NULL "
+            "AND fecha_esperada_carga IS NOT NULL AND fecha_esperada_carga<>'' "
+            "AND fecha_esperada_descarga IS NOT NULL AND fecha_esperada_descarga<>'' "
+            "ORDER BY creado DESC LIMIT 20",
+            (codigo,),
+        ).fetchall()
+        viaje_id = None
+        for c in candidatos:
+            ini = _madrid_a_utc(c["fecha_esperada_carga"])
+            fin = _madrid_a_utc(c["fecha_esperada_descarga"])
+            if ini and fin and ini <= ft <= fin:
+                viaje_id = c["id"]
+                break
+        if viaje_id:
+            conn.execute(
+                "UPDATE files SET trip_id=?, vinculado_por='vehiculo_ventana' WHERE id=?",
+                (viaje_id, f["id"]),
+            )
+            n += 1
+    if n:
+        conn.commit()
+    return n
+
+
 def _mark_inicial():
     """Cursor de arranque: 2 días atrás en UTC (formato del cursor de Trimble).
 
@@ -142,32 +278,61 @@ def _parse_props(block):
     return props
 
 
-def _save_file(trip_id, name, ftype, ftime, source, driver, lid, content_b64, error=""):
+def _save_file(trip_id, name, ftype, ftime, source, driver, lid, content_b64, error="",
+               report_id="", question_id="", mensaje_id=""):
     """Guarda un fichero descargado o registra el fallo para reintentar (nunca se descarta).
 
     - content_b64 no vacío → estado 'descargado' (binario en disco vía _guardar_archivo).
     - si falla (error) → estado 'error' + ultimo_error + intentos++ (se reintenta en el siguiente ciclo).
+    - report_id/question_id/mensaje_id: se rellenan al vincular el fichero con la respuesta del
+      cuestionario (nombres de fichero en las trazas 12/13/300, §8.4) y permiten clasificar por
+      pregunta (cfg_tipo_documento_pregunta) en vez de por el nombre del fichero.
     """
     g = _guardar_archivo(name, content_b64) if content_b64 else None
     tipo = clasificar_documento(ftype, name)
+    vinculado_por = None
     with _db() as conn:
+        # Enlace respuesta→fichero (files_origen, manual §8.4): rellena origen + clasificación.
+        fo = conn.execute("SELECT * FROM files_origen WHERE name=?", (name,)).fetchone()
+        if fo:
+            report_id = fo["report_id"] or report_id
+            question_id = fo["question_id"] or question_id
+            mensaje_id = fo["mensaje_id"] or mensaje_id
+            if not trip_id and fo["trip_id"]:
+                trip_id = fo["trip_id"]
+                vinculado_por = "respuesta"
+            if not lid and fo["lid"]:
+                lid = fo["lid"]
+        if report_id and question_id:
+            mp = conn.execute(
+                "SELECT tipo_documento FROM cfg_tipo_documento_pregunta "
+                "WHERE report_id=? AND question_id=? LIMIT 1", (report_id, question_id),
+            ).fetchone()
+            if mp and mp["tipo_documento"]:
+                tipo = mp["tipo_documento"]
         if g:
             storage_key, sha, nbytes, mime = g
             conn.execute(
-                "INSERT INTO files (trip_id, name, ftype, ftime, source, driver, lid, storage_key, sha256, bytes, mime, estado_descarga, intentos, tipo_documento) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,'descargado',1,?) ON CONFLICT (name) DO UPDATE SET "
+                "INSERT INTO files (trip_id, name, ftype, ftime, source, driver, lid, storage_key, sha256, bytes, mime, estado_descarga, intentos, tipo_documento, report_id, question_id, mensaje_id, vinculado_por) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,'descargado',1,?,?,?,?,?) ON CONFLICT (name) DO UPDATE SET "
                 "estado_descarga='descargado', storage_key=EXCLUDED.storage_key, sha256=EXCLUDED.sha256, "
                 "bytes=EXCLUDED.bytes, mime=EXCLUDED.mime, intentos=files.intentos+1, ultimo_error=NULL, "
-                "tipo_documento=EXCLUDED.tipo_documento",
-                (trip_id, name, ftype, ftime, source, driver, lid, storage_key, sha, nbytes, mime, tipo),
+                "tipo_documento=EXCLUDED.tipo_documento, report_id=EXCLUDED.report_id, "
+                "question_id=EXCLUDED.question_id, mensaje_id=EXCLUDED.mensaje_id, "
+                "vinculado_por=COALESCE(EXCLUDED.vinculado_por, files.vinculado_por)",
+                (trip_id, name, ftype, ftime, source, driver, lid, storage_key, sha, nbytes, mime, tipo,
+                 report_id or None, question_id or None, mensaje_id or None, vinculado_por),
             )
         else:
             conn.execute(
-                "INSERT INTO files (trip_id, name, ftype, ftime, source, driver, lid, estado_descarga, intentos, ultimo_error, tipo_documento) "
-                "VALUES (?,?,?,?,?,?,?,'error',1,?,?) ON CONFLICT (name) DO UPDATE SET "
+                "INSERT INTO files (trip_id, name, ftype, ftime, source, driver, lid, estado_descarga, intentos, ultimo_error, tipo_documento, report_id, question_id, mensaje_id, vinculado_por) "
+                "VALUES (?,?,?,?,?,?,?,'error',1,?,?,?,?,?,?) ON CONFLICT (name) DO UPDATE SET "
                 "estado_descarga='error', intentos=files.intentos+1, ultimo_error=EXCLUDED.ultimo_error, "
-                "tipo_documento=EXCLUDED.tipo_documento",
-                (trip_id, name, ftype, ftime, source, driver, lid, error or "descarga vacía", tipo),
+                "tipo_documento=EXCLUDED.tipo_documento, report_id=EXCLUDED.report_id, "
+                "question_id=EXCLUDED.question_id, mensaje_id=EXCLUDED.mensaje_id, "
+                "vinculado_por=COALESCE(EXCLUDED.vinculado_por, files.vinculado_por)",
+                (trip_id, name, ftype, ftime, source, driver, lid, error or "descarga vacía", tipo,
+                 report_id or None, question_id or None, mensaje_id or None, vinculado_por),
             )
         conn.commit()
 
@@ -432,6 +597,8 @@ def _lid_map_put(conn, lid, trip_id, task_id="", terminal="", desde=""):
 
 
 def _sync_files():
+    # Migra una vez el lid_map antiguo (JSON de sync_state) a la tabla.
+    migrar_lid_map_json()
     # 1) trazas tipo 10 (activity started) -> tabla lid_map (LID -> trip_id)
     mark = _get_sync_state("traces_mark") or _mark_inicial()
     with _db() as pos_conn:
@@ -475,6 +642,11 @@ def _sync_files():
                         report_version=rep["version"] if rep else None,
                         respuestas=rep["respuestas"] if rep else None,
                     )
+                    # Enlace respuesta→fichero (manual §8.4): registra los nombres de fichero
+                    # de las respuestas y re-clasifica los ya descargados.
+                    if rep and rep.get("respuestas"):
+                        _registrar_files_origen(pos_conn, rep["respuestas"], rep["report_id"],
+                                                trip_id or "", f"qp_{props['LID']}{suf}", props["LID"])
                     # Regla de negocio: CMR/DESCARGA firmada o sin incidencias => cerrar viaje.
                     aty = (props.get("ATY") or "").upper()
                     if trip_id and aty in ("CMR", "DESCARGA") and _entrega_confirmada(qp):
@@ -535,7 +707,7 @@ def _sync_files():
     conn.commit()
     conn.close()
 
-    # 2) poll files + descarga. Solo se descartan los de tacógrafo (0=tarjeta,1=memoria,2=accidente);
+    # 2) poll files + descarga. Solo se descartan los de tacógrafo (0=tarjeta, 1=memoria masiva, 2=memoria CSV, 4=registro de accidente);
     #    el resto (documentos/fotos/firmas de cuestionarios y mensajes) se descarga y, si falla,
     #    queda 'error' para reintentar en el siguiente ciclo (nunca se descarta).
     fmark = _get_sync_state("files_mark") or _mark_inicial()
@@ -582,6 +754,10 @@ def _sync_files():
 
     # 3) Reintentar descargas fallidas (el mark ya pasó; re-descargar desde la tabla).
     _reintentar_descargas()
+
+    # 4) Vincular ficheros sin viaje por vehículo + franja horaria (UTC).
+    with _db() as conn:
+        _vincular_por_vehiculo_ventana(conn)
 
 
 def _sync_mensajes():
