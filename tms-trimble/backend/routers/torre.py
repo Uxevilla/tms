@@ -87,6 +87,9 @@ class Documento(BaseModel):
     nombre: Optional[str] = None
     formato: Optional[str] = None
     bytes: Optional[int] = None
+    tipo_documento: Optional[str] = None
+    estado_descarga: Optional[str] = None
+    mime: Optional[str] = None
     origen: Optional[str] = None
 
 
@@ -563,7 +566,8 @@ def entidad_viaje(codigo: str, user: dict = Depends(require_role(["admin", "disp
     ).fetchall()
 
     documentos = conn.execute(
-        "SELECT name, formato, bytes, source FROM files WHERE trip_id = ? ORDER BY ftime DESC LIMIT 20",
+        "SELECT name, formato, bytes, source, tipo_documento, estado_descarga, mime FROM files "
+        "WHERE trip_id = ? ORDER BY ftime DESC LIMIT 20",
         (codigo,),
     ).fetchall()
 
@@ -581,7 +585,9 @@ def entidad_viaje(codigo: str, user: dict = Depends(require_role(["admin", "disp
             "fecha_esperada_descarga": t["fecha_esperada_descarga"],
         },
         "paradas": [dict(p) for p in paradas],
-        "documentos": [{"nombre": d["name"], "formato": d["formato"], "bytes": d["bytes"], "origen": d["source"]} for d in documentos],
+        "documentos": [{"nombre": d["name"], "formato": d["formato"], "bytes": d["bytes"], "origen": d["source"],
+                        "tipo_documento": d["tipo_documento"], "estado_descarga": d["estado_descarga"],
+                        "mime": d["mime"]} for d in documentos],
         "mensajes": [dict(m) for m in mensajes],
     }
 
