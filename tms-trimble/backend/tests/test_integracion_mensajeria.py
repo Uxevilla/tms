@@ -68,7 +68,7 @@ def test_store_mensaje_libre_clase_sin_respuestas(scratch_db):
 
 @pytest.mark.integration
 def test_store_mensaje_body_no_report_no_rompe(scratch_db):
-    """Un estructurado cuyo body NO es un <Report> no rompe: se guarda crudo, clase=formulario."""
+    """Un estructurado cuyo body NO es un <Report> se guarda como libre (texto plano), sin romper."""
     from services.mensajeria import _store_mensaje
 
     tok, conn = _conn(scratch_db)
@@ -77,7 +77,7 @@ def test_store_mensaje_body_no_report_no_rompe(scratch_db):
         row = conn.execute(
             "SELECT clase, report_id, respuestas, body FROM mensajes WHERE id='MSG-3'"
         ).fetchone()
-        assert row["clase"] == "formulario"
+        assert row["clase"] == "libre"
         assert row["report_id"] is None
         assert row["respuestas"] is None
         assert row["body"] == "esto no es xml"
