@@ -30,6 +30,7 @@ from services.mantenimiento import _insertar_alerta_publica, _revisar_caducidade
 from services.mensajeria import _save_mensaje, _store_mensaje, _extraer_pales, _procesar_pales, _webhook_autenticado, _direccion_dict
 from services.ocr import _parse_ticket, _parse_documento, _pdf_a_texto, _regex_matricula, _regex_litros, _regex_importe, _regex_fecha
 from services.empresa import _empresa
+from services.question_paths import importar_definicion, listar_definiciones
 
 router = APIRouter(dependencies=[Depends(require_role(["admin", "dispatcher"]))])
 
@@ -209,6 +210,20 @@ def trip_mensajes(trip_id: str, conn = Depends(get_conn)):
         "FROM mensajes WHERE trip_id=? ORDER BY time DESC", (trip_id,)
     ).fetchall()
     return {"mensajes": [dict(r) for r in rows]}
+
+
+@router.post("/api/questionpaths/importar")
+def importar_questionpath(req: dict):
+    """Importa una definición <ReportDefinition> (XML) para traducir los formularios."""
+    xml = (req.get("xml") or "").strip()
+    if not xml:
+        return {"ok": False, "error": "Falta el XML <ReportDefinition>."}
+    return importar_definicion(xml)
+
+
+@router.get("/api/questionpaths")
+def listar_questionpaths(conn = Depends(get_conn)):
+    return {"ok": True, "definiciones": listar_definiciones(conn)}
 
 
 

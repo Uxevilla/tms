@@ -148,6 +148,24 @@ CREATE TABLE IF NOT EXISTS documentos_auditoria (
 CREATE TABLE IF NOT EXISTS lid_map (
     lid TEXT PRIMARY KEY, trip_id TEXT, task_id TEXT, terminal TEXT, desde TEXT
 );
+CREATE TABLE IF NOT EXISTS qp_definiciones (
+    id BIGSERIAL PRIMARY KEY, report_id TEXT NOT NULL, version TEXT NOT NULL DEFAULT '',
+    nombre TEXT, firstquestion TEXT, activa BOOLEAN NOT NULL DEFAULT true,
+    xml_original TEXT, importado_por TEXT, importado_en TIMESTAMPTZ DEFAULT now(),
+    UNIQUE (report_id, version)
+);
+CREATE TABLE IF NOT EXISTS qp_preguntas (
+    id BIGSERIAL PRIMARY KEY, definicion_id BIGINT NOT NULL REFERENCES qp_definiciones(id) ON DELETE CASCADE,
+    question_id TEXT NOT NULL, texto TEXT, selectionmodel TEXT DEFAULT 'single',
+    hide BOOLEAN DEFAULT false, orden INT,
+    UNIQUE (definicion_id, question_id)
+);
+CREATE TABLE IF NOT EXISTS qp_opciones (
+    id BIGSERIAL PRIMARY KEY, pregunta_id BIGINT NOT NULL REFERENCES qp_preguntas(id) ON DELETE CASCADE,
+    option_id TEXT NOT NULL, texto TEXT, valuetype TEXT DEFAULT 'text', inputmask TEXT DEFAULT '',
+    readonly BOOLEAN DEFAULT false, nextquestion TEXT DEFAULT 'END', orden INT,
+    UNIQUE (pregunta_id, option_id)
+);
 CREATE TABLE IF NOT EXISTS mensajes (
     id TEXT PRIMARY KEY, trip_id TEXT, tipo TEXT, messagetype TEXT,
     originid TEXT, source TEXT, terminal TEXT, subject TEXT, body TEXT,
