@@ -38,13 +38,20 @@ function fmtHora(iso?: string) {
 
 function FormularioCard({ m }: { m: Mensaje }) {
   const filas = m.traducidas ?? [];
+  const esInforme = m.clase === "informe_actividad";
+  const label = esInforme ? "Informe de actividad" : "Formulario";
+  const marco = esInforme ? "border-emerald-200 bg-emerald-50" : "border-violet-200 bg-violet-50";
+  const titulo = esInforme ? "text-emerald-700" : "text-violet-600";
   return (
-    <div className="max-w-[85%] rounded-lg border border-violet-200 bg-violet-50 px-3 py-2 text-sm shadow-sm">
-      <div className="text-[10px] font-semibold uppercase tracking-wide text-violet-600">
-        <FileQuestion size={11} className="mr-1 inline" />Formulario · {m.source || "Conductor"}{m.time ? ` · ${fmtHora(m.time)}` : ""}
+    <div className={`max-w-[85%] rounded-lg border px-3 py-2 text-sm shadow-sm ${marco}`}>
+      <div className={`text-[10px] font-semibold uppercase tracking-wide ${titulo}`}>
+        <FileQuestion size={11} className="mr-1 inline" />{label} · {m.source || "Conductor"}{m.time ? ` · ${fmtHora(m.time)}` : ""}
       </div>
-      {m.subject && m.subject !== "AFRE" && (
-        <div className="mt-0.5 text-[11px] font-semibold text-violet-700">{m.subject}</div>
+      {esInforme && m.messagetype && (
+        <div className={`mt-0.5 text-[11px] font-semibold ${titulo}`}>{m.messagetype}</div>
+      )}
+      {!esInforme && m.subject && m.subject !== "AFRE" && (
+        <div className={`mt-0.5 text-[11px] font-semibold ${titulo}`}>{m.subject}</div>
       )}
       <div className="mt-1 space-y-1">
         {filas.length > 0 ? (
@@ -182,7 +189,7 @@ export function ChatViaje({ tripId, onClose }: { tripId: string; onClose: () => 
 
           {chat.map((m) => {
             const saliente = m.direccion === "saliente" || m.tipo === "enviado";
-            const esFormulario = m.clase === "formulario" || m.tipo === "estructurado" || m.tipo === "cuestionario";
+            const esFormulario = m.clase === "formulario" || m.clase === "informe_actividad" || m.tipo === "estructurado" || m.tipo === "cuestionario";
 
             if (esFormulario) {
               return (

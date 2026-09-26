@@ -11,6 +11,7 @@ import config
 from db import *
 from services.documentos import _guardar_archivo, _leer_archivo
 from services.tipos_documento import clasificar_documento
+from services.cuestionarios import parse_report
 from core import *
 from security import *
 from tenancy import *
@@ -459,10 +460,20 @@ def _sync_files():
                         continue  # sin reporte (ARE/AFRE), no es question path
                     eseq = props.get("ESEQ", "")
                     suf = f"_{rt.lower()}" + (f"_{eseq}" if eseq else "")
+                    # Informe de actividad (trazas 12/13): clase propia con el reporte parseado.
+                    rep = None
+                    try:
+                        rep = parse_report(qp)
+                    except ValueError:
+                        rep = None
                     _save_mensaje(
                         f"qp_{props['LID']}{suf}", trip_id, "cuestionario", props.get("ATY", ""),
                         props["LID"], src.group(1) if src else "", rt,
                         qp, tm.group(1) if tm else "", False,
+                        clase="informe_actividad", direccion="entrante",
+                        report_id=rep["report_id"] if rep else None,
+                        report_version=rep["version"] if rep else None,
+                        respuestas=rep["respuestas"] if rep else None,
                     )
                     # Regla de negocio: CMR/DESCARGA firmada o sin incidencias => cerrar viaje.
                     aty = (props.get("ATY") or "").upper()
