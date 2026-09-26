@@ -3,9 +3,19 @@ import { X, Send, FileQuestion, MessageCircle, Loader2 } from "lucide-react";
 import { CREAR_VIAJE } from "../config";
 import { api } from "../api";
 
+interface Traducida {
+  question: string;
+  pregunta: string;
+  option: string | null;
+  opcion: string;
+  value: string;
+}
+
 interface Mensaje {
   id: string;
   tipo: string; // enviado | libre | estructurado | cuestionario
+  clase: string; // libre | formulario (Fase 5b)
+  direccion: string; // entrante | saliente
   messagetype: string;
   originid: string;
   source: string;
@@ -13,6 +23,10 @@ interface Mensaje {
   body: string;
   time: string;
   needreply: boolean;
+  report_id: string | null;
+  respuestas: Traducida[] | null;
+  traducidas: Traducida[];
+  estado: string | null;
 }
 
 function fmtHora(iso?: string) {
@@ -20,6 +34,33 @@ function fmtHora(iso?: string) {
   const d = new Date(iso);
   if (isNaN(d.getTime())) return iso || "";
   return d.toLocaleString("es-ES", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+}
+
+function FormularioCard({ m }: { m: Mensaje }) {
+  const filas = m.traducidas ?? [];
+  return (
+    <div className="max-w-[85%] rounded-lg border border-violet-200 bg-violet-50 px-3 py-2 text-sm shadow-sm">
+      <div className="text-[10px] font-semibold uppercase tracking-wide text-violet-600">
+        <FileQuestion size={11} className="mr-1 inline" />Formulario · {m.source || "Conductor"}{m.time ? ` · ${fmtHora(m.time)}` : ""}
+      </div>
+      {m.subject && m.subject !== "AFRE" && (
+        <div className="mt-0.5 text-[11px] font-semibold text-violet-700">{m.subject}</div>
+      )}
+      <div className="mt-1 space-y-1">
+        {filas.length > 0 ? (
+          filas.map((r, i) => (
+            <div key={i} className="rounded bg-white/80 px-2 py-1 text-xs">
+              <span className="font-medium text-slate-700">{r.pregunta}</span>
+              {r.opcion ? <span className="text-slate-500"> · {r.opcion}</span> : null}
+              {r.value ? <span className="font-semibold text-slate-800"> → {r.value}</span> : null}
+            </div>
+          ))
+        ) : (
+          <div className="whitespace-pre-wrap break-words text-xs text-slate-500">{m.body || "(sin contenido)"}</div>
+        )}
+      </div>
+    </div>
+  );
 }
 
 export function ChatViaje({ tripId, onClose }: { tripId: string; onClose: () => void }) {
@@ -117,8 +158,8 @@ export function ChatViaje({ tripId, onClose }: { tripId: string; onClose: () => 
     setEnviandoQP(false);
   }
 
-  const chat = mensajes.filter((m) => m.tipo !== "cuestionario").slice().reverse();
-  const cuestionarios = mensajes.filter((m) => m.tipo === "cuestionario");
+  // Fase 5b: 3 clases de comunicación. Orden cronológico (ASC).
+  const chat = [...mensajes].sort((a, b) => (a.time || "").localeCompare(b.time || ""));
 
   return (
     <>
@@ -135,32 +176,27 @@ export function ChatViaje({ tripId, onClose }: { tripId: string; onClose: () => 
         </header>
 
         <div ref={listRef} className="flex-1 space-y-2 overflow-y-auto p-4">
-          {cuestionarios.length > 0 && (
-            <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 p-3">
-              <div className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-amber-700">
-                <FileQuestion size={14} /> Cuestionarios (question path)
-              </div>
-              {cuestionarios.slice().reverse().map((m) => (
-                <div key={m.id} className="mb-2 rounded-md bg-white p-2 text-xs shadow-sm">
-                  <div className="font-semibold text-slate-700">{m.subject || "Question path"}</div>
-                  <div className="mt-1 whitespace-pre-wrap break-words text-slate-600">{m.body || "(sin contenido)"}</div>
-                  <div className="mt-1 text-[10px] text-slate-400">{m.source || "—"} · {fmtHora(m.time)}</div>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {chat.length === 0 && cuestionarios.length === 0 && (
+          {chat.length === 0 && (
             <div className="pt-8 text-center text-sm text-slate-400">Sin conversación todavía.</div>
           )}
 
           {chat.map((m) => {
-            const saliente = m.tipo === "enviado";
+            const saliente = m.direccion === "saliente" || m.tipo === "enviado";
+            const esFormulario = m.clase === "formulario" || m.tipo === "estructurado" || m.tipo === "cuestionario";
+
+            if (esFormulario) {
+              return (
+                <div key={m.id} className="flex justify-start">
+                  <FormularioCard m={m} />
+                </div>
+              );
+            }
+
             return (
               <div key={m.id} className={`flex ${saliente ? "justify-end" : "justify-start"}`}>
                 <div className={`max-w-[80%] rounded-lg px-3 py-2 text-sm shadow-sm ${saliente ? "bg-blue-600 text-white" : "bg-slate-100 text-slate-800"}`}>
                   <div className={`text-[10px] font-semibold ${saliente ? "text-blue-100" : "text-slate-500"}`}>
-                    {saliente ? "Tú" : m.source || "Chofer"}{m.time ? ` · ${fmtHora(m.time)}` : ""}
+                    {saliente ? "Tú" : m.source || "Conductor"}{m.time ? ` · ${fmtHora(m.time)}` : ""}
                   </div>
                   {m.subject && m.subject !== "AFRE" && (
                     <div className="text-[11px] font-semibold opacity-80">{m.subject}</div>

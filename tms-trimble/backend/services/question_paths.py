@@ -70,6 +70,21 @@ def listar_definiciones(conn):
     return [dict(r) for r in rows]
 
 
+def _respuestas_lista(v):
+    """Normaliza respuestas (JSONB → string en psycopg2) a lista de dicts."""
+    if not v:
+        return []
+    if isinstance(v, str):
+        import json as _json
+        try:
+            return _json.loads(v)
+        except (ValueError, TypeError):
+            return []
+    if isinstance(v, list):
+        return v
+    return []
+
+
 def _traducir_respuestas(conn, report_id, respuestas):
     """Mapea respuestas crudas (QID/OID) a texto legible usando la definición activa.
 

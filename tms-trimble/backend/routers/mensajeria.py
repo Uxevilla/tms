@@ -30,7 +30,7 @@ from services.mantenimiento import _insertar_alerta_publica, _revisar_caducidade
 from services.mensajeria import _save_mensaje, _store_mensaje, _extraer_pales, _procesar_pales, _webhook_autenticado, _direccion_dict
 from services.ocr import _parse_ticket, _parse_documento, _pdf_a_texto, _regex_matricula, _regex_litros, _regex_importe, _regex_fecha
 from services.empresa import _empresa
-from services.question_paths import importar_definicion, listar_definiciones
+from services.question_paths import importar_definicion, listar_definiciones, _traducir_respuestas, _respuestas_lista
 
 router = APIRouter(dependencies=[Depends(require_role(["admin", "dispatcher"]))])
 
@@ -206,10 +206,18 @@ def send_trip_questionpath(trip_id: str, req: dict, conn = Depends(get_conn)):
 @router.get("/api/trips/{trip_id}/mensajes")
 def trip_mensajes(trip_id: str, conn = Depends(get_conn)):
     rows = conn.execute(
-        "SELECT id, tipo, messagetype, originid, source, subject, body, time, needreply "
+        "SELECT id, tipo, messagetype, originid, source, subject, body, time, needreply, "
+        "clase, direccion, report_id, report_version, respuestas, estado "
         "FROM mensajes WHERE trip_id=? ORDER BY time DESC", (trip_id,)
     ).fetchall()
-    return {"mensajes": [dict(r) for r in rows]}
+    out = []
+    for r in rows:
+        d = dict(r)
+        resp = _respuestas_lista(r["respuestas"])
+        d["respuestas"] = resp
+        d["traducidas"] = _traducir_respuestas(conn, r["report_id"], resp) if r["report_id"] else []
+        out.append(d)
+    return {"mensajes": out}
 
 
 @router.post("/api/questionpaths/importar")

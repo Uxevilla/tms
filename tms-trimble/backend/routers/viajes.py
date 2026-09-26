@@ -472,7 +472,8 @@ def list_trips(conn = Depends(get_conn)):
 @router.get("/api/trips/{trip_id}/files")
 def trip_files(trip_id: str, conn = Depends(get_conn)):
     rows = conn.execute(
-        "SELECT id, name, ftype, ftime, source, driver, lid, content_b64, storage_key "
+        "SELECT id, name, ftype, ftime, source, driver, lid, content_b64, storage_key, sha256, "
+        "estado_descarga, intentos, ultimo_error, mime, bytes, tipo_documento, paginas "
         "FROM files WHERE trip_id=? ORDER BY ftime DESC", (trip_id,)
     ).fetchall()
     out = []
