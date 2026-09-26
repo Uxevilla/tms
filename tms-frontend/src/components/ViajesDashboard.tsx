@@ -322,8 +322,8 @@ export function ViajesDashboard() {
 
   async function reactivar(id: string) {
     try {
-      await api(`/api/trips/${encodeURIComponent(id)}/reactivar`, { method: "POST" });
-      notificar("Viaje reactivado.");
+      const r = await api<{ requiere_reenvio?: boolean }>(`/api/trips/${encodeURIComponent(id)}/reactivar`, { method: "POST" });
+      notificar(r?.requiere_reenvio ? "Viaje reactivado. Vuelve a enviarlo al terminal." : "Viaje reactivado.");
       qc.invalidateQueries({ queryKey: ["viajes-anulados"] });
       qc.invalidateQueries({ queryKey: ["viajes"] });
     } catch (e) {

@@ -267,6 +267,15 @@ def delete_trip(trip_id: str, force: bool = False, motivo: str = "", user: dict 
         motivo = (motivo or "").strip()
         if not motivo:
             raise HTTPException(status_code=400, detail={"error": "El motivo de anulación es obligatorio."})
+        # No anular un viaje con factura EMITIDA (primero rectificativa).
+        emitida = conn.execute(
+            "SELECT f.numero FROM finanzas.facturas f WHERE f.trip_id=? AND COALESCE(f.estado,'') NOT IN ('','borrador') "
+            "UNION SELECT f.numero FROM finanzas.factura_lineas fl JOIN finanzas.facturas f ON f.id=fl.factura_id "
+            "WHERE fl.trip_id=? AND COALESCE(f.estado,'') NOT IN ('','borrador') LIMIT 1", (trip_id, trip_id),
+        ).fetchone()
+        if emitida:
+            raise HTTPException(status_code=409, detail={
+                "error": f"El viaje tiene la factura {emitida['numero']} emitida: anúlala con una rectificativa antes."})
         # Si estaba en el terminal, borrarlo de Trimble ANTES de anular (misma lógica que el borrado:
         # si Trimble falla y no hay force, no se anula).
         if in_trimble:
@@ -275,6 +284,12 @@ def delete_trip(trip_id: str, force: bool = False, motivo: str = "", user: dict 
                 raise HTTPException(status_code=502, detail={
                     "error": f"Trimble: no se pudo borrar del terminal ({r['fault'] or r['status']})"})
         usuario = user.get("usuario") or user.get("sub") or ""
+        # Borrar el borrador pendiente (y sus líneas) en la misma transacción.
+        for fid in [r["id"] for r in conn.execute(
+            "SELECT id FROM finanzas.facturas WHERE trip_id=? AND COALESCE(estado,'')='borrador'", (trip_id,)
+        ).fetchall()]:
+            conn.execute("DELETE FROM finanzas.factura_lineas WHERE factura_id=?", (fid,))
+            conn.execute("DELETE FROM finanzas.facturas WHERE id=?", (fid,))
         conn.execute(
             "UPDATE trips SET anulado_at=now(), anulado_por=?, anulado_motivo=? WHERE id=?",
             (usuario, motivo, trip_id),
@@ -303,20 +318,34 @@ def delete_trip(trip_id: str, force: bool = False, motivo: str = "", user: dict 
 
 @router.post("/api/trips/{trip_id}/reactivar")
 def reactivar_trip(trip_id: str, user: dict = Depends(require_role(["admin"])), conn = Depends(get_conn)):
-    """Reactivar un viaje anulado (solo admin), con auditoría."""
-    row = conn.execute("SELECT anulado_at FROM trips WHERE id=?", (trip_id,)).fetchone()
+    """Reactivar un viaje anulado (solo admin), con auditoría.
+
+    Si al anular se borró del terminal Trimble (estado enviado/en curso), vuelve a
+    'sin_asignar' conservando tractora y horas, y marca pendiente de reenvío.
+    """
+    row = conn.execute("SELECT anulado_at, estado, payload FROM trips WHERE id=?", (trip_id,)).fetchone()
     if not row:
         raise HTTPException(status_code=404, detail={"error": f"Viaje {trip_id} no encontrado"})
     if not row["anulado_at"]:
         raise HTTPException(status_code=409, detail={"error": "El viaje no está anulado."})
     usuario = user.get("usuario") or user.get("sub") or ""
-    conn.execute(
-        "UPDATE trips SET anulado_at=NULL, anulado_por=NULL, anulado_motivo=NULL WHERE id=?",
-        (trip_id,),
-    )
+    estado = (row["estado"] or "").lower()
+    requiere_reenvio = estado == "enviado" or estado in ("llegada_origen", "cargando", "en_transito", "llegada_destino", "descargando")
+    if requiere_reenvio:
+        payload = json.loads(row["payload"] or "{}")
+        payload["pendiente_reenvio"] = True
+        conn.execute(
+            "UPDATE trips SET anulado_at=NULL, anulado_por=NULL, anulado_motivo=NULL, estado='sin_asignar', payload=? WHERE id=?",
+            (json.dumps(payload), trip_id),
+        )
+    else:
+        conn.execute(
+            "UPDATE trips SET anulado_at=NULL, anulado_por=NULL, anulado_motivo=NULL WHERE id=?",
+            (trip_id,),
+        )
     _auditar(conn, "trips", trip_id, "reactivar", usuario)
     conn.commit()
-    return {"ok": True, "trip_id": trip_id, "reactivado": True}
+    return {"ok": True, "trip_id": trip_id, "reactivado": True, "requiere_reenvio": requiere_reenvio}
 
 
 
@@ -383,6 +412,8 @@ def enviar_trip(trip_id: str, force: bool = False, conn = Depends(get_conn)):
     row = conn.execute("SELECT * FROM trips WHERE id=?", (trip_id,)).fetchone()
     if not row:
         raise HTTPException(status_code=404, detail={"error": f"Viaje {trip_id} no encontrado"})
+    if row["anulado_at"]:
+        raise HTTPException(status_code=409, detail={"error": "El viaje está anulado."})
     viaje = ViajeRequest(**json.loads(row["payload"] or "{}"))
     codigo = (row["terminal"] or "").strip()
     if not codigo:

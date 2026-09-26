@@ -476,13 +476,13 @@ def entidad_vehiculo(codigo: str, user: dict = Depends(require_role(["admin", "d
 
     viaje_actual = conn.execute(
         "SELECT codigo, estado, origen, destino, cliente, fecha_esperada_descarga FROM operaciones.trips "
-        "WHERE terminal = ? AND COALESCE(estado,'') NOT IN ('Entregado','Cancelado','sin_asignar','') "
+        "WHERE terminal = ? AND COALESCE(estado,'') NOT IN ('Entregado','Cancelado','sin_asignar','') AND anulado_at IS NULL "
         "ORDER BY creado DESC LIMIT 1", (veh,),
     ).fetchone()
 
     proximos = conn.execute(
         "SELECT codigo, estado, origen, destino, fecha_esperada_carga FROM operaciones.trips "
-        "WHERE terminal = ? AND (estado IN ('sin_asignar','planificado') OR estado IS NULL) "
+        "WHERE terminal = ? AND (estado IN ('sin_asignar','planificado') OR estado IS NULL) AND anulado_at IS NULL "
         "ORDER BY creado DESC LIMIT 5", (veh,),
     ).fetchall()
 
@@ -542,7 +542,7 @@ def entidad_vehiculo(codigo: str, user: dict = Depends(require_role(["admin", "d
         r = conn.execute(
             "SELECT "
             "  (SELECT COALESCE(SUM(COALESCE(t.precio,0)),0) FROM operaciones.trips t "
-            "   WHERE t.terminal = ? AND substr(COALESCE(t.fecha_actualizacion, t.creado),1,7) = ?) AS ingresos, "
+            "   WHERE t.terminal = ? AND t.anulado_at IS NULL AND substr(COALESCE(t.fecha_actualizacion, t.creado),1,7) = ?) AS ingresos, "
             "  (SELECT COALESCE(SUM(COALESCE(g.importe_total,0)),0) FROM finanzas.gastos_vehiculos g "
             "   WHERE g.vehiculo_id = ? AND substr(COALESCE(g.fecha,''),1,7) = ?) AS costes",
             (veh, mes, veh, mes),
@@ -639,13 +639,13 @@ def entidad_conductor(conductor_id: int, user: dict = Depends(require_role(["adm
 
     viaje_actual = conn.execute(
         "SELECT codigo, estado, origen, destino, fecha_esperada_descarga FROM operaciones.trips "
-        "WHERE conductor_id = ? AND COALESCE(estado,'') NOT IN ('Entregado','Cancelado','sin_asignar','') "
+        "WHERE conductor_id = ? AND COALESCE(estado,'') NOT IN ('Entregado','Cancelado','sin_asignar','') AND anulado_at IS NULL "
         "ORDER BY creado DESC LIMIT 1", (conductor_id,),
     ).fetchone()
 
     proximos = conn.execute(
         "SELECT codigo, estado, origen, destino, fecha_esperada_carga FROM operaciones.trips "
-        "WHERE conductor_id = ? AND (estado IN ('sin_asignar','planificado') OR estado IS NULL) "
+        "WHERE conductor_id = ? AND (estado IN ('sin_asignar','planificado') OR estado IS NULL) AND anulado_at IS NULL "
         "ORDER BY creado DESC LIMIT 5", (conductor_id,),
     ).fetchall()
 

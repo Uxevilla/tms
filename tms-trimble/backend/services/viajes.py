@@ -188,7 +188,7 @@ def _vehiculos_en_curso(exclude_trip_id=None, conn=None):
         conn = _db()
     try:
         q = (f"SELECT semirremolque_id, remolque_id FROM trips "
-             f"WHERE COALESCE(estado,'') NOT IN {_ESTADOS_FINALES_SQL}")
+             f"WHERE COALESCE(estado,'') NOT IN {_ESTADOS_FINALES_SQL} AND anulado_at IS NULL")
         params = []
         if exclude_trip_id:
             q += " AND id != ?"

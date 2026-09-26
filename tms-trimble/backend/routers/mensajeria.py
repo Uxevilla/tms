@@ -156,7 +156,9 @@ def mensajeria_terminales(conn = Depends(get_conn)):
 
 @router.post("/api/trips/{trip_id}/mensajes")
 def send_trip_mensaje(trip_id: str, req: SendMensajeRequest, conn = Depends(get_conn)):
-    row = conn.execute("SELECT terminal FROM trips WHERE id=?", (trip_id,)).fetchone()
+    row = conn.execute("SELECT terminal, anulado_at FROM trips WHERE id=?", (trip_id,)).fetchone()
+    if row and row["anulado_at"]:
+        raise HTTPException(status_code=409, detail={"error": "El viaje está anulado."})
     terminal = (row["terminal"] if row else "") or ""
     if not terminal:
         return {"ok": False, "error": "El viaje no tiene terminal asignado."}
@@ -189,7 +191,9 @@ def send_trip_mensaje(trip_id: str, req: SendMensajeRequest, conn = Depends(get_
 @router.post("/api/trips/{trip_id}/questionpath")
 def send_trip_questionpath(trip_id: str, req: dict, conn = Depends(get_conn)):
     """Envía un question path (mensaje estructurado) al terminal del viaje."""
-    row = conn.execute("SELECT terminal FROM trips WHERE id=?", (trip_id,)).fetchone()
+    row = conn.execute("SELECT terminal, anulado_at FROM trips WHERE id=?", (trip_id,)).fetchone()
+    if row and row["anulado_at"]:
+        raise HTTPException(status_code=409, detail={"error": "El viaje está anulado."})
     terminal = (row["terminal"] if row else "") or ""
     if not terminal:
         return {"ok": False, "error": "El viaje no tiene terminal asignado."}

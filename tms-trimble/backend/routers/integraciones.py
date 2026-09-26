@@ -127,7 +127,7 @@ def export_xlsx(tipo: str = "trips", user: dict = Depends(require_jwt), conn = D
     if tipo == "ingresos":
         rows = conn.execute(
             "SELECT terminal, cliente, precio, gastos, km_total, estado_pago, factura, creado "
-            "FROM trips ORDER BY creado DESC"
+            "FROM trips WHERE anulado_at IS NULL ORDER BY creado DESC"
         ).fetchall()
         data = []
         for r in rows:
@@ -278,8 +278,12 @@ def export_xlsx(tipo: str = "trips", user: dict = Depends(require_jwt), conn = D
     else:  # trips
         rows = conn.execute("SELECT * FROM trips ORDER BY creado DESC").fetchall()
         cols = ["referencia", "id", "nombre", "cliente", "terminal", "conductor", "tipo_carga", "origen", "destino",
-                "tareas", "estado", "estado_pago", "factura", "precio", "gastos", "km_total", "iva", "creado"]
-        data = [[r[c] if c in r.keys() else "" for c in cols] for r in rows]
+                "tareas", "estado", "estado_pago", "factura", "precio", "gastos", "km_total", "iva", "creado", "anulado"]
+        data = []
+        for r in rows:
+            fila = [r[c] if c in r.keys() else "" for c in cols[:-1]]
+            fila.append((r["anulado_motivo"] or "Sí") if r.get("anulado_at") else "")
+            data.append(fila)
         _write(cols, data)
 
 
