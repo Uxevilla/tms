@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { X, Send, FileQuestion, MessageCircle, Loader2 } from "lucide-react";
 import { CREAR_VIAJE } from "../config";
 import { api } from "../api";
+import { useSocketSubscribe } from "../context/SocketContext";
 
 interface Traducida {
   question: string;
@@ -83,6 +84,7 @@ export function ChatViaje({ tripId, onClose }: { tripId: string; onClose: () => 
   const [enviandoQP, setEnviandoQP] = useState(false);
   const [messagetypes, setMessagetypes] = useState<string[]>([]);
   const listRef = useRef<HTMLDivElement>(null);
+  const subscribe = useSocketSubscribe();
 
   async function cargar() {
     try {
@@ -102,6 +104,16 @@ export function ChatViaje({ tripId, onClose }: { tripId: string; onClose: () => 
     return () => clearInterval(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tripId]);
+
+  // Tiempo real (PR 1.5): re-cargar al llegar un mensaje de este viaje por el socket.
+  useEffect(() => {
+    return subscribe((evt) => {
+      if (evt.tipo === "mensaje" && evt.trip_id === tripId) {
+        cargar();
+      }
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [subscribe, tripId]);
 
   useEffect(() => {
     (async () => {
