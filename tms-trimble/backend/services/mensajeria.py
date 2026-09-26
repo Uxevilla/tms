@@ -49,6 +49,32 @@ def _save_mensaje(mid, trip_id, tipo, messagetype, originid, source, subject, bo
         conn.commit()
 
 
+def _aplicar_reglas_configuradas(report_id, respuestas):
+    """Devuelve el estado a aplicar según cfg_reglas (o None si no hay regla que case).
+
+    Regla: si el report (report_id) trae una respuesta con question_id (y opción si
+    está definida) → ese estado. Sin regla no se hardcodea nada aquí.
+    """
+    if not report_id or not respuestas:
+        return None
+    conn = _db()
+    rules = conn.execute(
+        "SELECT question_id, option_id, estado FROM cfg_reglas "
+        "WHERE report_id=? AND activa ORDER BY id", (report_id,),
+    ).fetchall()
+    conn.close()
+    if not rules:
+        return None
+    for rule in rules:
+        for r in respuestas:
+            if r.get("question") != rule["question_id"]:
+                continue
+            if rule["option_id"] and r.get("option") != rule["option_id"]:
+                continue
+            return rule["estado"]
+    return None
+
+
 def _store_mensaje(block, tipo):
     def f(tag):
         m = re.search(rf"<{tag}>(.*?)</{tag}>", block, re.S)
@@ -105,7 +131,10 @@ def _store_mensaje(block, tipo):
         _procesar_dieta(trip_id, messagetype, mtime)
         if re.search(r"descarga|descarreg|unload", messagetype or "", re.I):
             _procesar_pales(trip_id, body, mtime)
-        estado = _estado_desde_codigo(messagetype)
+        # Reglas configurables (cfg_reglas) tienen prioridad; sin regla → hardcode legado.
+        estado = _aplicar_reglas_configuradas(report_id, respuestas)
+        if not estado:
+            estado = _estado_desde_codigo(messagetype)
         if estado:
             _aplicar_estado_viaje(trip_id, estado, mtime)
             if estado == "Entregado":

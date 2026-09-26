@@ -103,3 +103,38 @@ def test_traducir_sin_definicion_devuelve_crudas(scratch_db):
     finally:
         conn.close()
         main._tenant_ctx.reset(tok)
+
+
+@pytest.mark.integration
+def test_reglas_configuradas(scratch_db):
+    """PR 2.5: una regla configurada (report Q=O → estado) devuelve el estado; sin regla, None."""
+    from services.mensajeria import _aplicar_reglas_configuradas
+
+    tok, conn = _conn(scratch_db)
+    try:
+        conn.execute(
+            "INSERT INTO cfg_reglas (report_id, question_id, option_id, estado) "
+            "VALUES ('FORMID', 'Q1', 'O1', 'Entregado')"
+        )
+        assert _aplicar_reglas_configuradas(
+            "FORMID", [{"question": "Q1", "option": "O1", "value": ""}]
+        ) == "Entregado"
+        # Opción distinta → no case.
+        assert _aplicar_reglas_configuradas(
+            "FORMID", [{"question": "Q1", "option": "O2", "value": ""}]
+        ) is None
+        # Report sin reglas → None.
+        assert _aplicar_reglas_configuradas(
+            "NOEXISTE", [{"question": "Q1", "option": "O1", "value": ""}]
+        ) is None
+        # Regla solo por pregunta (option_id NULL → cualquier opción).
+        conn.execute(
+            "INSERT INTO cfg_reglas (report_id, question_id, option_id, estado) "
+            "VALUES ('FORMID', 'Q2', NULL, 'Entregado')"
+        )
+        assert _aplicar_reglas_configuradas(
+            "FORMID", [{"question": "Q2", "option": "O9", "value": ""}]
+        ) == "Entregado"
+    finally:
+        conn.close()
+        main._tenant_ctx.reset(tok)
