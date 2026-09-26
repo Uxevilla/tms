@@ -1,17 +1,33 @@
 """Worker de ingesta: trazas/archivos y mensajería en paralelo, por tenant."""
 import asyncio
 
-from db import _tenant_ctx
-from tenancy import _empresas
+from db import _tenant_ctx, _db, _valores_proveedor
+from tenancy import _empresas, FIRST_TENANT_SLUG
 from services.sync import _sync_files, _sync_mensajes
 
 
+def _tiene_trimble():
+    """True si el tenant actual tiene credenciales Trimble propias en su BD."""
+    with _db() as conn:
+        cfg = _valores_proveedor(conn, "trimble")
+    return bool(cfg.get("username") and cfg.get("customer"))
+
+
 def _por_tenant(fn):
-    """Ejecuta `fn` (síncrona) una vez por tenant activo, con su contexto."""
+    """Ejecuta `fn` (síncrona) una vez por tenant activo, con su contexto.
+
+    - Salta los tenants sin credenciales Trimble propias (salvo el primero) para no
+      duplicar la cuenta del .env en dev ni sondear una cuenta sin configurar.
+    - Un error de un tenant no aborta al resto (log + continúa).
+    """
     for emp in _empresas():
         tok = _tenant_ctx.set({"db_name": emp["db_name"], "empresa": emp["slug"], "superadmin": False})
         try:
+            if emp["slug"] != FIRST_TENANT_SLUG and not _tiene_trimble():
+                continue
             fn()
+        except Exception as e:
+            print(f"[ingesta] {emp['slug']}: {e}")
         finally:
             _tenant_ctx.reset(tok)
 
