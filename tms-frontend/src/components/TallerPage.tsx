@@ -14,6 +14,7 @@ import { Download, Plus, Pencil } from "lucide-react";
 import { api } from "../api";
 import { REST_MANTENIMIENTOS, REST_PROVEEDORES, REST_VEHICULOS_DISPONIBLES } from "../config";
 import { CaducidadRenderer } from "./CaducidadRenderer";
+import { TallerCalendario } from "./TallerCalendario";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
@@ -97,6 +98,7 @@ export function TallerPage() {
   const [abierto, setAbierto] = useState(false);
   const [editando, setEditando] = useState<Mantenimiento | null>(null);
   const [filtroVehiculo, setFiltroVehiculo] = useState("");
+  const [vista, setVista] = useState<"lista" | "calendario">("lista");
 
   const { data: mantenimientos = [], isLoading } = useQuery({
     queryKey: ["mantenimientos", filtroVehiculo],
@@ -291,6 +293,22 @@ export function TallerPage() {
               ))}
             </select>
           </div>
+          <div className="flex items-center rounded-md border border-input p-0.5">
+            <button
+              type="button"
+              onClick={() => setVista("lista")}
+              className={`rounded px-2.5 py-1 text-xs font-medium transition ${vista === "lista" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}
+            >
+              Lista
+            </button>
+            <button
+              type="button"
+              onClick={() => setVista("calendario")}
+              className={`rounded px-2.5 py-1 text-xs font-medium transition ${vista === "calendario" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}
+            >
+              Calendario
+            </button>
+          </div>
           <Button variant="outline" onClick={exportarCsv}>
             <Download size={16} className="mr-1.5" />
             Exportar CSV
@@ -302,6 +320,11 @@ export function TallerPage() {
         </div>
       </div>
 
+      {vista === "calendario" ? (
+        <div className="min-h-0 flex-1">
+          <TallerCalendario vehiculos={vehiculos} onChange={() => queryClient.invalidateQueries({ queryKey: ["mantenimientos"] })} />
+        </div>
+      ) : (
       <div className="overflow-hidden rounded-lg border border-slate-200">
         <table className="w-full border-collapse text-sm">
           <thead className="bg-slate-50">
@@ -359,6 +382,7 @@ export function TallerPage() {
           </tbody>
         </table>
       </div>
+      )}
 
       <Sheet open={abierto} onOpenChange={setAbierto}>
         <SheetContent side="right" className="w-full max-w-md overflow-y-auto">
