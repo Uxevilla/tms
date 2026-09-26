@@ -148,6 +148,10 @@ CREATE TABLE IF NOT EXISTS documentos_auditoria (
 CREATE TABLE IF NOT EXISTS lid_map (
     lid TEXT PRIMARY KEY, trip_id TEXT, task_id TEXT, terminal TEXT, desde TEXT
 );
+CREATE TABLE IF NOT EXISTS files_origen (
+    name TEXT PRIMARY KEY, report_id TEXT, question_id TEXT,
+    trip_id TEXT, mensaje_id TEXT, lid TEXT, creado TIMESTAMPTZ DEFAULT now()
+);
 CREATE TABLE IF NOT EXISTS qp_definiciones (
     id BIGSERIAL PRIMARY KEY, report_id TEXT NOT NULL, version TEXT NOT NULL DEFAULT '',
     nombre TEXT, firstquestion TEXT, activa BOOLEAN NOT NULL DEFAULT true,

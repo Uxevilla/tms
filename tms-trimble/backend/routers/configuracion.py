@@ -1,4 +1,6 @@
 """Router de configuración: proveedores de integración, sus campos y tipos de actividad."""
+import json
+
 from fastapi import APIRouter, Depends, HTTPException
 
 from db import get_conn
@@ -218,5 +220,49 @@ def editar_usuario(uid: int, body: dict, conn=Depends(get_conn)):
 @router.delete("/api/configuracion/usuarios/{uid}")
 def borrar_usuario(uid: int, conn=Depends(get_conn)):
     conn.execute("DELETE FROM config.usuarios WHERE id=?", (uid,))
+    conn.commit()
+    return {"ok": True}
+
+
+@router.get("/api/config/tipos-documento-pregunta")
+def listar_tipos_documento_pregunta(conn=Depends(get_conn)):
+    """Lista el mapeo pregunta→tipo_documento con el texto de la pregunta/opción."""
+    rows = conn.execute(
+        "SELECT c.report_id, c.question_id, c.tipo_documento, c.sugerido, "
+        "q.texto AS pregunta_texto "
+        "FROM cfg_tipo_documento_pregunta c "
+        "LEFT JOIN qp_definiciones d ON d.report_id=c.report_id AND d.activa "
+        "LEFT JOIN qp_preguntas q ON q.definicion_id=d.id AND q.question_id=c.question_id "
+        "ORDER BY c.report_id, c.question_id"
+    ).fetchall()
+    return {"mapeos": [dict(r) for r in rows]}
+
+
+@router.put("/api/config/tipos-documento-pregunta")
+def guardar_tipo_documento_pregunta(body: dict, conn=Depends(get_conn)):
+    """Crea/actualiza el mapeo (report_id, question_id) → tipo_documento. Al cambiar,
+    reclasifica los ficheros existentes de esa pregunta con auditoría."""
+    b = body or {}
+    report_id = (b.get("report_id") or "").strip()
+    question_id = (b.get("question_id") or "").strip()
+    tipo = (b.get("tipo_documento") or "").strip()
+    if not report_id or not question_id or not tipo:
+        raise HTTPException(status_code=400, detail={"error": "report_id, question_id y tipo_documento son obligatorios."})
+    conn.execute(
+        "INSERT INTO cfg_tipo_documento_pregunta (report_id, question_id, tipo_documento, sugerido) "
+        "VALUES (?,?,?,false) ON CONFLICT (report_id, question_id) DO UPDATE SET "
+        "tipo_documento=EXCLUDED.tipo_documento, sugerido=false",
+        (report_id, question_id, tipo),
+    )
+    # Reclasificar los ficheros existentes de esa pregunta (auditoría).
+    for r in conn.execute(
+        "SELECT id FROM files WHERE report_id=? AND question_id=? AND anulado_at IS NULL",
+        (report_id, question_id),
+    ).fetchall():
+        conn.execute("UPDATE files SET tipo_documento=? WHERE id=?", (tipo, r["id"]))
+        conn.execute(
+            "INSERT INTO documentos_auditoria (file_id, accion, usuario, detalle) VALUES (?,?,?,?)",
+            (r["id"], "reclasificar", "config", json.dumps({"tipo_documento": tipo, "report_id": report_id, "question_id": question_id})),
+        )
     conn.commit()
     return {"ok": True}

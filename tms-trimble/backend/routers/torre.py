@@ -384,6 +384,19 @@ def atencion(user: dict = Depends(require_role(["admin", "dispatcher"])), conn: 
             {"tipo": "viaje", "id": r["trip_id"], "codigo": r["trip_id"]},
         ))
 
+    # 10. documento_integridad: sha256 no cuadra al leer.
+    for r in conn.execute(
+        "SELECT trip_id, name FROM files "
+        "WHERE ultimo_error='sha256 no cuadra' AND anulado_at IS NULL AND trip_id IS NOT NULL "
+        "ORDER BY ftime DESC LIMIT 50",
+    ).fetchall():
+        items.append(_item(
+            "documento_integridad", "critico",
+            f"Fichero corrupto: {r['name']}",
+            "sha256 no cuadra",
+            {"tipo": "viaje", "id": r["trip_id"], "codigo": r["trip_id"]},
+        ))
+
     # Orden: por severidad (critico > aviso > info) y, dentro, por antigüedad.
     items.sort(key=lambda it: (_ORDEN_SEVERIDAD.get(it["severidad"], 9), it.get("ts") or ""))
 
@@ -393,7 +406,8 @@ def atencion(user: dict = Depends(require_role(["admin", "dispatcher"])), conn: 
     if es_admin:
         resumen["facturacion_pendiente"] = round(facturacion_pendiente, 2)
         sin_viaje = conn.execute(
-            "SELECT count(*) AS n FROM files WHERE trip_id IS NULL AND anulado_at IS NULL"
+            "SELECT count(*) AS n FROM files WHERE trip_id IS NULL AND anulado_at IS NULL "
+            "AND COALESCE(source,'') NOT IN ('vehiculo','conductor','empresa') AND vehiculo_id IS NULL"
         ).fetchone()["n"]
         resumen["documentos_sin_viaje"] = sin_viaje
 

@@ -510,26 +510,51 @@ def list_tarifas(conn = Depends(get_conn)):
 @router.get("/api/trips/{trip_id}/documentos")
 def list_trip_documentos(trip_id: str, conn = Depends(get_conn)):
     rows = conn.execute(
-        "SELECT id, name, content_b64, storage_key, sha256, source, driver, lid, formato, mime, "
+        "SELECT id, name, storage_key, sha256, source, driver, lid, formato, mime, "
         "tipo_documento, estado_descarga, intentos, ultimo_error, ftime, report_id, question_id, mensaje_id, "
-        "revisado_at, revisado_por, anulado_at, paginas "
+        "revisado_at, revisado_por, anulado_at, paginas, bytes "
         "FROM files WHERE trip_id=? AND anulado_at IS NULL ORDER BY ftime DESC, id DESC", (trip_id,)
     ).fetchall()
     docs = []
     for r in rows:
-        c = _leer_archivo(r["storage_key"], r.get("sha256") or "") if r["storage_key"] else (r["content_b64"] or "")
         name = r["name"]
         nombre = name.split("__", 1)[1] if "__" in name else name
         docs.append({
-            "id": r["id"], "nombre": nombre, "contenido": c, "size": round(len(c) * 3 / 4),
-            "source": r["source"] or "", "formato": r["formato"] or "", "mime": r["mime"] or "",
-            "tipo_documento": r["tipo_documento"] or "", "estado_descarga": r["estado_descarga"] or "",
-            "intentos": r["intentos"] or 0, "ultimo_error": r["ultimo_error"] or "",
-            "ftime": r["ftime"] or "", "report_id": r["report_id"] or "", "question_id": r["question_id"] or "",
+            "id": r["id"], "nombre": nombre, "source": r["source"] or "", "formato": r["formato"] or "",
+            "mime": r["mime"] or "", "tipo_documento": r["tipo_documento"] or "",
+            "estado_descarga": r["estado_descarga"] or "", "intentos": r["intentos"] or 0,
+            "ultimo_error": r["ultimo_error"] or "", "ftime": r["ftime"] or "",
+            "report_id": r["report_id"] or "", "question_id": r["question_id"] or "",
             "mensaje_id": r["mensaje_id"] or "", "revisado_at": r["revisado_at"], "revisado_por": r["revisado_por"],
-            "paginas": r["paginas"] or 0,
+            "paginas": r["paginas"] or 0, "size": r["bytes"] or 0,
         })
     return {"documentos": docs}
+
+
+@router.get("/api/files/{file_id}/contenido")
+def get_file_contenido(file_id: int, conn = Depends(get_conn)):
+    """Devuelve el contenido base64 de un fichero (visor/descarga). Verifica integridad sha256."""
+    row = conn.execute(
+        "SELECT name, storage_key, sha256, content_b64, mime, formato FROM files WHERE id=?", (file_id,)
+    ).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail={"error": "Fichero no encontrado."})
+    c = ""
+    if row["storage_key"]:
+        c = _leer_archivo(row["storage_key"], row.get("sha256") or "")
+        if not c and row.get("sha256"):
+            # Integridad: el sha256 no cuadra → registrar alerta (auditoría) + marcar error.
+            conn.execute(
+                "INSERT INTO documentos_auditoria (file_id, accion, usuario, detalle) VALUES (?,?,?,?)",
+                (file_id, "integridad", "sistema", json.dumps({"error": "sha256 no cuadra"})),
+            )
+            conn.execute("UPDATE files SET estado_descarga='error', ultimo_error='sha256 no cuadra' WHERE id=?", (file_id,))
+            conn.commit()
+            raise HTTPException(status_code=409, detail={"error": "Integridad del fichero no verificada (sha256)."})
+    else:
+        c = row["content_b64"] or ""
+    mime = row["mime"] or ("application/pdf" if row["formato"] == "pdf" else "image/png")
+    return {"id": file_id, "nombre": row["name"], "mime": mime, "contenido": c}
 
 
 @router.post("/api/trips/{trip_id}/documentos/{file_id}/tipo")
@@ -586,14 +611,18 @@ def subir_documento_manual(trip_id: str, body: dict,
     if not g:
         raise HTTPException(status_code=400, detail={"error": "Contenido base64 no válido."})
     storage_key, sha, nbytes, mime = g
-    conn.execute(
+    fid = conn.execute(
         "INSERT INTO files (trip_id, name, ftype, ftime, source, storage_key, sha256, bytes, mime, estado_descarga, tipo_documento, vinculado_por) "
-        "VALUES (?,?,3,?,?,?,?,?,?,'descargado',?,'manual')",
+        "VALUES (?,?,3,?,?,?,?,?,?,'descargado',?,'manual') RETURNING id",
         (trip_id, name, datetime.datetime.utcnow().isoformat() + "Z", user.get("usuario") or user.get("sub") or "",
          storage_key, sha, nbytes, mime, tipo or "otro"),
+    ).fetchone()["id"]
+    conn.execute(
+        "INSERT INTO documentos_auditoria (file_id, accion, usuario, detalle) VALUES (?,?,?,?)",
+        (fid, "subir", user.get("usuario") or user.get("sub") or "", json.dumps({"tipo_documento": tipo or "otro"})),
     )
     conn.commit()
-    return {"ok": True, "id": name}
+    return {"ok": True, "id": fid}
 
 
 @router.get("/api/documentos/sin-viaje")
@@ -601,7 +630,9 @@ def documentos_sin_viaje(user: dict = Depends(require_role(["admin", "dispatcher
     """Bandeja de ficheros sin viaje asignado (asignación manual con auditoría)."""
     rows = conn.execute(
         "SELECT id, name, source, driver, lid, ftime, tipo_documento, estado_descarga, mime, report_id, question_id "
-        "FROM files WHERE trip_id IS NULL AND anulado_at IS NULL ORDER BY ftime DESC LIMIT 200"
+        "FROM files WHERE trip_id IS NULL AND anulado_at IS NULL "
+        "AND COALESCE(source,'') NOT IN ('vehiculo','conductor','empresa') AND vehiculo_id IS NULL "
+        "ORDER BY ftime DESC LIMIT 200"
     ).fetchall()
     out = []
     for r in rows:
@@ -634,39 +665,9 @@ def vincular_documento_sin_viaje(file_id: int, body: dict,
 
 
 def _vincular_por_vehiculo_ventana(conn):
-    """Vincula ficheros sin viaje (trip_id NULL) al viaje del terminal cuya franja horaria
-    contiene la hora del fichero (vinculado_por='vehiculo_ventana'). Devuelve cuántos vinculó."""
-    huerfanos = conn.execute(
-        "SELECT id, source, vehiculo_id, ftime FROM files "
-        "WHERE trip_id IS NULL AND anulado_at IS NULL AND COALESCE(source,'') <> ''"
-    ).fetchall()
-    n = 0
-    for f in huerfanos:
-        ft = (f["ftime"] or "")[:19]
-        if not ft:
-            continue
-        veh = conn.execute(
-            "SELECT codigo FROM vehiculos WHERE terminal_trimble=? OR matricula=? OR codigo=? LIMIT 1",
-            (f["source"], f["source"], f["source"]),
-        ).fetchone()
-        codigo = (veh["codigo"] if veh else (f["vehiculo_id"] or f["source"]))
-        viaje = conn.execute(
-            "SELECT id FROM trips WHERE terminal=? AND anulado_at IS NULL "
-            "AND fecha_esperada_carga IS NOT NULL AND fecha_esperada_carga<>'' "
-            "AND fecha_esperada_descarga IS NOT NULL AND fecha_esperada_descarga<>'' "
-            "AND ? >= substr(fecha_esperada_carga,1,19) AND ? <= substr(fecha_esperada_descarga,1,19) "
-            "ORDER BY creado DESC LIMIT 1",
-            (codigo, ft, ft),
-        ).fetchone()
-        if viaje:
-            conn.execute(
-                "UPDATE files SET trip_id=?, vinculado_por='vehiculo_ventana' WHERE id=?",
-                (viaje["id"], f["id"]),
-            )
-            n += 1
-    if n:
-        conn.commit()
-    return n
+    """(compat) delega en services.sync._vincular_por_vehiculo_ventana."""
+    from services.sync import _vincular_por_vehiculo_ventana as _impl
+    return _impl(conn)
 
 
 

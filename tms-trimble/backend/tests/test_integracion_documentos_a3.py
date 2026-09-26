@@ -175,3 +175,110 @@ def test_reclasificar_documento_audita(scratch_db):
     finally:
         conn.close()
         main._tenant_ctx.reset(tok)
+
+
+@pytest.mark.integration
+def test_respuesta_fichero_clasifica_informe_primero(scratch_db, monkeypatch, tmp_path):
+    """E2E: informe (traza 13) primero → luego pollFiles → tipo por pregunta + trip_id."""
+    from services.sync import _registrar_files_origen, _save_file
+    monkeypatch.setattr("services.documentos.DOCS_DIR", str(tmp_path))
+
+    tok, conn = _conn(scratch_db)
+    try:
+        conn.execute("INSERT INTO trips (id, estado) VALUES ('T-1', 'Entregado')")
+        conn.execute(
+            "INSERT INTO cfg_tipo_documento_pregunta (report_id, question_id, tipo_documento) "
+            "VALUES ('SOLERA_DESCARGA', 'SCAN_CMR', 'CMR')"
+        )
+        # 1) informe llega primero
+        _registrar_files_origen(conn, [{"question": "SCAN_CMR", "option": "O1", "value": "doc_1.gif"}],
+                                "SOLERA_DESCARGA", "T-1", "MSG-1", "LID-1")
+        # 2) luego el fichero (pollFiles)
+        _save_file(None, "doc_1.gif", 3, "2026-09-26T10:00:00Z", "APP-1", "D1", "LID-1", "aGVsbG8=")
+        row = conn.execute(
+            "SELECT trip_id, tipo_documento, report_id, question_id, vinculado_por FROM files WHERE name='doc_1.gif'"
+        ).fetchone()
+        assert row["tipo_documento"] == "CMR"
+        assert row["trip_id"] == "T-1"
+        assert row["report_id"] == "SOLERA_DESCARGA"
+        assert row["question_id"] == "SCAN_CMR"
+        assert row["vinculado_por"] == "respuesta"
+    finally:
+        conn.close()
+        main._tenant_ctx.reset(tok)
+
+
+@pytest.mark.integration
+def test_respuesta_fichero_clasifica_fichero_primero(scratch_db, monkeypatch, tmp_path):
+    """E2E: fichero primero (pollFiles) → luego informe → re-clasifica por pregunta."""
+    from services.sync import _registrar_files_origen, _save_file
+    monkeypatch.setattr("services.documentos.DOCS_DIR", str(tmp_path))
+
+    tok, conn = _conn(scratch_db)
+    try:
+        conn.execute("INSERT INTO trips (id, estado) VALUES ('T-1', 'Entregado')")
+        conn.execute(
+            "INSERT INTO cfg_tipo_documento_pregunta (report_id, question_id, tipo_documento) "
+            "VALUES ('SOLERA_DESCARGA', 'SCAN_CMR', 'CMR')"
+        )
+        # 1) fichero primero (sin informe)
+        _save_file(None, "doc_1.gif", 3, "2026-09-26T10:00:00Z", "APP-1", "D1", "LID-1", "aGVsbG8=")
+        row = conn.execute("SELECT tipo_documento FROM files WHERE name='doc_1.gif'").fetchone()
+        assert row["tipo_documento"] == "otro"  # nombre sin pista
+        # 2) luego el informe → re-clasifica
+        _registrar_files_origen(conn, [{"question": "SCAN_CMR", "option": "O1", "value": "doc_1.gif"}],
+                                "SOLERA_DESCARGA", "T-1", "MSG-1", "LID-1")
+        row = conn.execute(
+            "SELECT trip_id, tipo_documento, report_id, question_id FROM files WHERE name='doc_1.gif'"
+        ).fetchone()
+        assert row["tipo_documento"] == "CMR"
+        assert row["trip_id"] == "T-1"
+        assert row["report_id"] == "SOLERA_DESCARGA"
+    finally:
+        conn.close()
+        main._tenant_ctx.reset(tok)
+
+
+@pytest.mark.integration
+def test_ventana_utc(scratch_db):
+    """Fichero a las 07:30Z y viaje 09:00–12:00 Madrid → vinculado (comparación UTC)."""
+    from services.sync import _vincular_por_vehiculo_ventana
+
+    tok, conn = _conn(scratch_db)
+    try:
+        conn.execute(
+            "INSERT INTO trips (id, terminal, fecha_esperada_carga, fecha_esperada_descarga, estado) "
+            "VALUES ('T-UTC', 'APP-1', '2026-09-26T09:00', '2026-09-26T12:00', 'enviado')"
+        )
+        conn.execute(
+            "INSERT INTO files (name, source, ftime, trip_id, estado_descarga) "
+            "VALUES ('pod-utc.png', 'APP-1', '2026-09-26T07:30:00Z', NULL, 'descargado')"
+        )
+        n = _vincular_por_vehiculo_ventana(conn)
+        assert n == 1
+        row = conn.execute("SELECT trip_id FROM files WHERE name='pod-utc.png'").fetchone()
+        assert row["trip_id"] == "T-UTC"
+    finally:
+        conn.close()
+        main._tenant_ctx.reset(tok)
+
+
+@pytest.mark.integration
+def test_itv_vehiculo_no_bandeja(scratch_db):
+    """Un documento de vehículo (ITV) no aparece en la bandeja 'sin viaje' ni se vincula."""
+    from services.sync import _vincular_por_vehiculo_ventana
+    from routers.viajes import documentos_sin_viaje
+
+    tok, conn = _conn(scratch_db)
+    try:
+        conn.execute(
+            "INSERT INTO files (name, vehiculo_id, source, ftime, estado_descarga) "
+            "VALUES ('itv.pdf', 'VH-1', 'vehiculo', '2026-09-26T10:00:00Z', 'descargado')"
+        )
+        n = _vincular_por_vehiculo_ventana(conn)
+        assert n == 0
+        bandeja = documentos_sin_viaje(user={"rol": "admin"}, conn=conn)
+        assert all(d["name"] != "itv.pdf" for d in bandeja["documentos"])
+    finally:
+        conn.close()
+        main._tenant_ctx.reset(tok)
