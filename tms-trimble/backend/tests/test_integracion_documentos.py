@@ -106,14 +106,15 @@ def test_delete_trip_soft_con_documentos(scratch_db):
             "INSERT INTO mensajes (id, trip_id, tipo) VALUES ('M1', 'T-DOC', 'libre')"
         )
 
-        res = delete_trip("T-DOC", user={"rol": "admin", "usuario": "test"}, conn=conn)
+        res = delete_trip("T-DOC", motivo="Viaje duplicado", user={"rol": "admin", "usuario": "test"}, conn=conn)
 
         assert res["ok"] is True
         assert res["anulado"] is True
         # El viaje sigue (anulado) y los documentos/mensajes se conservan.
-        row = conn.execute("SELECT anulado_at, anulado_por FROM trips WHERE id='T-DOC'").fetchone()
+        row = conn.execute("SELECT anulado_at, anulado_por, anulado_motivo FROM trips WHERE id='T-DOC'").fetchone()
         assert row is not None and row["anulado_at"] is not None
         assert row["anulado_por"] == "test"
+        assert row["anulado_motivo"] == "Viaje duplicado"
         assert conn.execute("SELECT count(*) AS n FROM files WHERE trip_id='T-DOC'").fetchone()["n"] == 1
         assert conn.execute("SELECT count(*) AS n FROM mensajes WHERE trip_id='T-DOC'").fetchone()["n"] == 1
     finally:

@@ -188,6 +188,7 @@ def atencion(user: dict = Depends(require_role(["admin", "dispatcher"])), conn: 
         "SELECT codigo, matricula, cliente, origen, destino, fecha_esperada_descarga, estado "
         "FROM operaciones.trips "
         "WHERE COALESCE(estado,'') NOT IN ('Entregado','Cancelado','sin_asignar','planificado','') "
+        "AND anulado_at IS NULL "
         "AND fecha_esperada_descarga IS NOT NULL AND fecha_esperada_descarga != '' "
         "AND fecha_esperada_descarga < ? ORDER BY fecha_esperada_descarga ASC LIMIT 50",
         (hoy,),
@@ -276,7 +277,7 @@ def atencion(user: dict = Depends(require_role(["admin", "dispatcher"])), conn: 
     if es_admin:
         for r in conn.execute(
             "SELECT codigo, cliente, origen, destino, precio FROM operaciones.trips "
-            "WHERE estado = 'Entregado' AND (factura IS NULL OR factura = '') "
+            "WHERE estado = 'Entregado' AND (factura IS NULL OR factura = '') AND anulado_at IS NULL "
             "ORDER BY COALESCE(fecha_actualizacion, creado) DESC LIMIT 50",
         ).fetchall():
             facturacion_pendiente += float(r["precio"] or 0)
@@ -360,7 +361,7 @@ def atencion(user: dict = Depends(require_role(["admin", "dispatcher"])), conn: 
     # 8. envio_trimble_fallido: viaje en estado error.
     for r in conn.execute(
         "SELECT codigo, terminal, cliente, error FROM operaciones.trips "
-        "WHERE COALESCE(estado,'') = 'error' OR (error IS NOT NULL AND error != '') "
+        "WHERE (COALESCE(estado,'') = 'error' OR (error IS NOT NULL AND error != '')) AND anulado_at IS NULL "
         "ORDER BY COALESCE(fecha_actualizacion, creado) DESC LIMIT 50",
     ).fetchall():
         items.append(_item(
@@ -401,7 +402,7 @@ def buscar(q: Annotated[str, Query(max_length=80)] = "", limite: Annotated[int, 
     viaje_campos = "COALESCE(codigo,'') || ' ' || COALESCE(referencia,'') || ' ' || COALESCE(cliente,'') || ' ' || COALESCE(origen,'') || ' ' || COALESCE(destino,'')"
     for r in conn.execute(
         "SELECT codigo, referencia, cliente, origen, destino FROM operaciones.trips "
-        "WHERE " + _norm_sql(viaje_campos) + " LIKE ? "
+        "WHERE " + _norm_sql(viaje_campos) + " LIKE ? AND anulado_at IS NULL "
         "ORDER BY COALESCE(fecha_actualizacion, creado) DESC LIMIT ?",
         (patron, limite),
     ).fetchall():

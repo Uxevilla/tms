@@ -112,7 +112,7 @@ export function FacturacionPage() {
   const [pestana, setPestana] = useState<Pestaña>("pendientes");
   const [selBorradores, setSelBorradores] = useState<Set<number>>(new Set());
   const [selViajes, setSelViajes] = useState<Set<string>>(new Set());
-  const [toast, setToast] = useState<{ tipo: "ok" | "error"; texto: string } | null>(null);
+  const [toast, setToast] = useState<{ tipo: "ok" | "error" | "aviso"; texto: string } | null>(null);
 
   const [confirmar, setConfirmar] = useState<{ titulo: string; detalle: string; faltan?: string[]; tipo?: "emitir" | "facturar" | "cobrar"; accion: () => void } | null>(null);
   const [fechaCobro, setFechaCobro] = useState(() => new Date().toISOString().slice(0, 10));
@@ -155,6 +155,7 @@ export function FacturacionPage() {
   });
 
   function ok(texto: string) { setToast({ tipo: "ok", texto }); }
+  function aviso(texto: string) { setToast({ tipo: "aviso", texto }); }
   function err(e: unknown) {
     // ApiError.message trae el texto del error (detail.error); .detail es el cuerpo completo.
     setToast({ tipo: "error", texto: e instanceof ApiError ? e.message : "Error" });
@@ -181,7 +182,7 @@ export function FacturacionPage() {
     },
     onSuccess: (r) => {
       if (r.fallidos.length === 0) ok(`Emitida(s) ${r.ok} factura(s).`);
-      else ok(`Emitidas ${r.ok}, fallidas ${r.fallidos.length}: ${r.fallidos.map((f) => f.error).join("; ")}`);
+      else aviso(`Emitidas ${r.ok}, fallidas ${r.fallidos.length}: ${r.fallidos.map((f) => f.error).join("; ")}`);
       setSelBorradores(new Set());
       refrescar();
     },
@@ -567,7 +568,7 @@ export function FacturacionPage() {
       </Dialog>
 
       {toast && (
-        <div className={`fixed right-4 top-20 z-50 rounded-lg px-4 py-3 text-sm font-medium text-white shadow-lg ${toast.tipo === "ok" ? "bg-emerald-600" : "bg-red-600"}`}>
+        <div className={`fixed right-4 top-20 z-50 rounded-lg px-4 py-3 text-sm font-medium text-white shadow-lg ${toast.tipo === "ok" ? "bg-emerald-600" : toast.tipo === "aviso" ? "bg-amber-600" : "bg-red-600"}`}>
           {toast.texto}
         </div>
       )}

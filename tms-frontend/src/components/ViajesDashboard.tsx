@@ -15,6 +15,7 @@ import {
 import { Copy, Download, Info, LayoutList, Map as MapIcon, MessageCircle, Pencil, Plus, Send, Trash2, X } from "lucide-react";
 
 import { api, ApiError } from "@/api";
+import { getRol } from "@/auth";
 import { REST_VIAJES, REST_CONDUCTORES, REST_VEHICULOS_DISPONIBLES } from "@/config";
 import type { Viaje, ViajeEstado } from "@/types";
 import { StatusBadge } from "./StatusBadge";
@@ -38,6 +39,19 @@ const filtroFecha: FilterFn<Viaje> = (row, columnId, filterValue) => {
 };
 
 type Vista = "lista" | "mapa" | "dividido";
+
+// Viaje anulado devuelto por /api/trips?ver_anulados=true.
+type Anulado = {
+  id: string;
+  codigo?: string;
+  referencia?: string;
+  cliente?: string;
+  origen?: string;
+  destino?: string;
+  anulado_at?: string | null;
+  anulado_por?: string | null;
+  anulado_motivo?: string | null;
+};
 
 // Celda editable (input/select) con commit optimista en blur/Enter/cambio.
 function CeldaInput({ valor, tipo, onCommit, placeholder, className = "", dataCampo }: {
@@ -93,8 +107,16 @@ export function ViajesDashboard() {
   const [tripDetalle, setTripDetalle] = useState<Viaje | null>(null);
   const [sheet, setSheet] = useState<{ abierto: boolean; editTripId: string | null }>({ abierto: false, editTripId: null });
   const [borrarViaje, setBorrarViaje] = useState<Viaje | null>(null);
+  const [motivo, setMotivo] = useState("");
+  const [verAnulados, setVerAnulados] = useState(false);
   const [banner, setBanner] = useState<{ tipo: "ok" | "error"; texto: string } | null>(null);
   const debounceRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+
+  const anulados = useQuery({
+    queryKey: ["viajes-anulados"],
+    queryFn: () => api<{ viajes: Anulado[] }>("/api/trips?ver_anulados=true").then((r) => r.viajes),
+    enabled: verAnulados,
+  });
 
   // Filtros: replace:true (no ensucia el historial) + debounce en los de texto.
   const setFilter = useCallback(
@@ -281,14 +303,31 @@ export function ViajesDashboard() {
 
   async function confirmarBorrado() {
     if (!borrarViaje) return;
+    const m = motivo.trim();
+    if (!m) {
+      notificar("Indica el motivo de anulación.", "error");
+      return;
+    }
     const id = borrarViaje.id;
     setBorrarViaje(null);
+    setMotivo("");
     try {
-      await api(`/api/trips/${encodeURIComponent(id)}`, { method: "DELETE" });
-      notificar("Viaje eliminado.");
+      await api(`/api/trips/${encodeURIComponent(id)}?motivo=${encodeURIComponent(m)}`, { method: "DELETE" });
+      notificar("Viaje eliminado/anulado.");
       qc.invalidateQueries({ queryKey: ["viajes"] });
     } catch (e) {
       notificar(e instanceof ApiError ? e.message : "Error al eliminar.", "error");
+    }
+  }
+
+  async function reactivar(id: string) {
+    try {
+      await api(`/api/trips/${encodeURIComponent(id)}/reactivar`, { method: "POST" });
+      notificar("Viaje reactivado.");
+      qc.invalidateQueries({ queryKey: ["viajes-anulados"] });
+      qc.invalidateQueries({ queryKey: ["viajes"] });
+    } catch (e) {
+      notificar(e instanceof ApiError ? e.message : "Error al reactivar.", "error");
     }
   }
 
@@ -350,11 +389,51 @@ export function ViajesDashboard() {
         <input type="date" value={search.hasta ?? ""} onChange={(e) => setFilter("hasta", e.target.value)} className="h-8 rounded border px-2 text-xs" title="Hasta (carga)" />
 
         <div className="ml-auto flex items-center gap-2">
+          <button onClick={() => setVerAnulados((v) => !v)} className={`flex items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-medium hover:bg-muted ${verAnulados ? "border-amber-400 text-amber-600" : ""}`}>
+            {verAnulados ? "Ver activos" : "Ver anulados"}
+          </button>
           <button onClick={exportarCsv} className="flex items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-medium hover:bg-muted"><Download size={15} /> Exportar CSV</button>
           <button onClick={() => setSheet({ abierto: true, editTripId: null })} className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground hover:opacity-90"><Plus size={15} /> Nuevo viaje (N)</button>
         </div>
       </div>
 
+      {verAnulados ? (
+        <div className="flex min-h-0 flex-1 flex-col overflow-auto rounded-lg border bg-card">
+          <table className="w-full border-collapse text-xs">
+            <thead className="sticky top-0 z-10 bg-muted">
+              <tr>
+                <th className="whitespace-nowrap border-b px-2 py-1.5 text-left font-semibold text-muted-foreground">ID</th>
+                <th className="whitespace-nowrap border-b px-2 py-1.5 text-left font-semibold text-muted-foreground">Cliente</th>
+                <th className="whitespace-nowrap border-b px-2 py-1.5 text-left font-semibold text-muted-foreground">Ruta</th>
+                <th className="whitespace-nowrap border-b px-2 py-1.5 text-left font-semibold text-muted-foreground">Anulado</th>
+                <th className="whitespace-nowrap border-b px-2 py-1.5 text-left font-semibold text-muted-foreground">Por</th>
+                <th className="whitespace-nowrap border-b px-2 py-1.5 text-left font-semibold text-muted-foreground">Motivo</th>
+                {getRol() === "admin" && <th className="whitespace-nowrap border-b px-2 py-1.5" />}
+              </tr>
+            </thead>
+            <tbody>
+              {(anulados.data ?? []).map((a) => (
+                <tr key={a.id} className="border-b hover:bg-muted/40">
+                  <td className="whitespace-nowrap px-2 py-1.5">{a.codigo || a.id}</td>
+                  <td className="whitespace-nowrap px-2 py-1.5 text-muted-foreground">{a.cliente || "—"}</td>
+                  <td className="whitespace-nowrap px-2 py-1.5 text-muted-foreground">{(a.origen || "?")} → {a.destino || "?"}</td>
+                  <td className="whitespace-nowrap px-2 py-1.5 text-muted-foreground">{(a.anulado_at || "").slice(0, 16).replace("T", " ")}</td>
+                  <td className="whitespace-nowrap px-2 py-1.5 text-muted-foreground">{a.anulado_por || "—"}</td>
+                  <td className="whitespace-nowrap px-2 py-1.5 text-muted-foreground">{a.anulado_motivo || "—"}</td>
+                  {getRol() === "admin" && (
+                    <td className="whitespace-nowrap px-2 py-1.5">
+                      <button onClick={() => reactivar(a.id)} className="rounded border px-2 py-1 text-xs font-medium text-emerald-600 hover:bg-emerald-50">Reactivar</button>
+                    </td>
+                  )}
+                </tr>
+              ))}
+              {(anulados.data ?? []).length === 0 && (
+                <tr><td colSpan={7} className="px-2 py-6 text-center text-muted-foreground">Sin viajes anulados.</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      ) : (
       <div className="flex min-h-0 flex-1 gap-2">
         {mostrarLista && (
           <div className={`${ancho} min-h-0 overflow-auto rounded-lg border bg-card`}>
@@ -399,6 +478,7 @@ export function ViajesDashboard() {
         )}
         {mostrarMapa && <div className={`${ancho} min-h-0 overflow-hidden rounded-lg border bg-card`}><LiveMap focus={null} /></div>}
       </div>
+      )}
 
       {banner && (
         <div className={`fixed bottom-4 right-4 z-[3000] rounded-lg px-4 py-2 text-sm font-semibold text-white shadow-lg ${banner.tipo === "ok" ? "bg-emerald-600" : "bg-red-600"}`}>{banner.texto}</div>
@@ -406,12 +486,13 @@ export function ViajesDashboard() {
 
       {/* Confirmación de borrado dentro de la página */}
       {borrarViaje && (
-        <div className="fixed inset-0 z-[2100] flex items-center justify-center bg-black/40" onClick={() => setBorrarViaje(null)}>
+        <div className="fixed inset-0 z-[2100] flex items-center justify-center bg-black/40" onClick={() => { setBorrarViaje(null); setMotivo(""); }}>
           <div className="w-full max-w-sm rounded-lg border bg-card p-4 shadow-xl" onClick={(e) => e.stopPropagation()}>
-            <h3 className="text-sm font-semibold">Eliminar viaje</h3>
-            <p className="mt-2 text-sm text-muted-foreground">¿Eliminar el viaje {borrarViaje.referencia || borrarViaje.id}? No se puede deshacer.</p>
+            <h3 className="text-sm font-semibold">Eliminar / anular viaje</h3>
+            <p className="mt-2 text-sm text-muted-foreground">¿Eliminar/anular el viaje {borrarViaje.referencia || borrarViaje.id}? No se puede deshacer.</p>
+            <input value={motivo} onChange={(e) => setMotivo(e.target.value)} placeholder="Motivo (obligatorio)" className="mt-2 w-full rounded border px-2 py-1.5 text-xs" />
             <div className="mt-4 flex justify-end gap-2">
-              <button onClick={() => setBorrarViaje(null)} className="rounded border px-3 py-2 text-xs hover:bg-muted">Cancelar</button>
+              <button onClick={() => { setBorrarViaje(null); setMotivo(""); }} className="rounded border px-3 py-2 text-xs hover:bg-muted">Cancelar</button>
               <button onClick={confirmarBorrado} className="rounded bg-red-600 px-3 py-2 text-xs font-semibold text-white hover:bg-red-700">Eliminar</button>
             </div>
           </div>

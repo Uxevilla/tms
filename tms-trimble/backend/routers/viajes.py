@@ -76,7 +76,7 @@ def api_telemetria_activa(user: dict = Depends(require_role(["admin", "dispatche
         f"), activa AS ("
         f"  SELECT DISTINCT ON (terminal) terminal, id, estado, fecha_esperada_descarga, "
         f"         conductor, matricula "
-        f"  FROM trips WHERE estado = 'enviado' OR estado IN ('Llegada_Origen','Cargando','En_Transito','Llegada_Destino','Descargando') "
+        f"  FROM trips WHERE (estado = 'enviado' OR estado IN ('Llegada_Origen','Cargando','En_Transito','Llegada_Destino','Descargando')) AND anulado_at IS NULL "
         f"  ORDER BY terminal, creado DESC"
         f"), dstat AS ("
         f"  SELECT DISTINCT ON (vehiculo_id) vehiculo_id, did "
@@ -148,6 +148,8 @@ def asignar_trip(trip_id: str, req: AsignarRequest, conn = Depends(get_conn)):
     row = conn.execute("SELECT * FROM trips WHERE id=?", (trip_id,)).fetchone()
     if not row:
         raise HTTPException(status_code=404, detail={"error": f"Viaje {trip_id} no encontrado"})
+    if row["anulado_at"]:
+        raise HTTPException(status_code=409, detail={"error": "El viaje está anulado y no se puede editar."})
     if (row["estado"] or "") not in ("sin_asignar", ""):
         raise HTTPException(status_code=409, detail={"error": f"El viaje ya está asignado (estado: {row['estado']})"})
 
@@ -258,17 +260,30 @@ def delete_trip(trip_id: str, force: bool = False, motivo: str = "", user: dict 
     tiene_docs = conn.execute("SELECT 1 FROM files WHERE trip_id=? LIMIT 1", (trip_id,)).fetchone()
     tiene_factura = bool(row["factura"])
 
+    in_trimble = estado == "enviado" or estado in ("llegada_origen", "cargando", "en_transito", "llegada_destino", "descargando")
+
     if (tiene_docs or tiene_factura) and not force:
         # Soft delete: conservar documentos y mensajes (prueba de cobro).
+        motivo = (motivo or "").strip()
+        if not motivo:
+            raise HTTPException(status_code=400, detail={"error": "El motivo de anulación es obligatorio."})
+        # Si estaba en el terminal, borrarlo de Trimble ANTES de anular (misma lógica que el borrado:
+        # si Trimble falla y no hay force, no se anula).
+        if in_trimble:
+            r = get_client().remove_trips([trip_id])
+            if not r["ok"] and not force:
+                raise HTTPException(status_code=502, detail={
+                    "error": f"Trimble: no se pudo borrar del terminal ({r['fault'] or r['status']})"})
+        usuario = user.get("usuario") or user.get("sub") or ""
         conn.execute(
             "UPDATE trips SET anulado_at=now(), anulado_por=?, anulado_motivo=? WHERE id=?",
-            (user.get("usuario") or user.get("sub") or "", motivo or "anulado", trip_id),
+            (usuario, motivo, trip_id),
         )
+        _auditar(conn, "trips", trip_id, "anular", usuario, despues={"motivo": motivo})
         conn.commit()
         return {"ok": True, "trip_id": trip_id, "anulado": True}
 
     # Si estaba en el terminal, borrarlo de Trimble ANTES (si Trimble falla, la BD no cambia).
-    in_trimble = estado == "enviado" or estado in ("llegada_origen", "cargando", "en_transito", "llegada_destino", "descargando")
     if in_trimble:
         r = get_client().remove_trips([trip_id])
         if not r["ok"] and not force:
@@ -284,6 +299,24 @@ def delete_trip(trip_id: str, force: bool = False, motivo: str = "", user: dict 
     conn.execute("DELETE FROM trips WHERE id=?", (trip_id,))
     conn.commit()
     return {"ok": True, "trip_id": trip_id, "anulado": False}
+
+
+@router.post("/api/trips/{trip_id}/reactivar")
+def reactivar_trip(trip_id: str, user: dict = Depends(require_role(["admin"])), conn = Depends(get_conn)):
+    """Reactivar un viaje anulado (solo admin), con auditoría."""
+    row = conn.execute("SELECT anulado_at FROM trips WHERE id=?", (trip_id,)).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail={"error": f"Viaje {trip_id} no encontrado"})
+    if not row["anulado_at"]:
+        raise HTTPException(status_code=409, detail={"error": "El viaje no está anulado."})
+    usuario = user.get("usuario") or user.get("sub") or ""
+    conn.execute(
+        "UPDATE trips SET anulado_at=NULL, anulado_por=NULL, anulado_motivo=NULL WHERE id=?",
+        (trip_id,),
+    )
+    _auditar(conn, "trips", trip_id, "reactivar", usuario)
+    conn.commit()
+    return {"ok": True, "trip_id": trip_id, "reactivado": True}
 
 
 
@@ -460,10 +493,16 @@ def list_trip_documentos(trip_id: str, conn = Depends(get_conn)):
 
 @router.get("/api/reverse-geocode")
 @router.get("/api/trips")
-def list_trips(conn = Depends(get_conn)):
-    rows = conn.execute(
-        "SELECT * FROM trips ORDER BY creado DESC LIMIT 100"
-    ).fetchall()
+def list_trips(ver_anulados: bool = False, conn = Depends(get_conn)):
+    if ver_anulados:
+        rows = conn.execute(
+            "SELECT * FROM trips WHERE anulado_at IS NOT NULL "
+            "ORDER BY anulado_at DESC NULLS LAST LIMIT 200"
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT * FROM trips WHERE anulado_at IS NULL ORDER BY creado DESC LIMIT 200"
+        ).fetchall()
     return {"viajes": [dict(r) for r in rows]}
 
 
@@ -546,9 +585,11 @@ def trip_tramos(trip_id: str, conn = Depends(get_conn)):
 @router.put("/api/trips/{trip_id}")
 def update_pedido(trip_id: str, viaje: ViajeRequest, conn = Depends(get_conn)):
     """Actualiza un pedido sin asignar (direcciones, paradas y datos). Recalcula km/peaje."""
-    row = conn.execute("SELECT estado FROM trips WHERE id=?", (trip_id,)).fetchone()
+    row = conn.execute("SELECT estado, anulado_at FROM trips WHERE id=?", (trip_id,)).fetchone()
     if not row:
         raise HTTPException(status_code=404, detail={"error": f"Viaje {trip_id} no encontrado"})
+    if row["anulado_at"]:
+        raise HTTPException(status_code=409, detail={"error": "El viaje está anulado y no se puede editar."})
     if (row["estado"] or "") not in ("sin_asignar", ""):
         raise HTTPException(status_code=409, detail={"error": "Solo se puede editar un pedido sin asignar."})
     return _crear_pedido(trip_id, viaje)
@@ -571,9 +612,11 @@ def update_tarifa(tarifa_id: int, t: TarifaRequest, conn = Depends(get_conn)):
 @router.patch("/api/trips/{trip_id}")
 def update_trip(trip_id: str, upd: TripUpdate, conn = Depends(get_conn)):
     """Actualiza campos de un viaje (contables + planificación)."""
-    row = conn.execute("SELECT estado FROM trips WHERE id=?", (trip_id,)).fetchone()
+    row = conn.execute("SELECT estado, anulado_at FROM trips WHERE id=?", (trip_id,)).fetchone()
     if not row:
         raise HTTPException(status_code=404, detail={"error": f"Viaje {trip_id} no encontrado"})
+    if row["anulado_at"]:
+        raise HTTPException(status_code=409, detail={"error": "El viaje está anulado y no se puede editar."})
     if (row["estado"] or "").lower() in _ESTADOS_FINALES:
         # en viajes finalizados solo se permite el cambio de estado de pago (cobro)
         otros = [f for f in ("factura", "cliente", "tipo_carga", "conductor", "matricula",

@@ -75,7 +75,7 @@ def planificacion(desde: str = "", hasta: str = "", conn=Depends(get_conn)):
         f"SELECT id, codigo, terminal, semirremolque_id, remolque_id, conductor, conductor_id, "
         f"estado, origen, destino, cliente, matricula, kilos, tiempo_min, payload, "
         f"fecha_esperada_carga, fecha_esperada_descarga FROM trips "
-        f"WHERE COALESCE(estado,'') NOT IN {_ESTADOS_FINALES_SQL} ORDER BY codigo",
+        f"WHERE COALESCE(estado,'') NOT IN {_ESTADOS_FINALES_SQL} AND anulado_at IS NULL ORDER BY codigo",
     ).fetchall()
 
     viajes = []
