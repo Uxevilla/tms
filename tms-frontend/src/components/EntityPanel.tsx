@@ -287,6 +287,19 @@ function Viaje({ pestana, data }: { pestana: number; data: EntidadViaje }) {
   if (pestana === 2)
     return (
       <div className="space-y-2">
+        {(() => {
+          const doc = (data as { documentacion?: { ok?: boolean; faltan?: string[]; presentes?: string[] } }).documentacion;
+          if (!doc) return null;
+          return doc.ok ? (
+            <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-700">
+              Documentación completa ✓
+            </div>
+          ) : (
+            <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+              <span className="font-semibold">Falta para facturar: </span>{(doc.faltan ?? []).join(", ")}
+            </div>
+          );
+        })()}
         {data.documentos?.length > 0 ? (
           data.documentos.map((d, i) => {
             const tipo = (d as { tipo_documento?: string | null }).tipo_documento;
