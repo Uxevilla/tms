@@ -100,7 +100,7 @@ export function ChatViaje({ tripId, onClose }: { tripId: string; onClose: () => 
     const t = setInterval(async () => {
       try { await api("/api/sync/mensajes", { method: "POST" }); } catch { /* noop */ }
       cargar();
-    }, 8000);
+    }, 30000);
     return () => clearInterval(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tripId]);
