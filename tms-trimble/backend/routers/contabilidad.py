@@ -33,6 +33,21 @@ def _documentacion_viaje(conn, trip_id, cliente_id):
     chk = _checklist_documentacion(conn, cliente_id, presentes)
     return {"ok": bool(chk.get("ok")), "faltan": chk.get("faltan") or []}
 
+
+def _facturable_o_409(conn, t):
+    """Valida que un viaje sea facturable: Entregado, no anulado y sin factura emitida."""
+    if _map_estado(t["estado"]) != "Entregado":
+        raise HTTPException(status_code=409, detail={"error": f"El viaje {t['id']} no está entregado."})
+    if t["anulado_at"]:
+        raise HTTPException(status_code=409, detail={"error": f"El viaje {t['id']} está anulado."})
+    ya = conn.execute(
+        "SELECT f.numero FROM finanzas.facturas f WHERE f.trip_id=? AND COALESCE(f.estado,'')<>'borrador' "
+        "UNION SELECT f.numero FROM finanzas.factura_lineas fl JOIN finanzas.facturas f ON f.id=fl.factura_id "
+        "WHERE fl.trip_id=? AND COALESCE(f.estado,'')<>'borrador' LIMIT 1", (t["id"], t["id"]),
+    ).fetchone()
+    if ya:
+        raise HTTPException(status_code=409, detail={"error": f"El viaje {t['id']} ya está en la factura {ya['numero']}."})
+
 # ---------------------------------------------------------------------- #
 # Contabilidad: doble partida (plan contable, asientos, informes, facturas)
 # ---------------------------------------------------------------------- #
@@ -844,16 +859,20 @@ def _desglose_costes(conn, trip_id):
 
 def _factura_numero(conn, fecha):
     anio = fecha[:4]
-    row = conn.execute("SELECT ultimo FROM finanzas.series WHERE codigo='F'").fetchone()
-    # Máximo ya emitido (por si el contador va por detrás tras una migración).
+    # Atómico: incrementar el contador y leer el valor devuelto.
+    cur = conn.execute("UPDATE finanzas.series SET ultimo=ultimo+1 WHERE codigo='F' RETURNING ultimo")
+    row = cur.fetchone()
+    nxt = int(row["ultimo"]) if row else 1
+    # Suelo: máximo ya emitido (por si el contador va por detrás tras una migración).
     fr = conn.execute("SELECT numero FROM finanzas.facturas WHERE substr(fecha,1,4)=?", (anio,)).fetchall()
     max_n = 0
     for r in fr:
         m = re.match(r"^F-\d{4}-(\d+)$", r["numero"] or "")
         if m:
             max_n = max(max_n, int(m.group(1)))
-    nxt = max((row["ultimo"] if row else 0), max_n) + 1
-    conn.execute("UPDATE finanzas.series SET ultimo=? WHERE codigo='F'", (nxt,))
+    if nxt <= max_n:
+        nxt = max_n + 1
+        conn.execute("UPDATE finanzas.series SET ultimo=? WHERE codigo='F'", (nxt,))
     return f"F-{anio}-{nxt:04d}"
 
 
@@ -867,7 +886,14 @@ def _crear_factura(conn, trips, cliente_id, cliente_nombre, fecha):
     cuota = round(base * iva / 100.0, 2)
     total = round(base + cuota, 2)
     numero = _factura_numero(conn, fecha)
-    fecha_op = (trips[0]["creado"] or "")[:10] or fecha
+    # Fecha de operación: única si todos los viajes coinciden; si no, rango min – max.
+    fechas = sorted({(t["creado"] or "")[:10] for t in trips if (t["creado"] or "")[:10]})
+    if len(fechas) == 1:
+        fecha_op = fechas[0]
+    elif fechas:
+        fecha_op = f"{fechas[0]} – {fechas[-1]}"
+    else:
+        fecha_op = fecha
     asiento_id = _post_asiento(
         fecha, f"Factura {numero} - {cliente_nombre or 'varios'}",
         [("430", total, 0, f"Factura {numero}"),
@@ -921,6 +947,10 @@ def contabilidad_factura_agrupada(req: dict, conn = Depends(get_conn)):
     if len({round(float(t["iva"] if t["iva"] is not None else 21), 2) for t in trips}) > 1:
         raise HTTPException(status_code=409, detail={"error": "IVA distinto (21% y 0%): factúralos por separado."})
 
+    # Entregado, no anulado y sin factura emitida previa.
+    for t in trips:
+        _facturable_o_409(conn, t)
+
     # Documentación completa salvo force=true.
     if not force:
         for t in trips:
@@ -961,6 +991,7 @@ def contabilidad_generar_factura(trip_id: str, req: dict | None = None, conn = D
     force = bool((req or {}).get("force"))
     if float(trip["precio"] or 0) <= 0:
         raise HTTPException(status_code=400, detail={"error": "El viaje no tiene precio."})
+    _facturable_o_409(conn, trip)
     if not force:
         doc = _documentacion_viaje(conn, trip_id, trip["cliente_id"])
         if not doc["ok"]:
@@ -1084,9 +1115,11 @@ def contabilidad_emitir_borrador(factura_id: int,
 
 def _enviar_email(para, asunto, cuerpo, adjuntos=None):
     import smtplib
+    import mimetypes
+    from email import encoders
     from email.mime.multipart import MIMEMultipart
     from email.mime.text import MIMEText
-    from email.mime.application import MIMEApplication
+    from email.mime.base import MIMEBase
 
     host = _get_config("smtp_host", "")
     port = int(_get_config("smtp_port", "587") or 587)
@@ -1113,7 +1146,11 @@ def _enviar_email(para, asunto, cuerpo, adjuntos=None):
     msg["Subject"] = asunto
     msg.attach(MIMEText(cuerpo, "plain", "utf-8"))
     for nombre, contenido in (adjuntos or []):
-        part = MIMEApplication(contenido, _subtype="pdf")
+        ctype = mimetypes.guess_type(nombre)[0] or "application/octet-stream"
+        maintype, subtype = ctype.split("/", 1)
+        part = MIMEBase(maintype, subtype)
+        part.set_payload(contenido)
+        encoders.encode_base64(part)
         part.add_header("Content-Disposition", "attachment", filename=nombre)
         msg.attach(part)
     with smtplib.SMTP(host, port, timeout=30) as s:
@@ -1151,19 +1188,28 @@ def factura_enviar(factura_id: int, req: dict, conn = Depends(get_conn)):
     adjuntos = [(f"factura_{f['numero']}.pdf", pdf)]
     if req.get("adjuntar_docs") and f["trip_id"]:
         import base64
+        import os
         from services.documentos import _leer_archivo
         docs = conn.execute(
-            "SELECT name, storage_key FROM files WHERE trip_id=? AND storage_key IS NOT NULL ORDER BY ftime DESC",
+            "SELECT name, storage_key, sha256, tipo_documento, mime FROM files "
+            "WHERE trip_id=? AND storage_key IS NOT NULL AND anulado_at IS NULL "
+            "AND LOWER(COALESCE(tipo_documento,'')) IN ('cmr','carta_porte','albaran') "
+            "ORDER BY ftime DESC",
             (f["trip_id"],),
         ).fetchall()
         for d in docs:
-            b64 = _leer_archivo(d["storage_key"])
+            b64 = _leer_archivo(d["storage_key"], d["sha256"] or "")
             if not b64:
                 continue
             try:
-                adjuntos.append((d["name"] or "documento.pdf", base64.b64decode(b64)))
+                raw = base64.b64decode(b64)
             except Exception:
                 continue
+            nombre = d["name"] or "documento"
+            if not os.path.splitext(nombre)[1]:
+                ext = ".pdf" if (d["mime"] or "").startswith("application/pdf") else ".bin"
+                nombre += ext
+            adjuntos.append((nombre, raw))
     try:
         _enviar_email(email_to, asunto, cuerpo, adjuntos)
     except Exception as e:

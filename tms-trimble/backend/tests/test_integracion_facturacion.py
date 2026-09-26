@@ -269,3 +269,82 @@ def test_emitir_borrador_fecha_hoy(scratch_db):
         assert row["fecha_operacion"] == "2025-01-01"
     finally:
         main._tenant_ctx.reset(tok)
+
+
+@pytest.mark.integration
+def test_facturar_duplicado_409(scratch_db):
+    """Facturar dos veces el mismo viaje (agrupada) → la 2ª da 409 y solo hay 1 emitida."""
+    from routers.contabilidad import contabilidad_factura_agrupada
+
+    tok, conn = _conn(scratch_db)
+    try:
+        _trip(conn, "T-DUP", precio=100, iva=21, cliente_id=1)
+        r1 = contabilidad_factura_agrupada({"trip_ids": ["T-DUP"], "force": True}, conn)
+        assert r1["ok"] is True
+        with pytest.raises(HTTPException) as e:
+            contabilidad_factura_agrupada({"trip_ids": ["T-DUP"], "force": True}, conn)
+        assert e.value.status_code == 409
+        n = conn.execute(
+            "SELECT count(*) AS n FROM finanzas.facturas "
+            "WHERE trip_id='T-DUP' AND COALESCE(estado,'')<>'borrador'"
+        ).fetchone()["n"]
+        assert n == 1
+    finally:
+        main._tenant_ctx.reset(tok)
+
+
+@pytest.mark.integration
+def test_generar_factura_duplicado_409(scratch_db):
+    """POST /facturas/{trip_id} dos veces → la 2ª da 409 y solo hay 1 emitida."""
+    from routers.contabilidad import contabilidad_generar_factura
+
+    tok, conn = _conn(scratch_db)
+    try:
+        _trip(conn, "T-SINGLE", precio=100, iva=21, cliente_id=1)
+        r1 = contabilidad_generar_factura("T-SINGLE", {"force": True}, conn)
+        assert r1["ok"] is True
+        # La llamada anterior cerró conn; usamos una conexión nueva.
+        conn2 = main._db()
+        conn2.set_autocommit(False)
+        with pytest.raises(HTTPException) as e:
+            contabilidad_generar_factura("T-SINGLE", {"force": True}, conn2)
+        assert e.value.status_code == 409
+        n = conn2.execute(
+            "SELECT count(*) AS n FROM finanzas.facturas "
+            "WHERE trip_id='T-SINGLE' AND COALESCE(estado,'')<>'borrador'"
+        ).fetchone()["n"]
+        assert n == 1
+        conn2.close()
+    finally:
+        main._tenant_ctx.reset(tok)
+
+
+@pytest.mark.integration
+def test_facturar_no_entregado_409(scratch_db):
+    """Un viaje no entregado → 409 (backend, no solo la pantalla)."""
+    from routers.contabilidad import contabilidad_factura_agrupada
+
+    tok, conn = _conn(scratch_db)
+    try:
+        _trip(conn, "T-TRANS", estado="En_Transito", precio=100, iva=21, cliente_id=1)
+        with pytest.raises(HTTPException) as e:
+            contabilidad_factura_agrupada({"trip_ids": ["T-TRANS"], "force": True}, conn)
+        assert e.value.status_code == 409
+    finally:
+        main._tenant_ctx.reset(tok)
+
+
+@pytest.mark.integration
+def test_facturar_anulado_409(scratch_db):
+    """Un viaje anulado → 409."""
+    from routers.contabilidad import contabilidad_factura_agrupada
+
+    tok, conn = _conn(scratch_db)
+    try:
+        _trip(conn, "T-ANU", estado="Entregado", precio=100, iva=21, cliente_id=1)
+        conn.execute("UPDATE operaciones.trips SET anulado_at='2026-09-26' WHERE codigo='T-ANU'")
+        with pytest.raises(HTTPException) as e:
+            contabilidad_factura_agrupada({"trip_ids": ["T-ANU"], "force": True}, conn)
+        assert e.value.status_code == 409
+    finally:
+        main._tenant_ctx.reset(tok)

@@ -114,7 +114,8 @@ export function FacturacionPage() {
   const [selViajes, setSelViajes] = useState<Set<string>>(new Set());
   const [toast, setToast] = useState<{ tipo: "ok" | "error"; texto: string } | null>(null);
 
-  const [confirmar, setConfirmar] = useState<{ titulo: string; detalle: string; faltan?: string[]; accion: () => void } | null>(null);
+  const [confirmar, setConfirmar] = useState<{ titulo: string; detalle: string; faltan?: string[]; tipo?: "emitir" | "facturar" | "cobrar"; accion: () => void } | null>(null);
+  const [fechaCobro, setFechaCobro] = useState(() => new Date().toISOString().slice(0, 10));
 
   const [enviando, setEnviando] = useState<Factura | null>(null);
   const [fEmail, setFEmail] = useState("");
@@ -165,19 +166,35 @@ export function FacturacionPage() {
   }
 
   const emitirMut = useMutation({
-    mutationFn: async (ids: number[]) => {
-      for (const id of ids) await api(EMITIR_BORRADOR(id), { method: "POST", body: JSON.stringify({}) });
+    mutationFn: async ({ ids, force }: { ids: number[]; force: boolean }) => {
+      const okIds: number[] = [];
+      const fallidos: { id: number; error: string }[] = [];
+      for (const id of ids) {
+        try {
+          await api(EMITIR_BORRADOR(id), { method: "POST", body: JSON.stringify({ force }) });
+          okIds.push(id);
+        } catch (e) {
+          fallidos.push({ id, error: e instanceof ApiError ? e.message : "Error" });
+        }
+      }
+      return { ok: okIds.length, fallidos };
     },
-    onSuccess: () => { ok("Borrador(es) emitido(s)."); setSelBorradores(new Set()); refrescar(); },
+    onSuccess: (r) => {
+      if (r.fallidos.length === 0) ok(`Emitida(s) ${r.ok} factura(s).`);
+      else ok(`Emitidas ${r.ok}, fallidas ${r.fallidos.length}: ${r.fallidos.map((f) => f.error).join("; ")}`);
+      setSelBorradores(new Set());
+      refrescar();
+    },
     onError: err,
   });
 
   function pedirEmitir(b: Borrador) {
+    const force = b.documentacion?.ok === false;
     setConfirmar({
       titulo: "Emitir factura",
       detalle: `${b.cliente_nombre || "Cliente"} — 1 viaje · Base ${fmtEUR(b.base)} · IVA ${b.iva}% · Total ${fmtEUR(b.total)} · Fecha ${fmtFecha(new Date().toISOString())}`,
       faltan: b.documentacion?.ok === false ? b.documentacion.faltan : undefined,
-      accion: () => emitirMut.mutate([b.id]),
+      accion: () => emitirMut.mutate({ ids: [b.id], force }),
     });
   }
 
@@ -187,11 +204,12 @@ export function FacturacionPage() {
     const base = lista.reduce((s, b) => s + Number(b.base || 0), 0);
     const total = lista.reduce((s, b) => s + Number(b.total || 0), 0);
     const faltan = [...new Set(lista.flatMap((b) => (b.documentacion?.ok === false ? b.documentacion.faltan : [])))];
+    const force = lista.some((b) => b.documentacion?.ok === false);
     setConfirmar({
       titulo: `Emitir ${lista.length} borrador(es)`,
       detalle: `${[...new Set(lista.map((b) => b.cliente_nombre))].join(", ") || "varios"} — Base ${fmtEUR(base)} · Total ${fmtEUR(total)}`,
       faltan: faltan.length ? faltan : undefined,
-      accion: () => emitirMut.mutate(lista.map((b) => b.id)),
+      accion: () => emitirMut.mutate({ ids: lista.map((b) => b.id), force }),
     });
   }
 
@@ -219,15 +237,17 @@ export function FacturacionPage() {
   }
 
   const cobrarMut = useMutation({
-    mutationFn: (id: number) => api(REST_FACTURA_COBRAR(id), { method: "POST", body: JSON.stringify({}) }),
+    mutationFn: (id: number) => api(REST_FACTURA_COBRAR(id), { method: "POST", body: JSON.stringify({ fecha_cobro: fechaCobro }) }),
     onSuccess: () => { ok("Factura marcada como cobrada."); refrescar(); },
     onError: err,
   });
 
   function pedirCobrar(f: Factura) {
+    setFechaCobro(new Date().toISOString().slice(0, 10));
     setConfirmar({
       titulo: `Marcar cobrada ${f.numero}`,
       detalle: `${f.cliente_nombre || "Cliente"} — Total ${fmtEUR(f.total)}`,
+      tipo: "cobrar",
       accion: () => cobrarMut.mutate(f.id),
     });
   }
@@ -489,6 +509,12 @@ export function FacturacionPage() {
               <div className="font-semibold">Falta documentación:</div>
               <div>{confirmar.faltan.join(", ")}</div>
               <div className="mt-1 text-xs text-red-600">Se facturará igualmente (forzado).</div>
+            </div>
+          )}
+          {confirmar?.tipo === "cobrar" && (
+            <div className="space-y-1">
+              <Label htmlFor="f-cobro">Fecha de cobro</Label>
+              <Input id="f-cobro" type="date" value={fechaCobro} onChange={(e) => setFechaCobro(e.target.value)} />
             </div>
           )}
           <DialogFooter>

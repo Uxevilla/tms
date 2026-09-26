@@ -1,12 +1,8 @@
 import { test, expect, type Page } from "@playwright/test";
 import { Client } from "pg";
 
-// Facturación es solo admin (guard en frontend + require_role en backend).
-test.beforeEach(async ({}, testInfo) => {
-  test.skip(testInfo.project.name === "dispatcher", "Facturación es solo admin");
-});
-
 // Auth vía storageState (global-setup). El backend corre en modo falso de Trimble.
+// Facturación es solo admin: cada test hace test.skip(project !== "admin").
 
 function dbClient(): Client {
   return new Client({
@@ -70,7 +66,8 @@ async function cuentasAsiento(asientoId: number): Promise<string[]> {
   }
 }
 
-test("entregar viaje → Pendientes → facturar → F-<año>-NNNN con asiento 430/705/477", async ({ page }) => {
+test("entregar viaje → Pendientes → facturar → F-<año>-NNNN con asiento 430/705/477", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "admin", "Facturación es solo admin");
   const codigo = `E2E-FACT-${Date.now()}`;
   await insertarViaje(codigo, "E2E-Cliente-Fact", 200);
 
@@ -99,7 +96,8 @@ test("entregar viaje → Pendientes → facturar → F-<año>-NNNN con asiento 4
   await limpiar([codigo]);
 });
 
-test("cobrar factura emitida → asiento 572/430", async ({ page }) => {
+test("cobrar factura emitida → asiento 572/430", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "admin", "Facturación es solo admin");
   const codigo = `E2E-COB-${Date.now()}`;
   await insertarViaje(codigo, "E2E-Cliente-Cob", 150);
 
@@ -138,7 +136,8 @@ test("cobrar factura emitida → asiento 572/430", async ({ page }) => {
   await limpiar([codigo]);
 });
 
-test("agrupar viajes de 2 clientes distintos → error visible", async ({ page }) => {
+test("agrupar viajes de 2 clientes distintos → error visible", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "admin", "Facturación es solo admin");
   const a = `E2E-AGR-A-${Date.now()}`;
   const b = `E2E-AGR-B-${Date.now()}`;
   await insertarViaje(a, "E2E-Cliente-A", 100);
@@ -157,4 +156,10 @@ test("agrupar viajes de 2 clientes distintos → error visible", async ({ page }
   await expect(page.getByText("Viajes de clientes distintos.")).toBeVisible();
 
   await limpiar([a, b]);
+});
+
+test("dispatcher: /facturacion → 'No tienes permiso'", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "dispatcher", "Solo dispatcher");
+  await page.goto("/facturacion");
+  await expect(page.getByText("No tienes permiso")).toBeVisible();
 });
