@@ -170,6 +170,10 @@ CREATE TABLE IF NOT EXISTS cfg_reglas (
     id BIGSERIAL PRIMARY KEY, report_id TEXT NOT NULL, question_id TEXT, option_id TEXT,
     estado TEXT NOT NULL, activa BOOLEAN NOT NULL DEFAULT true, nota TEXT
 );
+CREATE TABLE IF NOT EXISTS cfg_docs_requeridos (
+    id BIGSERIAL PRIMARY KEY, cliente_id INTEGER, tipo_documento TEXT NOT NULL,
+    requerido BOOLEAN NOT NULL DEFAULT true, orden INT DEFAULT 0
+);
 CREATE TABLE IF NOT EXISTS mensajes (
     id TEXT PRIMARY KEY, trip_id TEXT, tipo TEXT, messagetype TEXT,
     originid TEXT, source TEXT, terminal TEXT, subject TEXT, body TEXT,

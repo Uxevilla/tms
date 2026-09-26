@@ -10,6 +10,7 @@ import urllib.request
 import config
 from db import *
 from services.documentos import _guardar_archivo, _leer_archivo
+from services.tipos_documento import clasificar_documento
 from core import *
 from security import *
 from tenancy import *
@@ -147,22 +148,25 @@ def _save_file(trip_id, name, ftype, ftime, source, driver, lid, content_b64, er
     - si falla (error) → estado 'error' + ultimo_error + intentos++ (se reintenta en el siguiente ciclo).
     """
     g = _guardar_archivo(name, content_b64) if content_b64 else None
+    tipo = clasificar_documento(ftype, name)
     with _db() as conn:
         if g:
             storage_key, sha, nbytes, mime = g
             conn.execute(
-                "INSERT INTO files (trip_id, name, ftype, ftime, source, driver, lid, storage_key, sha256, bytes, mime, estado_descarga, intentos) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,'descargado',1) ON CONFLICT (name) DO UPDATE SET "
+                "INSERT INTO files (trip_id, name, ftype, ftime, source, driver, lid, storage_key, sha256, bytes, mime, estado_descarga, intentos, tipo_documento) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,'descargado',1,?) ON CONFLICT (name) DO UPDATE SET "
                 "estado_descarga='descargado', storage_key=EXCLUDED.storage_key, sha256=EXCLUDED.sha256, "
-                "bytes=EXCLUDED.bytes, mime=EXCLUDED.mime, intentos=files.intentos+1, ultimo_error=NULL",
-                (trip_id, name, ftype, ftime, source, driver, lid, storage_key, sha, nbytes, mime),
+                "bytes=EXCLUDED.bytes, mime=EXCLUDED.mime, intentos=files.intentos+1, ultimo_error=NULL, "
+                "tipo_documento=EXCLUDED.tipo_documento",
+                (trip_id, name, ftype, ftime, source, driver, lid, storage_key, sha, nbytes, mime, tipo),
             )
         else:
             conn.execute(
-                "INSERT INTO files (trip_id, name, ftype, ftime, source, driver, lid, estado_descarga, intentos, ultimo_error) "
-                "VALUES (?,?,?,?,?,?,?,'error',1,?) ON CONFLICT (name) DO UPDATE SET "
-                "estado_descarga='error', intentos=files.intentos+1, ultimo_error=EXCLUDED.ultimo_error",
-                (trip_id, name, ftype, ftime, source, driver, lid, error or "descarga vacía"),
+                "INSERT INTO files (trip_id, name, ftype, ftime, source, driver, lid, estado_descarga, intentos, ultimo_error, tipo_documento) "
+                "VALUES (?,?,?,?,?,?,?,'error',1,?,?) ON CONFLICT (name) DO UPDATE SET "
+                "estado_descarga='error', intentos=files.intentos+1, ultimo_error=EXCLUDED.ultimo_error, "
+                "tipo_documento=EXCLUDED.tipo_documento",
+                (trip_id, name, ftype, ftime, source, driver, lid, error or "descarga vacía", tipo),
             )
         conn.commit()
 

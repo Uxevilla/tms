@@ -485,6 +485,31 @@ def trip_files(trip_id: str, conn = Depends(get_conn)):
     return {"archivos": out}
 
 
+@router.get("/api/trips/{trip_id}/documentacion")
+def trip_documentacion(trip_id: str, conn = Depends(get_conn)):
+    """Checklist de facturación: qué documentos faltan para facturar el viaje."""
+    from services.tipos_documento import checklist_facturacion, docs_requeridos_default
+    trip = conn.execute(
+        "SELECT cliente_id FROM operaciones.trips WHERE codigo=?", (trip_id,)
+    ).fetchone()
+    presentes = [r["tipo_documento"] for r in conn.execute(
+        "SELECT DISTINCT tipo_documento FROM files "
+        "WHERE trip_id=? AND tipo_documento IS NOT NULL AND tipo_documento<>'tacografo'",
+        (trip_id,),
+    ).fetchall()]
+    requeridos = None
+    if trip and trip["cliente_id"]:
+        req = conn.execute(
+            "SELECT tipo_documento FROM cfg_docs_requeridos "
+            "WHERE cliente_id=? AND requerido ORDER BY orden",
+            (trip["cliente_id"],),
+        ).fetchall()
+        requeridos = [r["tipo_documento"] for r in req]
+    if not requeridos:
+        requeridos = docs_requeridos_default()
+    return checklist_facturacion(presentes, requeridos)
+
+
 
 
 @router.get("/api/trips/{trip_id}/paradas")

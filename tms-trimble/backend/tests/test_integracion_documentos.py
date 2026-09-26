@@ -172,3 +172,26 @@ def test_sha256_no_cuadra_devuelve_vacio(monkeypatch, tmp_path):
     storage_key, sha, _, _ = _guardar_archivo("d.pdf", _PDF_MIN)
     assert _leer_archivo(storage_key, sha) != ""          # sha correcto → sirve el binario
     assert _leer_archivo(storage_key, "0" * 64) == ""     # sha alterado → '' (alerta)
+
+
+@pytest.mark.integration
+def test_checklist_documentacion(scratch_db):
+    """PR 0.4: checklist de facturación — faltan los tipos no presentes."""
+    from routers.viajes import trip_documentacion
+
+    tok, conn = _conn(scratch_db)
+    try:
+        conn.execute(
+            "INSERT INTO operaciones.trips (codigo, cliente_id, estado) VALUES ('TRIP-DOC', 1, 'Entregado')"
+        )
+        conn.execute(
+            "INSERT INTO files (name, trip_id, tipo_documento, estado_descarga) "
+            "VALUES ('cmr1.pdf', 'TRIP-DOC', 'CMR', 'descargado')"
+        )
+        res = trip_documentacion("TRIP-DOC", conn)
+        assert res["ok"] is False
+        assert "carta_porte" in res["faltan"]
+        assert "CMR" in res["presentes"]
+    finally:
+        conn.close()
+        main._tenant_ctx.reset(tok)
