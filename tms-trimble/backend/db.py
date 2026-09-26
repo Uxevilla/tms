@@ -142,6 +142,38 @@ CREATE TABLE IF NOT EXISTS files (
     id SERIAL PRIMARY KEY, trip_id TEXT, vehiculo_id TEXT, name TEXT UNIQUE, ftype INTEGER, ftime TEXT,
     source TEXT, driver TEXT, lid TEXT, content_b64 TEXT, formato TEXT
 );
+CREATE TABLE IF NOT EXISTS documentos_auditoria (
+    id BIGSERIAL PRIMARY KEY, file_id INT, accion TEXT, usuario TEXT, detalle TEXT, creado TIMESTAMPTZ DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS lid_map (
+    lid TEXT PRIMARY KEY, trip_id TEXT, task_id TEXT, terminal TEXT, desde TEXT
+);
+CREATE TABLE IF NOT EXISTS qp_definiciones (
+    id BIGSERIAL PRIMARY KEY, report_id TEXT NOT NULL, version TEXT NOT NULL DEFAULT '',
+    nombre TEXT, firstquestion TEXT, activa BOOLEAN NOT NULL DEFAULT true,
+    xml_original TEXT, importado_por TEXT, importado_en TIMESTAMPTZ DEFAULT now(),
+    UNIQUE (report_id, version)
+);
+CREATE TABLE IF NOT EXISTS qp_preguntas (
+    id BIGSERIAL PRIMARY KEY, definicion_id BIGINT NOT NULL REFERENCES qp_definiciones(id) ON DELETE CASCADE,
+    question_id TEXT NOT NULL, texto TEXT, selectionmodel TEXT DEFAULT 'single',
+    hide BOOLEAN DEFAULT false, orden INT,
+    UNIQUE (definicion_id, question_id)
+);
+CREATE TABLE IF NOT EXISTS qp_opciones (
+    id BIGSERIAL PRIMARY KEY, pregunta_id BIGINT NOT NULL REFERENCES qp_preguntas(id) ON DELETE CASCADE,
+    option_id TEXT NOT NULL, texto TEXT, valuetype TEXT DEFAULT 'text', inputmask TEXT DEFAULT '',
+    readonly BOOLEAN DEFAULT false, nextquestion TEXT DEFAULT 'END', orden INT,
+    UNIQUE (pregunta_id, option_id)
+);
+CREATE TABLE IF NOT EXISTS cfg_reglas (
+    id BIGSERIAL PRIMARY KEY, report_id TEXT NOT NULL, question_id TEXT, option_id TEXT,
+    estado TEXT NOT NULL, activa BOOLEAN NOT NULL DEFAULT true, nota TEXT
+);
+CREATE TABLE IF NOT EXISTS cfg_docs_requeridos (
+    id BIGSERIAL PRIMARY KEY, cliente_id INTEGER, tipo_documento TEXT NOT NULL,
+    requerido BOOLEAN NOT NULL DEFAULT true, orden INT DEFAULT 0
+);
 CREATE TABLE IF NOT EXISTS mensajes (
     id TEXT PRIMARY KEY, trip_id TEXT, tipo TEXT, messagetype TEXT,
     originid TEXT, source TEXT, terminal TEXT, subject TEXT, body TEXT,
@@ -741,7 +773,8 @@ SELECT t.codigo AS id, t.id AS _pk, t.codigo,
        t.iva, t.cliente_id, t.conductor_id, t.payload, t.fecha_actualizacion,
        t.fecha_esperada_carga, t.fecha_esperada_descarga, t.referencia, t.origen_id,
        t.destino_id, t.modo_tarifa, t.tarifa_id, t.precio_unitario, t.kilos,
-       t.subcontratado, t.proveedor_id, t.coste
+       t.subcontratado, t.proveedor_id, t.coste,
+       t.anulado_at, t.anulado_por, t.anulado_motivo
 FROM operaciones.trips t;
 """
 
@@ -817,8 +850,42 @@ def _db():
             cur.execute("ALTER TABLE flota.vehiculos ADD COLUMN IF NOT EXISTS fecha_alta TEXT")
             cur.execute("ALTER TABLE flota.vehiculos ADD COLUMN IF NOT EXISTS cuota_mensual NUMERIC(12,2) DEFAULT 0")
             cur.execute("ALTER TABLE files ADD COLUMN IF NOT EXISTS vehiculo_id TEXT")
+            cur.execute("ALTER TABLE files ADD COLUMN IF NOT EXISTS estado_descarga TEXT DEFAULT 'descargado'")
+            cur.execute("ALTER TABLE files ADD COLUMN IF NOT EXISTS intentos INT DEFAULT 0")
+            cur.execute("ALTER TABLE files ADD COLUMN IF NOT EXISTS ultimo_error TEXT")
+            cur.execute("ALTER TABLE files ADD COLUMN IF NOT EXISTS task_id TEXT")
+            cur.execute("ALTER TABLE files ADD COLUMN IF NOT EXISTS mensaje_id TEXT")
+            cur.execute("ALTER TABLE files ADD COLUMN IF NOT EXISTS report_id TEXT")
+            cur.execute("ALTER TABLE files ADD COLUMN IF NOT EXISTS question_id TEXT")
+            cur.execute("ALTER TABLE files ADD COLUMN IF NOT EXISTS tipo_documento TEXT")
+            cur.execute("ALTER TABLE files ADD COLUMN IF NOT EXISTS mime TEXT")
+            cur.execute("ALTER TABLE files ADD COLUMN IF NOT EXISTS paginas INT")
+            cur.execute("ALTER TABLE files ADD COLUMN IF NOT EXISTS lat DOUBLE PRECISION")
+            cur.execute("ALTER TABLE files ADD COLUMN IF NOT EXISTS lng DOUBLE PRECISION")
+            cur.execute("ALTER TABLE files ADD COLUMN IF NOT EXISTS vinculado_por TEXT")
+            cur.execute("ALTER TABLE files ADD COLUMN IF NOT EXISTS revisado_at TIMESTAMPTZ")
+            cur.execute("ALTER TABLE files ADD COLUMN IF NOT EXISTS revisado_por TEXT")
+            cur.execute("ALTER TABLE files ADD COLUMN IF NOT EXISTS anulado_at TIMESTAMPTZ")
+            cur.execute("ALTER TABLE files ADD COLUMN IF NOT EXISTS anulado_por TEXT")
+            cur.execute("ALTER TABLE files ADD COLUMN IF NOT EXISTS anulado_motivo TEXT")
             cur.execute("ALTER TABLE finanzas.asientos ADD COLUMN IF NOT EXISTS origen_id TEXT")
             cur.execute("ALTER TABLE mensajes ADD COLUMN IF NOT EXISTS terminal TEXT")
+            cur.execute("ALTER TABLE mensajes ADD COLUMN IF NOT EXISTS clase TEXT")
+            cur.execute("ALTER TABLE mensajes ADD COLUMN IF NOT EXISTS direccion TEXT")
+            cur.execute("ALTER TABLE mensajes ADD COLUMN IF NOT EXISTS vehiculo_codigo TEXT")
+            cur.execute("ALTER TABLE mensajes ADD COLUMN IF NOT EXISTS did TEXT")
+            cur.execute("ALTER TABLE mensajes ADD COLUMN IF NOT EXISTS conductor_id INTEGER")
+            cur.execute("ALTER TABLE mensajes ADD COLUMN IF NOT EXISTS report_id TEXT")
+            cur.execute("ALTER TABLE mensajes ADD COLUMN IF NOT EXISTS report_version TEXT")
+            cur.execute("ALTER TABLE mensajes ADD COLUMN IF NOT EXISTS respuestas JSONB")
+            cur.execute("ALTER TABLE mensajes ADD COLUMN IF NOT EXISTS aty TEXT")
+            cur.execute("ALTER TABLE mensajes ADD COLUMN IF NOT EXISTS lid TEXT")
+            cur.execute("ALTER TABLE mensajes ADD COLUMN IF NOT EXISTS task_id TEXT")
+            cur.execute("ALTER TABLE mensajes ADD COLUMN IF NOT EXISTS estado TEXT")
+            cur.execute("ALTER TABLE mensajes ADD COLUMN IF NOT EXISTS estado_time TIMESTAMPTZ")
+            cur.execute("ALTER TABLE mensajes ADD COLUMN IF NOT EXISTS leido_operador_at TIMESTAMPTZ")
+            cur.execute("ALTER TABLE mensajes ADD COLUMN IF NOT EXISTS leido_operador_por TEXT")
+            cur.execute("ALTER TABLE mensajes ADD COLUMN IF NOT EXISTS incidencia BOOLEAN NOT NULL DEFAULT false")
             cur.execute("ALTER TABLE finanzas.gastos_vehiculos ADD COLUMN IF NOT EXISTS base_imponible NUMERIC(12,2) DEFAULT 0")
             cur.execute("ALTER TABLE tacografo_dstat ADD COLUMN IF NOT EXISTS decode_ok BOOLEAN NOT NULL DEFAULT true")
             cur.execute("ALTER TABLE finanzas.gastos_vehiculos ADD COLUMN IF NOT EXISTS iva NUMERIC(6,2) DEFAULT 21")
@@ -833,6 +900,9 @@ def _db():
             cur.execute("ALTER TABLE flota.vehiculos ADD COLUMN IF NOT EXISTS fecha_proxima_revision TEXT")
             cur.execute("ALTER TABLE operaciones.trips ADD COLUMN IF NOT EXISTS fecha_actualizacion TEXT")
             cur.execute("ALTER TABLE operaciones.trips ADD COLUMN IF NOT EXISTS fecha_esperada_carga TEXT")
+            cur.execute("ALTER TABLE operaciones.trips ADD COLUMN IF NOT EXISTS anulado_at TIMESTAMPTZ")
+            cur.execute("ALTER TABLE operaciones.trips ADD COLUMN IF NOT EXISTS anulado_por TEXT")
+            cur.execute("ALTER TABLE operaciones.trips ADD COLUMN IF NOT EXISTS anulado_motivo TEXT")
             cur.execute("ALTER TABLE operaciones.trips ADD COLUMN IF NOT EXISTS fecha_esperada_descarga TEXT")
             cur.execute("ALTER TABLE operaciones.trips ADD COLUMN IF NOT EXISTS km_vacio NUMERIC(10,1) DEFAULT 0")
             cur.execute("ALTER TABLE operaciones.trips ADD COLUMN IF NOT EXISTS semirremolque_id TEXT")
