@@ -75,7 +75,7 @@ def planificacion(desde: str = "", hasta: str = "", conn=Depends(get_conn)):
         f"SELECT id, codigo, terminal, semirremolque_id, remolque_id, conductor, conductor_id, "
         f"estado, origen, destino, cliente, matricula, kilos, tiempo_min, payload, "
         f"fecha_esperada_carga, fecha_esperada_descarga FROM trips "
-        f"WHERE COALESCE(estado,'') NOT IN {_ESTADOS_FINALES_SQL} ORDER BY codigo",
+        f"WHERE COALESCE(estado,'') NOT IN {_ESTADOS_FINALES_SQL} AND anulado_at IS NULL ORDER BY codigo",
     ).fetchall()
 
     viajes = []
@@ -153,7 +153,7 @@ def _bloqueos_y_avisos(req: ValidarRequest, conn) -> tuple:
     if terminal and req.inicio and req.fin:
         otros = conn.execute(
             f"SELECT id, fecha_esperada_carga, fecha_esperada_descarga FROM trips "
-            f"WHERE terminal = ? AND id != ? AND COALESCE(estado,'') NOT IN {_ESTADOS_FINALES_SQL}",
+            f"WHERE terminal = ? AND id != ? AND COALESCE(estado,'') NOT IN {_ESTADOS_FINALES_SQL} AND anulado_at IS NULL",
             (terminal, req.trip_id or ""),
         ).fetchall()
         for o in otros:
@@ -256,6 +256,8 @@ def mover(req: MoverRequest, conn=Depends(get_conn)):
     row = conn.execute("SELECT * FROM trips WHERE id=?", (trip_id,)).fetchone()
     if not row:
         raise HTTPException(status_code=404, detail={"error": f"Viaje {trip_id} no encontrado"})
+    if row["anulado_at"]:
+        raise HTTPException(status_code=409, detail={"error": "El viaje está anulado."})
 
     estado = (row["estado"] or "").strip()
     if estado.lower() in _ESTADOS_FINALES:

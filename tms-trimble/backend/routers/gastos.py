@@ -328,6 +328,7 @@ def rentabilidad_flota(desde: str = "", hasta: str = "", conn = Depends(get_conn
         "  SELECT terminal AS vehiculo_id, COALESCE(SUM(precio),0) AS ing "
         "  FROM trips "
         "  WHERE LOWER(COALESCE(estado,'')) = 'entregado' "
+        "    AND anulado_at IS NULL "
         "    AND substr(COALESCE(fecha_actualizacion, creado),1,10) >= ? "
         "    AND substr(COALESCE(fecha_actualizacion, creado),1,10) <= ? "
         "  GROUP BY terminal"

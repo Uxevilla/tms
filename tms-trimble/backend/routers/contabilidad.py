@@ -673,7 +673,8 @@ def contabilidad_explotacion_vehiculos(conn = Depends(get_conn)):
     """Explotación por vehículo: ingresos y gastos directos por tractora + gastos generales repartibles."""
     trips = conn.execute(
         "SELECT COALESCE(NULLIF(terminal,''),'General') AS veh, COALESCE(SUM(precio),0) AS ingresos, "
-        "COALESCE(SUM(COALESCE(km_real, km_total)),0) AS km, COALESCE(SUM(km_vacio),0) AS km_vacio FROM trips GROUP BY 1"
+        "COALESCE(SUM(COALESCE(km_real, km_total)),0) AS km, COALESCE(SUM(km_vacio),0) AS km_vacio "
+        "FROM trips WHERE anulado_at IS NULL GROUP BY 1"
     ).fetchall()
     gastos = conn.execute(
         "SELECT COALESCE(NULLIF(terminal,''),'General') AS veh, COALESCE(SUM(importe),0) AS gastos FROM finanzas.gastos GROUP BY 1"
@@ -711,7 +712,7 @@ def contabilidad_reconciliacion_km(desde: str = "", hasta: str = "", conn = Depe
     km_vacio    = km_odometro - km_viajes (km huérfano: maniobras/reposicionamiento/viajes sin registrar).
     """
 
-    conds_t = ["COALESCE(NULLIF(t.terminal,''),'') <> ''"]
+    conds_t = ["COALESCE(NULLIF(t.terminal,''),'') <> ''", "t.anulado_at IS NULL"]
     params_t = []
     if desde:
         conds_t.append("substr(COALESCE(t.fecha_actualizacion, t.creado),1,10) >= ?"); params_t.append(desde)
@@ -1027,7 +1028,7 @@ def contabilidad_borradores(user: dict = Depends(require_role(["admin"])), conn 
         "SELECT f.id, f.numero, f.fecha, f.trip_id, f.cliente_id, f.cliente_nombre, f.base, f.iva, "
         "f.cuota_iva, f.total, f.coste, f.margen, f.creado, t.origen, t.destino "
         "FROM finanzas.facturas f LEFT JOIN trips t ON t.id = f.trip_id "
-        "WHERE COALESCE(f.estado,'')='borrador' ORDER BY f.creado DESC"
+        "WHERE COALESCE(f.estado,'')='borrador' AND t.anulado_at IS NULL ORDER BY f.creado DESC"
     ).fetchall()
     salida = []
     for r in rows:
@@ -1076,6 +1077,11 @@ def contabilidad_emitir_borrador(factura_id: int,
     if (f["estado"] or "").lower() != "borrador":
         conn.close()
         raise HTTPException(status_code=409, detail={"error": "La factura ya no está en borrador"})
+    if f["trip_id"]:
+        t = conn.execute("SELECT anulado_at FROM trips WHERE id=?", (f["trip_id"],)).fetchone()
+        if t and t["anulado_at"]:
+            conn.close()
+            raise HTTPException(status_code=409, detail={"error": "El viaje está anulado."})
     force = bool((req or {}).get("force"))
     if not force and f["trip_id"]:
         doc = _documentacion_viaje(conn, f["trip_id"], f["cliente_id"])

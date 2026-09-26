@@ -91,6 +91,7 @@ def _viajes_snapshot() -> dict:
             "(SELECT COUNT(*) FROM operaciones.tramos WHERE trip_id = t.id) AS n_tramos "
             "FROM trips t "
             "LEFT JOIN vehiculos v ON v.codigo = t.terminal "
+            "WHERE t.anulado_at IS NULL "
             "ORDER BY t.creado DESC NULLS LAST LIMIT 500"
         ).fetchall()
         # Posiciones (última por vehículo) en consulta aparte: si el hypertable de

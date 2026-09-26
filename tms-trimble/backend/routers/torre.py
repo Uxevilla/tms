@@ -188,6 +188,7 @@ def atencion(user: dict = Depends(require_role(["admin", "dispatcher"])), conn: 
         "SELECT codigo, matricula, cliente, origen, destino, fecha_esperada_descarga, estado "
         "FROM operaciones.trips "
         "WHERE COALESCE(estado,'') NOT IN ('Entregado','Cancelado','sin_asignar','planificado','') "
+        "AND anulado_at IS NULL "
         "AND fecha_esperada_descarga IS NOT NULL AND fecha_esperada_descarga != '' "
         "AND fecha_esperada_descarga < ? ORDER BY fecha_esperada_descarga ASC LIMIT 50",
         (hoy,),
@@ -276,7 +277,7 @@ def atencion(user: dict = Depends(require_role(["admin", "dispatcher"])), conn: 
     if es_admin:
         for r in conn.execute(
             "SELECT codigo, cliente, origen, destino, precio FROM operaciones.trips "
-            "WHERE estado = 'Entregado' AND (factura IS NULL OR factura = '') "
+            "WHERE estado = 'Entregado' AND (factura IS NULL OR factura = '') AND anulado_at IS NULL "
             "ORDER BY COALESCE(fecha_actualizacion, creado) DESC LIMIT 50",
         ).fetchall():
             facturacion_pendiente += float(r["precio"] or 0)
@@ -360,7 +361,7 @@ def atencion(user: dict = Depends(require_role(["admin", "dispatcher"])), conn: 
     # 8. envio_trimble_fallido: viaje en estado error.
     for r in conn.execute(
         "SELECT codigo, terminal, cliente, error FROM operaciones.trips "
-        "WHERE COALESCE(estado,'') = 'error' OR (error IS NOT NULL AND error != '') "
+        "WHERE (COALESCE(estado,'') = 'error' OR (error IS NOT NULL AND error != '')) AND anulado_at IS NULL "
         "ORDER BY COALESCE(fecha_actualizacion, creado) DESC LIMIT 50",
     ).fetchall():
         items.append(_item(
@@ -401,7 +402,7 @@ def buscar(q: Annotated[str, Query(max_length=80)] = "", limite: Annotated[int, 
     viaje_campos = "COALESCE(codigo,'') || ' ' || COALESCE(referencia,'') || ' ' || COALESCE(cliente,'') || ' ' || COALESCE(origen,'') || ' ' || COALESCE(destino,'')"
     for r in conn.execute(
         "SELECT codigo, referencia, cliente, origen, destino FROM operaciones.trips "
-        "WHERE " + _norm_sql(viaje_campos) + " LIKE ? "
+        "WHERE " + _norm_sql(viaje_campos) + " LIKE ? AND anulado_at IS NULL "
         "ORDER BY COALESCE(fecha_actualizacion, creado) DESC LIMIT ?",
         (patron, limite),
     ).fetchall():
@@ -475,13 +476,13 @@ def entidad_vehiculo(codigo: str, user: dict = Depends(require_role(["admin", "d
 
     viaje_actual = conn.execute(
         "SELECT codigo, estado, origen, destino, cliente, fecha_esperada_descarga FROM operaciones.trips "
-        "WHERE terminal = ? AND COALESCE(estado,'') NOT IN ('Entregado','Cancelado','sin_asignar','') "
+        "WHERE terminal = ? AND COALESCE(estado,'') NOT IN ('Entregado','Cancelado','sin_asignar','') AND anulado_at IS NULL "
         "ORDER BY creado DESC LIMIT 1", (veh,),
     ).fetchone()
 
     proximos = conn.execute(
         "SELECT codigo, estado, origen, destino, fecha_esperada_carga FROM operaciones.trips "
-        "WHERE terminal = ? AND (estado IN ('sin_asignar','planificado') OR estado IS NULL) "
+        "WHERE terminal = ? AND (estado IN ('sin_asignar','planificado') OR estado IS NULL) AND anulado_at IS NULL "
         "ORDER BY creado DESC LIMIT 5", (veh,),
     ).fetchall()
 
@@ -541,7 +542,7 @@ def entidad_vehiculo(codigo: str, user: dict = Depends(require_role(["admin", "d
         r = conn.execute(
             "SELECT "
             "  (SELECT COALESCE(SUM(COALESCE(t.precio,0)),0) FROM operaciones.trips t "
-            "   WHERE t.terminal = ? AND substr(COALESCE(t.fecha_actualizacion, t.creado),1,7) = ?) AS ingresos, "
+            "   WHERE t.terminal = ? AND t.anulado_at IS NULL AND substr(COALESCE(t.fecha_actualizacion, t.creado),1,7) = ?) AS ingresos, "
             "  (SELECT COALESCE(SUM(COALESCE(g.importe_total,0)),0) FROM finanzas.gastos_vehiculos g "
             "   WHERE g.vehiculo_id = ? AND substr(COALESCE(g.fecha,''),1,7) = ?) AS costes",
             (veh, mes, veh, mes),
@@ -638,13 +639,13 @@ def entidad_conductor(conductor_id: int, user: dict = Depends(require_role(["adm
 
     viaje_actual = conn.execute(
         "SELECT codigo, estado, origen, destino, fecha_esperada_descarga FROM operaciones.trips "
-        "WHERE conductor_id = ? AND COALESCE(estado,'') NOT IN ('Entregado','Cancelado','sin_asignar','') "
+        "WHERE conductor_id = ? AND COALESCE(estado,'') NOT IN ('Entregado','Cancelado','sin_asignar','') AND anulado_at IS NULL "
         "ORDER BY creado DESC LIMIT 1", (conductor_id,),
     ).fetchone()
 
     proximos = conn.execute(
         "SELECT codigo, estado, origen, destino, fecha_esperada_carga FROM operaciones.trips "
-        "WHERE conductor_id = ? AND (estado IN ('sin_asignar','planificado') OR estado IS NULL) "
+        "WHERE conductor_id = ? AND (estado IN ('sin_asignar','planificado') OR estado IS NULL) AND anulado_at IS NULL "
         "ORDER BY creado DESC LIMIT 5", (conductor_id,),
     ).fetchall()
 
