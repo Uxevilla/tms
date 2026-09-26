@@ -360,6 +360,8 @@ ALTER TABLE finanzas.asientos ADD COLUMN IF NOT EXISTS borrado_en TEXT;
 ALTER TABLE finanzas.facturas ADD COLUMN IF NOT EXISTS borrado BOOLEAN DEFAULT false;
 ALTER TABLE finanzas.facturas ADD COLUMN IF NOT EXISTS borrado_por TEXT;
 ALTER TABLE finanzas.facturas ADD COLUMN IF NOT EXISTS borrado_en TEXT;
+ALTER TABLE finanzas.facturas ADD COLUMN IF NOT EXISTS fecha_operacion TEXT;
+ALTER TABLE finanzas.facturas ADD COLUMN IF NOT EXISTS fecha_cobro TEXT;
 -- Docs: el binario sale de la BD a disco. storage_key + sha256 en la tabla, content_b64 en desuso.
 ALTER TABLE files ADD COLUMN IF NOT EXISTS storage_key TEXT;
 ALTER TABLE files ADD COLUMN IF NOT EXISTS sha256 TEXT;
@@ -668,6 +670,8 @@ CREATE TABLE IF NOT EXISTS finanzas.facturas_recibidas_lineas (
     concepto TEXT, litros NUMERIC(10,2) DEFAULT 0, base NUMERIC(12,2) DEFAULT 0, iva_pct NUMERIC(5,2) DEFAULT 21
 );
 INSERT INTO finanzas.series (codigo, ultimo) VALUES ('F', 0), ('A', 0) ON CONFLICT (codigo) DO NOTHING;
+-- Normalizar estados de factura a minúsculas (migración de datos históricos).
+UPDATE finanzas.facturas SET estado=lower(estado) WHERE estado<>lower(estado);
 """
 
 _SCHEMA_VIEWS = """
