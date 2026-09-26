@@ -103,11 +103,11 @@ def mensajeria_enviar(terminal: str, req: SendMensajeRequest):
         return {"ok": False, "error": fault or f"HTTP {resp.get('status')}"}
     conn = _db()
     conn.execute(
-        "INSERT INTO mensajes (id, trip_id, tipo, messagetype, originid, source, subject, body, time, needreply, terminal, creado) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT (id) DO NOTHING",
+        "INSERT INTO mensajes (id, trip_id, tipo, messagetype, originid, source, subject, body, time, needreply, terminal, creado, clase, direccion) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT (id) DO NOTHING",
         (msg_id, None, "enviado", "", parent_id, "TMS", subject, body,
          datetime.datetime.utcnow().isoformat() + "Z", req.needreply, terminal,
-         datetime.datetime.utcnow().isoformat() + "Z"),
+         datetime.datetime.utcnow().isoformat() + "Z", "libre", "saliente"),
     )
     conn.commit()
     conn.close()
@@ -168,7 +168,8 @@ def send_trip_mensaje(trip_id: str, req: SendMensajeRequest, conn = Depends(get_
     if not resp.get("ok") or fault:
         return {"ok": False, "error": fault or f"HTTP {resp.get('status')}"}
     _save_mensaje(msg_id, trip_id, "enviado", "", parent_id, "TMS", subject, body,
-                  datetime.datetime.utcnow().isoformat(), req.needreply)
+                  datetime.datetime.utcnow().isoformat(), req.needreply,
+                  clase="libre", direccion="saliente")
     return {"ok": True, "id": msg_id, "terminal": terminal}
 
 
@@ -194,7 +195,8 @@ def send_trip_questionpath(trip_id: str, req: dict, conn = Depends(get_conn)):
     if not resp.get("ok") or fault:
         return {"ok": False, "error": fault or f"HTTP {resp.get('status')}"}
     _save_mensaje(msg_id, trip_id, "enviado", messagetype, None, "TMS", subject, body,
-                  datetime.datetime.utcnow().isoformat(), False)
+                  datetime.datetime.utcnow().isoformat(), False,
+                  clase="formulario", direccion="saliente")
     return {"ok": True, "id": msg_id, "terminal": terminal}
 
 
