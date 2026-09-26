@@ -4,7 +4,7 @@ import { CREAR_VIAJE } from "../config";
 import { api } from "../api";
 import { useSocketSubscribe } from "../context/SocketContext";
 
-interface Traducida {
+export interface Traducida {
   question: string;
   pregunta: string;
   option: string | null;
@@ -12,7 +12,7 @@ interface Traducida {
   value: string;
 }
 
-interface Mensaje {
+export interface Mensaje {
   id: string;
   tipo: string; // enviado | libre | estructurado | cuestionario
   clase: string; // libre | formulario (Fase 5b)
@@ -37,7 +37,7 @@ function fmtHora(iso?: string) {
   return d.toLocaleString("es-ES", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
 }
 
-function FormularioCard({ m }: { m: Mensaje }) {
+export function FormularioCard({ m }: { m: Mensaje }) {
   const filas = m.traducidas ?? [];
   const esInforme = m.clase === "informe_actividad";
   const label = esInforme ? "Informe de actividad" : "Formulario";
