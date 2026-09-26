@@ -170,6 +170,11 @@ const vehiculosRoute = createRoute({
   path: "/vehiculos",
   component: () => <VehiculosPage />,
 });
+const vehiculosLegacyRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: "/vehiculos/legacy",
+  component: () => <VehiculosDashboard />,
+});
 const conductoresRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "/conductores",
@@ -230,6 +235,7 @@ const routeTree = rootRoute.addChildren([
     viajeDetalleRoute,
     mensajesRoute,
     vehiculosRoute,
+    vehiculosLegacyRoute,
     conductoresRoute,
     tallerRoute,
     facturacionRoute,

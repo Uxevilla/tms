@@ -33,7 +33,7 @@ def test_alta_mantenimiento(scratch_db):
         )
 
         m = Mantenimiento(
-            vehiculo_id="1111-AAA",
+            vehiculo_id="VH-MANT-001",
             tipo="revision",
             fecha="2026-01-15",
             km=100000,
@@ -53,7 +53,7 @@ def test_alta_mantenimiento(scratch_db):
             (mid,),
         ).fetchone()
         assert row is not None
-        assert row["vehiculo_id"] == "1111-AAA"
+        assert row["vehiculo_id"] == "VH-MANT-001"
         assert row["tipo"] == "revision"
         assert row["fecha"] == "2026-01-15"
         assert row["km"] == 100000
@@ -85,7 +85,7 @@ def test_edicion_en_linea_campos_mantenimiento(scratch_db):
         )
 
         m = Mantenimiento(
-            vehiculo_id="2222-BBB",
+            vehiculo_id="VH-MANT-002",
             tipo="aceite",
             fecha="2026-02-01",
             km=50000,
@@ -143,7 +143,7 @@ def test_toggle_hecho_mantenimiento(scratch_db):
         )
 
         m = Mantenimiento(
-            vehiculo_id="3333-CCC",
+            vehiculo_id="VH-MANT-003",
             tipo="frenos",
             fecha="2026-03-01",
             km=80000,
@@ -250,7 +250,7 @@ def test_edicion_campos_solo_allow(scratch_db):
         )
 
         m = Mantenimiento(
-            vehiculo_id="6666-FFF",
+            vehiculo_id="VH-MANT-006",
             tipo="neumaticos",
             fecha="2026-04-01",
             km=60000,
@@ -270,9 +270,139 @@ def test_edicion_campos_solo_allow(scratch_db):
             (mid,),
         ).fetchone()
         # vehiculo_id no debe cambiar (no está en allow)
-        assert row["vehiculo_id"] == "6666-FFF"
+        assert row["vehiculo_id"] == "VH-MANT-006"
         # tipo sí debe cambiar (está en allow)
         assert row["tipo"] == "itv"
+    finally:
+        conn.close()
+        main._tenant_ctx.reset(tok)
+
+
+@pytest.mark.integration
+def test_mantenimiento_generar_gasto(scratch_db):
+    """Completar un mantenimiento con 'generar gasto' → gasto en gastos_vehiculos (cuenta 622)."""
+    from routers.flota import add_mantenimiento
+    from models import Mantenimiento
+
+    tok, conn = _conn(scratch_db)
+    conn.set_autocommit(False)  # transacción: el asiento 622/472/400 debe cuadrar al commit
+    try:
+        conn.execute(
+            "INSERT INTO flota.vehiculos (codigo, terminal_trimble, matricula, categoria, activo) "
+            "VALUES ('VH-GASTO', 'T-GASTO', 'MAT-GASTO', 'tractora', true)"
+        )
+        m = Mantenimiento(
+            vehiculo_id="VH-GASTO",
+            tipo="revision",
+            fecha="2026-01-01",
+            km=0,
+            coste=0,
+            hecho=True,
+            generar_gasto=True,
+            base_imponible=100.0,
+            iva=21.0,
+            proveedor_id=None,
+        )
+        res = add_mantenimiento(m, conn=conn)
+        assert res["ok"] is True
+
+        row = conn.execute(
+            "SELECT cuenta_contable_gasto, base_imponible, importe_total FROM finanzas.gastos_vehiculos "
+            "WHERE vehiculo_id='VH-GASTO'"
+        ).fetchone()
+        assert row is not None
+        assert row["cuenta_contable_gasto"] == "622"
+        assert float(row["base_imponible"]) == 100.0
+        assert float(row["importe_total"]) == 121.0  # 100 + 21% IVA
+    finally:
+        conn.close()
+        main._tenant_ctx.reset(tok)
+
+
+@pytest.mark.integration
+def test_mantenimiento_generar_gasto_al_editar(scratch_db):
+    """Planificar (hecho=false) → editar con Completado+Generar gasto → 1 gasto 622; repetir → sigue 1."""
+    from routers.flota import add_mantenimiento, upd_mantenimiento_campos
+    from models import Mantenimiento
+
+    tok, conn = _conn(scratch_db)
+    conn.set_autocommit(False)
+    try:
+        conn.execute(
+            "INSERT INTO flota.vehiculos (codigo, terminal_trimble, matricula, categoria, activo) "
+            "VALUES ('VH-EDIT', 'T-EDIT', 'MAT-EDIT', 'tractora', true)"
+        )
+        # Planificar sin completar.
+        m = Mantenimiento(vehiculo_id="VH-EDIT", tipo="revision", fecha="2026-02-01",
+                          km=0, coste=0, hecho=False)
+        mid = add_mantenimiento(m, conn=conn)["id"]
+        conn.commit()
+
+        n_gastos = lambda: conn.execute(
+            "SELECT count(*) AS n FROM finanzas.gastos_vehiculos "
+            "WHERE vehiculo_id='VH-EDIT' AND cuenta_contable_gasto='622'"
+        ).fetchone()["n"]
+        assert n_gastos() == 0
+
+        # Editar: Completado + Generar gasto → dispara el gasto.
+        upd_mantenimiento_campos(mid, {"hecho": True, "generar_gasto": True,
+                                       "base_imponible": 200.0, "iva": 21.0}, conn=conn)
+        conn.commit()
+        assert n_gastos() == 1
+
+        # Repetir la edición → idempotente: sigue 1.
+        upd_mantenimiento_campos(mid, {"hecho": True, "generar_gasto": True,
+                                       "base_imponible": 200.0, "iva": 21.0}, conn=conn)
+        conn.commit()
+        assert n_gastos() == 1
+
+        # El gasto_id quedó guardado en el mantenimiento.
+        gid = conn.execute("SELECT gasto_id FROM flota.mantenimientos WHERE id=?", (mid,)).fetchone()["gasto_id"]
+        assert gid is not None
+
+        # GET /api/mantenimientos incluye gasto_id.
+        from routers.flota import list_mantenimientos
+        lista = list_mantenimientos(vehiculo_id="VH-EDIT", conn=conn)
+        assert lista["mantenimientos"][0]["gasto_id"] == gid
+    finally:
+        conn.rollback()
+        conn.close()
+        main._tenant_ctx.reset(tok)
+
+
+@pytest.mark.integration
+def test_mantenimiento_vehiculo_obligatorio(scratch_db):
+    """POST /api/mantenimientos con vehiculo_id vacío → 422 y 0 gastos creados."""
+    from fastapi import HTTPException
+    from routers.flota import add_mantenimiento
+    from models import Mantenimiento
+
+    tok, conn = _conn(scratch_db)
+    try:
+        m = Mantenimiento(vehiculo_id="", tipo="revision", fecha="2026-01-01",
+                          hecho=True, generar_gasto=True, base_imponible=100.0)
+        with pytest.raises(HTTPException) as ei:
+            add_mantenimiento(m, conn=conn)
+        assert ei.value.status_code == 422
+        assert conn.execute("SELECT count(*) AS n FROM finanzas.gastos_vehiculos").fetchone()["n"] == 0
+    finally:
+        conn.close()
+        main._tenant_ctx.reset(tok)
+
+
+@pytest.mark.integration
+def test_mantenimiento_vehiculo_no_existe(scratch_db):
+    """POST /api/mantenimientos con vehiculo_id inexistente → 422."""
+    from fastapi import HTTPException
+    from routers.flota import add_mantenimiento
+    from models import Mantenimiento
+
+    tok, conn = _conn(scratch_db)
+    try:
+        m = Mantenimiento(vehiculo_id="NO-EXISTE", tipo="revision", fecha="2026-01-01", hecho=False)
+        with pytest.raises(HTTPException) as ei:
+            add_mantenimiento(m, conn=conn)
+        assert ei.value.status_code == 422
     finally:
         conn.close()
         main._tenant_ctx.reset(tok)

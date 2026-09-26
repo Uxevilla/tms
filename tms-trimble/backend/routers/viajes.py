@@ -80,7 +80,7 @@ def api_telemetria_activa(user: dict = Depends(require_role(["admin", "dispatche
         f"  ORDER BY terminal, creado DESC"
         f"), dstat AS ("
         f"  SELECT DISTINCT ON (vehiculo_id) vehiculo_id, did "
-        f"  FROM tacografo_dstat ORDER BY vehiculo_id, COALESCE(time, creado) DESC"
+        f"  FROM tacografo_dstat WHERE decode_ok ORDER BY vehiculo_id, COALESCE(time, creado) DESC"
         f") "
         f"SELECT u.vehiculo_id, u.lat, u.lng, u.speed_kmh AS velocidad, "
         f"       u.heading, u.odometer_km, u.time, "
@@ -240,15 +240,32 @@ def delete_tarifa(tarifa_id: int, conn = Depends(get_conn)):
 
 
 @router.delete("/api/trips/{trip_id}")
-def delete_trip(trip_id: str, force: bool = False, user: dict = Depends(require_role(["admin", "dispatcher"])), conn = Depends(get_conn)):
-    """Elimina un viaje. Los viajes finalizados solo puede eliminarlos un administrador.
-    Si el viaje ya está en Trimble, lo borra del servidor (removeTrips) antes de la BD."""
-    row = conn.execute("SELECT estado, terminal FROM trips WHERE id=?", (trip_id,)).fetchone()
+def delete_trip(trip_id: str, force: bool = False, motivo: str = "", user: dict = Depends(require_role(["admin", "dispatcher"])), conn = Depends(get_conn)):
+    """Elimina o anula un viaje. Los viajes finalizados solo puede eliminarlos un administrador.
+
+    Un viaje con documentos o facturado NO se borra físicamente: se ANULA (soft delete)
+    conservando documentos y mensajes (son prueba de cobro). force=True fuerza el borrado
+    físico (solo admin)."""
+    row = conn.execute("SELECT estado, terminal, factura FROM trips WHERE id=?", (trip_id,)).fetchone()
     if not row:
         raise HTTPException(status_code=404, detail={"error": f"Viaje {trip_id} no encontrado"})
     estado = (row["estado"] or "").lower()
     if estado in _ESTADOS_FINALES and user.get("rol") != "admin":
         raise HTTPException(status_code=403, detail={"error": "Solo un administrador puede eliminar un viaje finalizado."})
+    if force and user.get("rol") != "admin":
+        raise HTTPException(status_code=403, detail={"error": "Solo un administrador puede forzar el borrado físico."})
+
+    tiene_docs = conn.execute("SELECT 1 FROM files WHERE trip_id=? LIMIT 1", (trip_id,)).fetchone()
+    tiene_factura = bool(row["factura"])
+
+    if (tiene_docs or tiene_factura) and not force:
+        # Soft delete: conservar documentos y mensajes (prueba de cobro).
+        conn.execute(
+            "UPDATE trips SET anulado_at=now(), anulado_por=?, anulado_motivo=? WHERE id=?",
+            (user.get("usuario") or user.get("sub") or "", motivo or "anulado", trip_id),
+        )
+        conn.commit()
+        return {"ok": True, "trip_id": trip_id, "anulado": True}
 
     # Si estaba en el terminal, borrarlo de Trimble ANTES (si Trimble falla, la BD no cambia).
     in_trimble = estado == "enviado" or estado in ("llegada_origen", "cargando", "en_transito", "llegada_destino", "descargando")
@@ -266,7 +283,7 @@ def delete_trip(trip_id: str, force: bool = False, user: dict = Depends(require_
     # paradas y tramos se borran por ON DELETE CASCADE.
     conn.execute("DELETE FROM trips WHERE id=?", (trip_id,))
     conn.commit()
-    return {"ok": True, "trip_id": trip_id}
+    return {"ok": True, "trip_id": trip_id, "anulado": False}
 
 
 
@@ -428,11 +445,11 @@ def list_tarifas(conn = Depends(get_conn)):
 @router.get("/api/trips/{trip_id}/documentos")
 def list_trip_documentos(trip_id: str, conn = Depends(get_conn)):
     rows = conn.execute(
-        "SELECT id, name, content_b64, storage_key, source, formato FROM files WHERE trip_id=? ORDER BY id", (trip_id,)
+        "SELECT id, name, content_b64, storage_key, sha256, source, formato FROM files WHERE trip_id=? ORDER BY id", (trip_id,)
     ).fetchall()
     docs = []
     for r in rows:
-        c = _leer_archivo(r["storage_key"]) if r["storage_key"] else (r["content_b64"] or "")
+        c = _leer_archivo(r["storage_key"], r.get("sha256") or "") if r["storage_key"] else (r["content_b64"] or "")
         name = r["name"]
         nombre = name.split("__", 1)[1] if "__" in name else name
         docs.append({"id": r["id"], "nombre": nombre, "contenido": c, "size": round(len(c) * 3 / 4), "source": r["source"] or "", "formato": r["formato"] or ""})
@@ -455,16 +472,42 @@ def list_trips(conn = Depends(get_conn)):
 @router.get("/api/trips/{trip_id}/files")
 def trip_files(trip_id: str, conn = Depends(get_conn)):
     rows = conn.execute(
-        "SELECT id, name, ftype, ftime, source, driver, lid, content_b64, storage_key "
+        "SELECT id, name, ftype, ftime, source, driver, lid, content_b64, storage_key, sha256, "
+        "estado_descarga, intentos, ultimo_error, mime, bytes, tipo_documento, paginas "
         "FROM files WHERE trip_id=? ORDER BY ftime DESC", (trip_id,)
     ).fetchall()
     out = []
     for r in rows:
         d = dict(r)
         if d.get("storage_key"):
-            d["content_b64"] = _leer_archivo(d["storage_key"])
+            d["content_b64"] = _leer_archivo(d["storage_key"], d.get("sha256") or "")
         out.append(d)
     return {"archivos": out}
+
+
+@router.get("/api/trips/{trip_id}/documentacion")
+def trip_documentacion(trip_id: str, conn = Depends(get_conn)):
+    """Checklist de facturación: qué documentos faltan para facturar el viaje."""
+    from services.tipos_documento import checklist_facturacion, docs_requeridos_default
+    trip = conn.execute(
+        "SELECT cliente_id FROM operaciones.trips WHERE codigo=?", (trip_id,)
+    ).fetchone()
+    presentes = [r["tipo_documento"] for r in conn.execute(
+        "SELECT DISTINCT tipo_documento FROM files "
+        "WHERE trip_id=? AND tipo_documento IS NOT NULL AND tipo_documento<>'tacografo'",
+        (trip_id,),
+    ).fetchall()]
+    requeridos = None
+    if trip and trip["cliente_id"]:
+        req = conn.execute(
+            "SELECT tipo_documento FROM cfg_docs_requeridos "
+            "WHERE cliente_id=? AND requerido ORDER BY orden",
+            (trip["cliente_id"],),
+        ).fetchall()
+        requeridos = [r["tipo_documento"] for r in req]
+    if not requeridos:
+        requeridos = docs_requeridos_default()
+    return checklist_facturacion(presentes, requeridos)
 
 
 

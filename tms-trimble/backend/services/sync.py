@@ -10,6 +10,8 @@ import urllib.request
 import config
 from db import *
 from services.documentos import _guardar_archivo, _leer_archivo
+from services.tipos_documento import clasificar_documento
+from services.cuestionarios import parse_report
 from core import *
 from security import *
 from tenancy import *
@@ -140,23 +142,64 @@ def _parse_props(block):
     return props
 
 
-def _save_file(trip_id, name, ftype, ftime, source, driver, lid, content_b64):
-    g = _guardar_archivo(name, content_b64)
+def _save_file(trip_id, name, ftype, ftime, source, driver, lid, content_b64, error=""):
+    """Guarda un fichero descargado o registra el fallo para reintentar (nunca se descarta).
+
+    - content_b64 no vacío → estado 'descargado' (binario en disco vía _guardar_archivo).
+    - si falla (error) → estado 'error' + ultimo_error + intentos++ (se reintenta en el siguiente ciclo).
+    """
+    g = _guardar_archivo(name, content_b64) if content_b64 else None
+    tipo = clasificar_documento(ftype, name)
     with _db() as conn:
         if g:
-            storage_key, sha, nbytes, _mime = g
+            storage_key, sha, nbytes, mime = g
             conn.execute(
-                "INSERT INTO files (trip_id, name, ftype, ftime, source, driver, lid, storage_key, sha256, bytes) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT (name) DO NOTHING",
-                (trip_id, name, ftype, ftime, source, driver, lid, storage_key, sha, nbytes),
+                "INSERT INTO files (trip_id, name, ftype, ftime, source, driver, lid, storage_key, sha256, bytes, mime, estado_descarga, intentos, tipo_documento) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,'descargado',1,?) ON CONFLICT (name) DO UPDATE SET "
+                "estado_descarga='descargado', storage_key=EXCLUDED.storage_key, sha256=EXCLUDED.sha256, "
+                "bytes=EXCLUDED.bytes, mime=EXCLUDED.mime, intentos=files.intentos+1, ultimo_error=NULL, "
+                "tipo_documento=EXCLUDED.tipo_documento",
+                (trip_id, name, ftype, ftime, source, driver, lid, storage_key, sha, nbytes, mime, tipo),
             )
         else:
             conn.execute(
-                "INSERT INTO files (trip_id, name, ftype, ftime, source, driver, lid, content_b64) "
-                "VALUES (?,?,?,?,?,?,?,?) ON CONFLICT (name) DO NOTHING",
-                (trip_id, name, ftype, ftime, source, driver, lid, content_b64),
+                "INSERT INTO files (trip_id, name, ftype, ftime, source, driver, lid, estado_descarga, intentos, ultimo_error, tipo_documento) "
+                "VALUES (?,?,?,?,?,?,?,'error',1,?,?) ON CONFLICT (name) DO UPDATE SET "
+                "estado_descarga='error', intentos=files.intentos+1, ultimo_error=EXCLUDED.ultimo_error, "
+                "tipo_documento=EXCLUDED.tipo_documento",
+                (trip_id, name, ftype, ftime, source, driver, lid, error or "descarga vacía", tipo),
             )
         conn.commit()
+
+
+def _reintentar_descargas(max_intentos=5):
+    """Reintenta descargas con estado 'error' (el mark del poll ya las pasó de largo).
+
+    El pollFiles usa un cursor high-water: una descarga fallida queda ATRÁS del mark y no
+    se re-poll-ea; por eso se reintenta leyendo la tabla y re-descargando por nombre.
+    """
+    with _db() as conn:
+        rows = conn.execute(
+            "SELECT trip_id, name, ftype, ftime, source, driver, lid FROM files "
+            "WHERE estado_descarga='error' AND intentos < ? AND anulado_at IS NULL",
+            (max_intentos,),
+        ).fetchall()
+    for row in rows:
+        dl = get_client().download_file(row["name"])
+        if dl.get("ok"):
+            content = re.search(r"<return>([^<]*)</return>", dl.get("body", ""))
+            if content:
+                _save_file(row["trip_id"], row["name"], row["ftype"] or 0,
+                           row["ftime"] or "", row["source"] or "", row["driver"] or "",
+                           row["lid"] or "", content.group(1))
+                continue
+            err = "contenido vacío"
+        else:
+            fault = re.search(r"<faultstring>([^<]*)</faultstring>", dl.get("body", ""))
+            err = f"SOAP {dl.get('status')} {fault.group(1) if fault else 'sin detalle'}"
+        _save_file(row["trip_id"], row["name"], row["ftype"] or 0,
+                   row["ftime"] or "", row["source"] or "", row["driver"] or "",
+                   row["lid"] or "", "", error=err)
 
 
 def _extraer_reporte_xml(block):
@@ -357,9 +400,39 @@ def _entrega_confirmada(qp):
     return firmado or sin_incidencias
 
 
+def _lid_map_trip(conn, lid):
+    """Devuelve el trip_id de un LID (tabla lid_map) o None si no está mapeado.
+
+    Si conn es None abre una conexión corta (evita mantener una transacción abierta
+    durante los poll SOAP lentos).
+    """
+    if not lid:
+        return None
+    own = conn is None
+    if own:
+        conn = _db()
+    try:
+        row = conn.execute("SELECT trip_id FROM lid_map WHERE lid=?", (lid,)).fetchone()
+        return row["trip_id"] if row else None
+    finally:
+        if own:
+            conn.close()
+
+
+def _lid_map_put(conn, lid, trip_id, task_id="", terminal="", desde=""):
+    """Registra el mapeo LID→trip_id (la traza 10 lo alimenta)."""
+    if not lid:
+        return
+    conn.execute(
+        "INSERT INTO lid_map (lid, trip_id, task_id, terminal, desde) VALUES (?,?,?,?,?) "
+        "ON CONFLICT (lid) DO UPDATE SET trip_id=EXCLUDED.trip_id, task_id=EXCLUDED.task_id, "
+        "terminal=EXCLUDED.terminal, desde=EXCLUDED.desde",
+        (lid, trip_id, task_id, terminal, desde),
+    )
+
+
 def _sync_files():
-    # 1) trazas tipo 10 (activity started) -> mapa LID -> trip_id
-    lid_map = json.loads(_get_sync_state("lid_map") or "{}")
+    # 1) trazas tipo 10 (activity started) -> tabla lid_map (LID -> trip_id)
     mark = _get_sync_state("traces_mark") or _mark_inicial()
     with _db() as pos_conn:
         pos_conn.set_autocommit(True)  # no mantener transacción abierta durante los poll SOAP (evita lock en cascada)
@@ -374,12 +447,12 @@ def _sync_files():
                 props = _parse_props(block)
                 t = ttype.group(1) if ttype else ""
                 if t == "10" and props.get("LID") and props.get("TRID"):
-                    lid_map[props["LID"]] = props["TRID"]
+                    _lid_map_put(pos_conn, props["LID"], props["TRID"])
                     eventos.append({"tipo": "actividad", "traza": "10",
                                     "trip_id": props["TRID"], "reporte": ""})
                 elif t in ("12", "13") and props.get("LID"):
                     # activity report (12) o activity end (13) -> question path (ARE/AFRE)
-                    trip_id = props.get("TRID") or lid_map.get(props["LID"])
+                    trip_id = props.get("TRID") or _lid_map_trip(pos_conn, props["LID"])
                     src = re.search(r"<source>([^<]*)</source>", block)
                     tm = re.search(r"<time>([^<]*)</time>", block)
                     rt, qp = _extraer_reporte_xml(block)
@@ -387,10 +460,20 @@ def _sync_files():
                         continue  # sin reporte (ARE/AFRE), no es question path
                     eseq = props.get("ESEQ", "")
                     suf = f"_{rt.lower()}" + (f"_{eseq}" if eseq else "")
+                    # Informe de actividad (trazas 12/13): clase propia con el reporte parseado.
+                    rep = None
+                    try:
+                        rep = parse_report(qp)
+                    except ValueError:
+                        rep = None
                     _save_mensaje(
                         f"qp_{props['LID']}{suf}", trip_id, "cuestionario", props.get("ATY", ""),
                         props["LID"], src.group(1) if src else "", rt,
                         qp, tm.group(1) if tm else "", False,
+                        clase="informe_actividad", direccion="entrante",
+                        report_id=rep["report_id"] if rep else None,
+                        report_version=rep["version"] if rep else None,
+                        respuestas=rep["respuestas"] if rep else None,
                     )
                     # Regla de negocio: CMR/DESCARGA firmada o sin incidencias => cerrar viaje.
                     aty = (props.get("ATY") or "").upper()
@@ -435,7 +518,6 @@ def _sync_files():
             )
         pos_conn.commit()
     _set_sync_state("traces_mark", mark or "")
-    _set_sync_state("lid_map", json.dumps(lid_map))
 
     # Publicar cambios de actividad en Redis Pub/Sub (tiempo real).
     for ev in eventos:
@@ -444,18 +526,18 @@ def _sync_files():
         except Exception:
             pass
 
-    # re-asignar archivos ya descargados cuyo LID ya tiene mapeo
-    if lid_map:
-        conn = _db()
-        for lid, trip in lid_map.items():
-            conn.execute(
-                "UPDATE files SET trip_id=? WHERE lid=? AND trip_id IS NULL",
-                (trip, lid),
-            )
-        conn.commit()
-        conn.close()
+    # re-asignar archivos ya descargados cuyo LID ya tiene mapeo (tabla lid_map)
+    conn = _db()
+    conn.execute(
+        "UPDATE files f SET trip_id=l.trip_id, vinculado_por='lid' "
+        "FROM lid_map l WHERE f.lid=l.lid AND f.trip_id IS NULL AND l.trip_id IS NOT NULL"
+    )
+    conn.commit()
+    conn.close()
 
-    # 2) poll files + descarga (solo tipo 3 = documentos/escaneos del conductor)
+    # 2) poll files + descarga. Solo se descartan los de tacógrafo (0=tarjeta,1=memoria,2=accidente);
+    #    el resto (documentos/fotos/firmas de cuestionarios y mensajes) se descarga y, si falla,
+    #    queda 'error' para reintentar en el siguiente ciclo (nunca se descarta).
     fmark = _get_sync_state("files_mark") or _mark_inicial()
     for _ in range(10):
         r = get_client().poll_files(fmark)
@@ -464,15 +546,22 @@ def _sync_files():
         for block in re.findall(r"<files>(.*?)</files>", r["body"], re.S):
             name = re.search(r"<name>([^<]*)</name>", block)
             ftype = re.search(r"<type>([^<]*)</type>", block)
-            if not name or (ftype and ftype.group(1) != "3"):
+            if not name or (ftype and ftype.group(1) in ("0", "1", "2")):
                 continue
             ftime = re.search(r"<time>([^<]*)</time>", block)
             source = re.search(r"<source>([^<]*)</source>", block)
             driver = re.search(r"<driver>([^<]*)</driver>", block)
             props = _parse_props(block)
             lid = props.get("LID", "")
-            trip_id = lid_map.get(lid) if lid else None
+            trip_id = _lid_map_trip(None, lid)
             dl = get_client().download_file(name.group(1))
+            if not dl.get("ok"):
+                fault = re.search(r"<faultstring>([^<]*)</faultstring>", dl.get("body", ""))
+                _save_file(trip_id, name.group(1), int(ftype.group(1)) if ftype else 0,
+                           ftime.group(1) if ftime else "", source.group(1) if source else "",
+                           driver.group(1) if driver else "", lid, "",
+                           error=f"SOAP {dl.get('status')} {fault.group(1) if fault else 'sin detalle'}")
+                continue
             content = re.search(r"<return>([^<]*)</return>", dl.get("body", ""))
             _save_file(
                 trip_id, name.group(1),
@@ -481,6 +570,7 @@ def _sync_files():
                 source.group(1) if source else "",
                 driver.group(1) if driver else "",
                 lid, content.group(1) if content else "",
+                error="" if content else "contenido vacío",
             )
         m = re.search(r"<mark>([^<]*)</mark>", r["body"])
         more = re.search(r"<more>([^<]*)</more>", r["body"])
@@ -490,10 +580,12 @@ def _sync_files():
             break
     _set_sync_state("files_mark", fmark or "")
 
+    # 3) Reintentar descargas fallidas (el mark ya pasó; re-descargar desde la tabla).
+    _reintentar_descargas()
+
 
 def _sync_mensajes():
     """Polls mensajes estructurados y libres del conductor (Messaging), anexándolos al viaje vía originid→LID."""
-    lid_map = json.loads(_get_sync_state("lid_map") or "{}")
 
     # 1) mensajes estructurados (candidato del question path)
     smark = _get_sync_state("mensajes_mark") or _mark_inicial()
@@ -502,7 +594,7 @@ def _sync_mensajes():
         if not r.get("ok"):
             break
         for block in re.findall(r"<messages>(.*?)</messages>", r["body"], re.S):
-            _store_mensaje(block, "estructurado", lid_map)
+            _store_mensaje(block, "estructurado")
         m = re.search(r"<mark>([^<]*)</mark>", r["body"])
         more = re.search(r"<more>([^<]*)</more>", r["body"])
         if m:
@@ -518,7 +610,7 @@ def _sync_mensajes():
         if not r.get("ok"):
             break
         for block in re.findall(r"<messages>(.*?)</messages>", r["body"], re.S):
-            _store_mensaje(block, "libre", lid_map)
+            _store_mensaje(block, "libre")
         m = re.search(r"<mark>([^<]*)</mark>", r["body"])
         more = re.search(r"<more>([^<]*)</more>", r["body"])
         if m:

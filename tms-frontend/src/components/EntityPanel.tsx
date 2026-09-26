@@ -286,14 +286,38 @@ function Viaje({ pestana, data }: { pestana: number; data: EntidadViaje }) {
     );
   if (pestana === 2)
     return (
-      <div className="space-y-1">
-        {data.documentos?.length > 0 ? (
-          data.documentos.map((d, i) => (
-            <div key={i} className="flex justify-between py-1">
-              <span className="truncate">{d.nombre ?? ""}</span>
-              <span className="text-xs text-muted-foreground">{d.formato ?? ""}</span>
+      <div className="space-y-2">
+        {(() => {
+          const doc = (data as { documentacion?: { ok?: boolean; faltan?: string[]; presentes?: string[] } }).documentacion;
+          if (!doc) return null;
+          return doc.ok ? (
+            <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-700">
+              Documentación completa ✓
             </div>
-          ))
+          ) : (
+            <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+              <span className="font-semibold">Falta para facturar: </span>{(doc.faltan ?? []).join(", ")}
+            </div>
+          );
+        })()}
+        {data.documentos?.length > 0 ? (
+          data.documentos.map((d, i) => {
+            const tipo = (d as { tipo_documento?: string | null }).tipo_documento;
+            const estado = (d as { estado_descarga?: string | null }).estado_descarga;
+            const color = estado === "error" ? "text-red-500" : estado === "pendiente" ? "text-amber-500" : "text-emerald-600";
+            return (
+              <div key={i} className="rounded border p-2">
+                <div className="flex justify-between gap-2">
+                  <span className="truncate font-medium">{tipo || d.nombre || "Documento"}</span>
+                  <span className={`shrink-0 text-xs font-medium ${color}`}>{estado || "descargado"}</span>
+                </div>
+                <div className="mt-0.5 truncate text-xs text-muted-foreground">{d.nombre ?? ""}</div>
+                <div className="text-xs text-muted-foreground">
+                  {d.formato ? `${d.formato} · ` : ""}{d.bytes != null ? `${Math.round(d.bytes / 1024)} KB` : ""}
+                </div>
+              </div>
+            );
+          })
         ) : (
           <div className="text-muted-foreground">Sin documentos.</div>
         )}

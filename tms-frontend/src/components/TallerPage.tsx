@@ -9,10 +9,10 @@ import {
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { Plus, Pencil } from "lucide-react";
+import { Download, Plus, Pencil } from "lucide-react";
 
 import { api } from "../api";
-import { REST_MANTENIMIENTOS, REST_VEHICULOS_DISPONIBLES } from "../config";
+import { REST_MANTENIMIENTOS, REST_PROVEEDORES, REST_VEHICULOS_DISPONIBLES } from "../config";
 import { CaducidadRenderer } from "./CaducidadRenderer";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
@@ -32,12 +32,18 @@ interface Mantenimiento {
   hecho: boolean;
   matricula: string;
   categoria: string;
+  gasto_id: number | null;
 }
 
 interface Vehiculo {
   id: string;
   matricula: string;
   categoria: string;
+}
+
+interface Proveedor {
+  id: number;
+  nombre: string;
 }
 
 const TIPO_MANTENIMIENTO = [
@@ -51,23 +57,35 @@ const TIPO_MANTENIMIENTO = [
 
 // ------------------------------------------------------------------ formulario
 const mantenimientoSchema = z.object({
+  vehiculo_id: z.string().min(1, "Requerido"),
   tipo: z.enum(TIPO_MANTENIMIENTO),
   fecha: z.string().min(1, "Requerido"),
   fecha_fin: z.string().optional().nullable(),
   km: z.number().int().min(0),
   coste: z.number().min(0),
   notas: z.string().optional(),
+  hecho: z.boolean().optional(),
+  generar_gasto: z.boolean().optional(),
+  base_imponible: z.number().min(0).optional(),
+  iva: z.number().min(0).optional(),
+  proveedor_id: z.number().int().positive().optional().nullable(),
 });
 
 type MantenimientoForm = z.infer<typeof mantenimientoSchema>;
 
 const valoresPorDefecto: MantenimientoForm = {
+  vehiculo_id: "",
   tipo: "revision",
   fecha: "",
   fecha_fin: "",
   km: 0,
   coste: 0,
   notas: "",
+  hecho: false,
+  generar_gasto: false,
+  base_imponible: 0,
+  iva: 21,
+  proveedor_id: null,
 };
 
 const fmtEuro = new Intl.NumberFormat("es-ES", { style: "currency", currency: "EUR" });
@@ -96,6 +114,12 @@ export function TallerPage() {
       (await api<{ vehiculos?: Vehiculo[] }>(REST_VEHICULOS_DISPONIBLES)).vehiculos ?? [],
   });
 
+  const { data: proveedores = [] } = useQuery({
+    queryKey: ["proveedores"],
+    queryFn: async () =>
+      (await api<{ proveedores?: Proveedor[] }>(REST_PROVEEDORES)).proveedores ?? [],
+  });
+
   const form = useForm<MantenimientoForm>({
     resolver: zodResolver(mantenimientoSchema),
     defaultValues: valoresPorDefecto,
@@ -111,7 +135,7 @@ export function TallerPage() {
       }
       return api(REST_MANTENIMIENTOS, {
         method: "POST",
-        body: JSON.stringify({ ...valores, vehiculo_id: filtroVehiculo || "" }),
+        body: JSON.stringify(valores),
       });
     },
     onSuccess: () => {
@@ -130,6 +154,28 @@ export function TallerPage() {
       queryClient.invalidateQueries({ queryKey: ["mantenimientos"] });
     },
   });
+
+  function exportarCsv() {
+    const encabezados = ["Vehículo", "Tipo", "Fecha", "Km", "Coste (€)", "Completado", "Notas"];
+    const filas = mantenimientos.map((m) => [
+      m.matricula,
+      m.tipo,
+      m.fecha,
+      m.km,
+      m.coste,
+      m.hecho ? "Sí" : "No",
+      m.notas ?? "",
+    ]);
+    const esc = (v: unknown) => `"${String(v).replace(/"/g, '""')}"`;
+    const csv = [encabezados.join(","), ...filas.map((f) => f.map(esc).join(","))].join("\n");
+    const blob = new Blob(["\ufeff" + csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "mantenimientos.csv";
+    a.click();
+    URL.revokeObjectURL(url);
+  }
 
   const columns = useMemo<ColumnDef<Mantenimiento>[]>(
     () => [
@@ -209,7 +255,7 @@ export function TallerPage() {
 
   function abrirAlta() {
     setEditando(null);
-    form.reset(valoresPorDefecto);
+    form.reset({ ...valoresPorDefecto, vehiculo_id: filtroVehiculo });
     setAbierto(true);
   }
 
@@ -245,6 +291,10 @@ export function TallerPage() {
               ))}
             </select>
           </div>
+          <Button variant="outline" onClick={exportarCsv}>
+            <Download size={16} className="mr-1.5" />
+            Exportar CSV
+          </Button>
           <Button onClick={abrirAlta}>
             <Plus size={16} className="mr-1.5" />
             Nuevo mantenimiento
@@ -286,6 +336,7 @@ export function TallerPage() {
                     setEditando(row.original);
                     form.reset({
                       ...valoresPorDefecto,
+                      vehiculo_id: row.original.vehiculo_id,
                       tipo: (row.original.tipo as MantenimientoForm["tipo"]) ?? "revision",
                       fecha: row.original.fecha,
                       fecha_fin: row.original.fecha_fin ?? "",
@@ -315,6 +366,27 @@ export function TallerPage() {
             <SheetTitle>{editando ? "Editar mantenimiento" : "Nuevo mantenimiento"}</SheetTitle>
           </SheetHeader>
           <form onSubmit={form.handleSubmit(onSubmit)} className="mt-4 flex flex-col gap-4">
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="vehiculo_id">Vehículo</Label>
+              <select
+                id="vehiculo_id"
+                value={form.watch("vehiculo_id")}
+                onChange={(e) => form.setValue("vehiculo_id", e.target.value)}
+                disabled={editando != null}
+                className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                <option value="">Seleccionar vehículo</option>
+                {vehiculos.map((v) => (
+                  <option key={v.id} value={v.id}>
+                    {v.matricula} ({v.categoria})
+                  </option>
+                ))}
+              </select>
+              {form.formState.errors.vehiculo_id && (
+                <span className="text-xs text-red-600">{form.formState.errors.vehiculo_id.message}</span>
+              )}
+            </div>
+
             <div className="grid grid-cols-2 gap-3">
               <div className="flex flex-col gap-1.5">
                 <Label htmlFor="tipo">Tipo</Label>
@@ -379,6 +451,78 @@ export function TallerPage() {
               </div>
             </div>
 
+            <div className="grid grid-cols-2 gap-3">
+              <div className="flex items-center gap-2">
+                <input
+                  id="hecho"
+                  type="checkbox"
+                  checked={form.watch("hecho")}
+                  onChange={(e) => form.setValue("hecho", e.target.checked)}
+                  className="h-4 w-4 rounded border-slate-300 text-primary focus:ring-primary"
+                />
+                <Label htmlFor="hecho">Completado</Label>
+              </div>
+              {editando?.gasto_id ? (
+                <div className="flex items-center gap-1.5 text-sm font-medium text-emerald-700">
+                  Gasto contabilizado (#{editando.gasto_id})
+                </div>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <input
+                    id="generar-gasto"
+                    type="checkbox"
+                    checked={form.watch("generar_gasto")}
+                    onChange={(e) => form.setValue("generar_gasto", e.target.checked)}
+                    className="h-4 w-4 rounded border-slate-300 text-primary focus:ring-primary"
+                  />
+                  <Label htmlFor="generar-gasto">Generar gasto</Label>
+                </div>
+              )}
+            </div>
+
+            {!editando?.gasto_id && form.watch("generar_gasto") && (
+              <div className="grid grid-cols-2 gap-3 rounded-md border border-slate-200 p-3">
+                <div className="flex flex-col gap-1.5">
+                  <Label htmlFor="base_imponible">Base imponible (€)</Label>
+                  <Input
+                    id="base_imponible"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    {...form.register("base_imponible", { valueAsNumber: true })}
+                  />
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <Label htmlFor="iva">IVA (%)</Label>
+                  <Input
+                    id="iva"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    {...form.register("iva", { valueAsNumber: true })}
+                  />
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <Label htmlFor="proveedor_id">Proveedor</Label>
+                  <select
+                    id="proveedor_id"
+                    value={form.watch("proveedor_id") ?? ""}
+                    onChange={(e) =>
+                      form.setValue("proveedor_id", e.target.value === "" ? null : Number(e.target.value))
+                    }
+                    className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"
+                  >
+                    <option value="">Sin proveedor</option>
+                    {proveedores.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.nombre}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            )}
+
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="notas">Notas</Label>
               <textarea
@@ -399,7 +543,7 @@ export function TallerPage() {
               <Button type="button" variant="outline" onClick={() => setAbierto(false)}>
                 Cancelar
               </Button>
-              <Button type="submit" disabled={guardar.isPending}>
+              <Button type="submit" disabled={guardar.isPending || !form.watch("vehiculo_id")}>
                 {guardar.isPending ? "Guardando…" : "Guardar"}
               </Button>
             </div>

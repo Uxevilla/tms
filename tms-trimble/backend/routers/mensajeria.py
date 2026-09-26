@@ -30,6 +30,7 @@ from services.mantenimiento import _insertar_alerta_publica, _revisar_caducidade
 from services.mensajeria import _save_mensaje, _store_mensaje, _extraer_pales, _procesar_pales, _webhook_autenticado, _direccion_dict
 from services.ocr import _parse_ticket, _parse_documento, _pdf_a_texto, _regex_matricula, _regex_litros, _regex_importe, _regex_fecha
 from services.empresa import _empresa
+from services.question_paths import importar_definicion, listar_definiciones, _traducir_respuestas, _respuestas_lista
 
 router = APIRouter(dependencies=[Depends(require_role(["admin", "dispatcher"]))])
 
@@ -103,11 +104,11 @@ def mensajeria_enviar(terminal: str, req: SendMensajeRequest):
         return {"ok": False, "error": fault or f"HTTP {resp.get('status')}"}
     conn = _db()
     conn.execute(
-        "INSERT INTO mensajes (id, trip_id, tipo, messagetype, originid, source, subject, body, time, needreply, terminal, creado) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT (id) DO NOTHING",
+        "INSERT INTO mensajes (id, trip_id, tipo, messagetype, originid, source, subject, body, time, needreply, terminal, creado, clase, direccion) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT (id) DO NOTHING",
         (msg_id, None, "enviado", "", parent_id, "TMS", subject, body,
          datetime.datetime.utcnow().isoformat() + "Z", req.needreply, terminal,
-         datetime.datetime.utcnow().isoformat() + "Z"),
+         datetime.datetime.utcnow().isoformat() + "Z", "libre", "saliente"),
     )
     conn.commit()
     conn.close()
@@ -121,9 +122,10 @@ def mensajeria_mensajes(terminal: str, conn = Depends(get_conn)):
     """Mensajes de un terminal (recibidos: source=terminal; enviados: terminal=terminal)."""
     rows = conn.execute(
         "SELECT id, trip_id, tipo, messagetype, originid, source, subject, body, time, needreply, terminal "
-        "FROM mensajes WHERE source=? OR terminal=? ORDER BY time LIMIT 300",
+        "FROM mensajes WHERE source=? OR terminal=? ORDER BY time DESC LIMIT 300",
         (terminal, terminal),
     ).fetchall()
+    rows = list(reversed(rows))  # los 300 más recientes, en orden cronológico (ASC)
     return {"ok": True, "terminal": terminal, "mensajes": [dict(r) for r in rows]}
 
 
@@ -167,7 +169,8 @@ def send_trip_mensaje(trip_id: str, req: SendMensajeRequest, conn = Depends(get_
     if not resp.get("ok") or fault:
         return {"ok": False, "error": fault or f"HTTP {resp.get('status')}"}
     _save_mensaje(msg_id, trip_id, "enviado", "", parent_id, "TMS", subject, body,
-                  datetime.datetime.utcnow().isoformat(), req.needreply)
+                  datetime.datetime.utcnow().isoformat(), req.needreply,
+                  clase="libre", direccion="saliente")
     return {"ok": True, "id": msg_id, "terminal": terminal}
 
 
@@ -193,7 +196,8 @@ def send_trip_questionpath(trip_id: str, req: dict, conn = Depends(get_conn)):
     if not resp.get("ok") or fault:
         return {"ok": False, "error": fault or f"HTTP {resp.get('status')}"}
     _save_mensaje(msg_id, trip_id, "enviado", messagetype, None, "TMS", subject, body,
-                  datetime.datetime.utcnow().isoformat(), False)
+                  datetime.datetime.utcnow().isoformat(), False,
+                  clase="formulario", direccion="saliente")
     return {"ok": True, "id": msg_id, "terminal": terminal}
 
 
@@ -202,10 +206,32 @@ def send_trip_questionpath(trip_id: str, req: dict, conn = Depends(get_conn)):
 @router.get("/api/trips/{trip_id}/mensajes")
 def trip_mensajes(trip_id: str, conn = Depends(get_conn)):
     rows = conn.execute(
-        "SELECT id, tipo, messagetype, originid, source, subject, body, time, needreply "
+        "SELECT id, tipo, messagetype, originid, source, subject, body, time, needreply, "
+        "clase, direccion, report_id, report_version, respuestas, estado "
         "FROM mensajes WHERE trip_id=? ORDER BY time DESC", (trip_id,)
     ).fetchall()
-    return {"mensajes": [dict(r) for r in rows]}
+    out = []
+    for r in rows:
+        d = dict(r)
+        resp = _respuestas_lista(r["respuestas"])
+        d["respuestas"] = resp
+        d["traducidas"] = _traducir_respuestas(conn, r["report_id"], resp) if r["report_id"] else []
+        out.append(d)
+    return {"mensajes": out}
+
+
+@router.post("/api/questionpaths/importar")
+def importar_questionpath(req: dict):
+    """Importa una definición <ReportDefinition> (XML) para traducir los formularios."""
+    xml = (req.get("xml") or "").strip()
+    if not xml:
+        return {"ok": False, "error": "Falta el XML <ReportDefinition>."}
+    return importar_definicion(xml)
+
+
+@router.get("/api/questionpaths")
+def listar_questionpaths(conn = Depends(get_conn)):
+    return {"ok": True, "definiciones": listar_definiciones(conn)}
 
 
 
