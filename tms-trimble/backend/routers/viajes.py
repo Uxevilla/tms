@@ -445,11 +445,11 @@ def list_tarifas(conn = Depends(get_conn)):
 @router.get("/api/trips/{trip_id}/documentos")
 def list_trip_documentos(trip_id: str, conn = Depends(get_conn)):
     rows = conn.execute(
-        "SELECT id, name, content_b64, storage_key, source, formato FROM files WHERE trip_id=? ORDER BY id", (trip_id,)
+        "SELECT id, name, content_b64, storage_key, sha256, source, formato FROM files WHERE trip_id=? ORDER BY id", (trip_id,)
     ).fetchall()
     docs = []
     for r in rows:
-        c = _leer_archivo(r["storage_key"]) if r["storage_key"] else (r["content_b64"] or "")
+        c = _leer_archivo(r["storage_key"], r.get("sha256") or "") if r["storage_key"] else (r["content_b64"] or "")
         name = r["name"]
         nombre = name.split("__", 1)[1] if "__" in name else name
         docs.append({"id": r["id"], "nombre": nombre, "contenido": c, "size": round(len(c) * 3 / 4), "source": r["source"] or "", "formato": r["formato"] or ""})
@@ -479,7 +479,7 @@ def trip_files(trip_id: str, conn = Depends(get_conn)):
     for r in rows:
         d = dict(r)
         if d.get("storage_key"):
-            d["content_b64"] = _leer_archivo(d["storage_key"])
+            d["content_b64"] = _leer_archivo(d["storage_key"], d.get("sha256") or "")
         out.append(d)
     return {"archivos": out}
 

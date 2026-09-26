@@ -395,9 +395,39 @@ def _entrega_confirmada(qp):
     return firmado or sin_incidencias
 
 
+def _lid_map_trip(conn, lid):
+    """Devuelve el trip_id de un LID (tabla lid_map) o None si no está mapeado.
+
+    Si conn es None abre una conexión corta (evita mantener una transacción abierta
+    durante los poll SOAP lentos).
+    """
+    if not lid:
+        return None
+    own = conn is None
+    if own:
+        conn = _db()
+    try:
+        row = conn.execute("SELECT trip_id FROM lid_map WHERE lid=?", (lid,)).fetchone()
+        return row["trip_id"] if row else None
+    finally:
+        if own:
+            conn.close()
+
+
+def _lid_map_put(conn, lid, trip_id, task_id="", terminal="", desde=""):
+    """Registra el mapeo LID→trip_id (la traza 10 lo alimenta)."""
+    if not lid:
+        return
+    conn.execute(
+        "INSERT INTO lid_map (lid, trip_id, task_id, terminal, desde) VALUES (?,?,?,?,?) "
+        "ON CONFLICT (lid) DO UPDATE SET trip_id=EXCLUDED.trip_id, task_id=EXCLUDED.task_id, "
+        "terminal=EXCLUDED.terminal, desde=EXCLUDED.desde",
+        (lid, trip_id, task_id, terminal, desde),
+    )
+
+
 def _sync_files():
-    # 1) trazas tipo 10 (activity started) -> mapa LID -> trip_id
-    lid_map = json.loads(_get_sync_state("lid_map") or "{}")
+    # 1) trazas tipo 10 (activity started) -> tabla lid_map (LID -> trip_id)
     mark = _get_sync_state("traces_mark") or _mark_inicial()
     with _db() as pos_conn:
         pos_conn.set_autocommit(True)  # no mantener transacción abierta durante los poll SOAP (evita lock en cascada)
@@ -412,12 +442,12 @@ def _sync_files():
                 props = _parse_props(block)
                 t = ttype.group(1) if ttype else ""
                 if t == "10" and props.get("LID") and props.get("TRID"):
-                    lid_map[props["LID"]] = props["TRID"]
+                    _lid_map_put(pos_conn, props["LID"], props["TRID"])
                     eventos.append({"tipo": "actividad", "traza": "10",
                                     "trip_id": props["TRID"], "reporte": ""})
                 elif t in ("12", "13") and props.get("LID"):
                     # activity report (12) o activity end (13) -> question path (ARE/AFRE)
-                    trip_id = props.get("TRID") or lid_map.get(props["LID"])
+                    trip_id = props.get("TRID") or _lid_map_trip(pos_conn, props["LID"])
                     src = re.search(r"<source>([^<]*)</source>", block)
                     tm = re.search(r"<time>([^<]*)</time>", block)
                     rt, qp = _extraer_reporte_xml(block)
@@ -473,7 +503,6 @@ def _sync_files():
             )
         pos_conn.commit()
     _set_sync_state("traces_mark", mark or "")
-    _set_sync_state("lid_map", json.dumps(lid_map))
 
     # Publicar cambios de actividad en Redis Pub/Sub (tiempo real).
     for ev in eventos:
@@ -482,16 +511,14 @@ def _sync_files():
         except Exception:
             pass
 
-    # re-asignar archivos ya descargados cuyo LID ya tiene mapeo
-    if lid_map:
-        conn = _db()
-        for lid, trip in lid_map.items():
-            conn.execute(
-                "UPDATE files SET trip_id=? WHERE lid=? AND trip_id IS NULL",
-                (trip, lid),
-            )
-        conn.commit()
-        conn.close()
+    # re-asignar archivos ya descargados cuyo LID ya tiene mapeo (tabla lid_map)
+    conn = _db()
+    conn.execute(
+        "UPDATE files f SET trip_id=l.trip_id, vinculado_por='lid' "
+        "FROM lid_map l WHERE f.lid=l.lid AND f.trip_id IS NULL AND l.trip_id IS NOT NULL"
+    )
+    conn.commit()
+    conn.close()
 
     # 2) poll files + descarga. Solo se descartan los de tacógrafo (0=tarjeta,1=memoria,2=accidente);
     #    el resto (documentos/fotos/firmas de cuestionarios y mensajes) se descarga y, si falla,
@@ -511,7 +538,7 @@ def _sync_files():
             driver = re.search(r"<driver>([^<]*)</driver>", block)
             props = _parse_props(block)
             lid = props.get("LID", "")
-            trip_id = lid_map.get(lid) if lid else None
+            trip_id = _lid_map_trip(None, lid)
             dl = get_client().download_file(name.group(1))
             if not dl.get("ok"):
                 fault = re.search(r"<faultstring>([^<]*)</faultstring>", dl.get("body", ""))
@@ -544,7 +571,6 @@ def _sync_files():
 
 def _sync_mensajes():
     """Polls mensajes estructurados y libres del conductor (Messaging), anexándolos al viaje vía originid→LID."""
-    lid_map = json.loads(_get_sync_state("lid_map") or "{}")
 
     # 1) mensajes estructurados (candidato del question path)
     smark = _get_sync_state("mensajes_mark") or _mark_inicial()
@@ -553,7 +579,7 @@ def _sync_mensajes():
         if not r.get("ok"):
             break
         for block in re.findall(r"<messages>(.*?)</messages>", r["body"], re.S):
-            _store_mensaje(block, "estructurado", lid_map)
+            _store_mensaje(block, "estructurado")
         m = re.search(r"<mark>([^<]*)</mark>", r["body"])
         more = re.search(r"<more>([^<]*)</more>", r["body"])
         if m:
@@ -569,7 +595,7 @@ def _sync_mensajes():
         if not r.get("ok"):
             break
         for block in re.findall(r"<messages>(.*?)</messages>", r["body"], re.S):
-            _store_mensaje(block, "libre", lid_map)
+            _store_mensaje(block, "libre")
         m = re.search(r"<mark>([^<]*)</mark>", r["body"])
         more = re.search(r"<more>([^<]*)</more>", r["body"])
         if m:

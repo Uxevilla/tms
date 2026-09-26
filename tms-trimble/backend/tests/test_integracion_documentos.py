@@ -136,3 +136,39 @@ def test_delete_trip_hard_sin_documentos(scratch_db):
     finally:
         conn.close()
         main._tenant_ctx.reset(tok)
+
+
+@pytest.mark.integration
+def test_lid_map_tabla_y_vinculacion(scratch_db):
+    """0.1d: lid_map es tabla (no JSON). La traza 10 registra LID→trip y el fichero se vincula."""
+    from services.sync import _lid_map_put, _lid_map_trip
+
+    tok, conn = _conn(scratch_db)
+    try:
+        _lid_map_put(conn, "LID-1", "TRIP-1")
+        assert _lid_map_trip(conn, "LID-1") == "TRIP-1"
+        assert _lid_map_trip(conn, "LID-NA") is None
+
+        conn.execute(
+            "INSERT INTO files (name, lid, trip_id, estado_descarga) VALUES ('f1.pdf', 'LID-1', NULL, 'descargado')"
+        )
+        conn.execute(
+            "UPDATE files f SET trip_id=l.trip_id, vinculado_por='lid' "
+            "FROM lid_map l WHERE f.lid=l.lid AND f.trip_id IS NULL AND l.trip_id IS NOT NULL"
+        )
+        row = conn.execute("SELECT trip_id, vinculado_por FROM files WHERE name='f1.pdf'").fetchone()
+        assert row["trip_id"] == "TRIP-1"
+        assert row["vinculado_por"] == "lid"
+    finally:
+        conn.close()
+        main._tenant_ctx.reset(tok)
+
+
+def test_sha256_no_cuadra_devuelve_vacio(monkeypatch, tmp_path):
+    """0.1e: sha256 alterado en disco → _leer_archivo devuelve '' (alerta de corrupción)."""
+    from services.documentos import _guardar_archivo, _leer_archivo
+
+    monkeypatch.setattr("services.documentos.DOCS_DIR", str(tmp_path))
+    storage_key, sha, _, _ = _guardar_archivo("d.pdf", _PDF_MIN)
+    assert _leer_archivo(storage_key, sha) != ""          # sha correcto → sirve el binario
+    assert _leer_archivo(storage_key, "0" * 64) == ""     # sha alterado → '' (alerta)

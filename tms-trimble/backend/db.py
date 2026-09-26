@@ -145,6 +145,9 @@ CREATE TABLE IF NOT EXISTS files (
 CREATE TABLE IF NOT EXISTS documentos_auditoria (
     id BIGSERIAL PRIMARY KEY, file_id INT, accion TEXT, usuario TEXT, detalle TEXT, creado TIMESTAMPTZ DEFAULT now()
 );
+CREATE TABLE IF NOT EXISTS lid_map (
+    lid TEXT PRIMARY KEY, trip_id TEXT, task_id TEXT, terminal TEXT, desde TEXT
+);
 CREATE TABLE IF NOT EXISTS mensajes (
     id TEXT PRIMARY KEY, trip_id TEXT, tipo TEXT, messagetype TEXT,
     originid TEXT, source TEXT, terminal TEXT, subject TEXT, body TEXT,

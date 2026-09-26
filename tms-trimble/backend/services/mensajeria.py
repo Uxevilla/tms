@@ -43,7 +43,7 @@ def _save_mensaje(mid, trip_id, tipo, messagetype, originid, source, subject, bo
         conn.commit()
 
 
-def _store_mensaje(block, tipo, lid_map):
+def _store_mensaje(block, tipo):
     def f(tag):
         m = re.search(rf"<{tag}>(.*?)</{tag}>", block, re.S)
         return m.group(1).strip() if m else ""
@@ -51,7 +51,13 @@ def _store_mensaje(block, tipo, lid_map):
     if not mid:
         return
     originid = f("originid")
-    trip_id = lid_map.get(originid) if originid else None
+    trip_id = None
+    if originid:
+        # originid puede ser un LID (mapeado en la tabla lid_map) o el id de un mensaje enviado.
+        conn = _db()
+        row = conn.execute("SELECT trip_id FROM lid_map WHERE lid=?", (originid,)).fetchone()
+        conn.close()
+        trip_id = row["trip_id"] if row else None
     # Referencia directa del viaje si el macro la incluye (TRID / reference).
     if not trip_id:
         trip_id = f("reference") or f("trip") or f("trip_id") or f("trid")

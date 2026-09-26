@@ -71,8 +71,8 @@ def _guardar_archivo(nombre: str, b64: str):
     return storage_key, sha, len(raw), mime
 
 
-def _leer_archivo(storage_key: str) -> str:
-    """Lee un fichero de disco y devuelve su base64 (o '' si no existe)."""
+def _leer_archivo(storage_key: str, sha256_esperado: str = "") -> str:
+    """Lee un fichero de disco y devuelve su base64 (o '' si no existe o el sha256 no cuadra)."""
     if not storage_key:
         return ""
     ruta = os.path.join(DOCS_DIR, _tenant_dir(), storage_key)
@@ -83,7 +83,14 @@ def _leer_archivo(storage_key: str) -> str:
             return ""
         ruta = ruta_legacy
     with open(ruta, "rb") as f:
-        return base64.b64encode(f.read()).decode()
+        raw = f.read()
+    if sha256_esperado:
+        sha = hashlib.sha256(raw).hexdigest()
+        if sha != sha256_esperado:
+            # Integridad rota: no servir el binario (alerta de corrupción).
+            print(f"[documentos] sha256 NO cuadra para {storage_key}: esperado {sha256_esperado}, leído {sha}")
+            return ""
+    return base64.b64encode(raw).decode()
 
 
 def _borrar_archivo(storage_key: str) -> None:
