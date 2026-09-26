@@ -155,7 +155,8 @@ export function FacturacionPage() {
 
   function ok(texto: string) { setToast({ tipo: "ok", texto }); }
   function err(e: unknown) {
-    setToast({ tipo: "error", texto: e instanceof ApiError ? String(e.detail ?? e.message) : "Error" });
+    // ApiError.message trae el texto del error (detail.error); .detail es el cuerpo completo.
+    setToast({ tipo: "error", texto: e instanceof ApiError ? e.message : "Error" });
   }
   function refrescar() {
     queryClient.invalidateQueries({ queryKey: ["borradores"] });
