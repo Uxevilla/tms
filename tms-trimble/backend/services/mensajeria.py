@@ -31,6 +31,7 @@ from models import *
 from config import REDIS_URL, REDIS_STREAM, REDIS_CHANNEL, ACTIVITY_TYPES
 from config import TRANSFOLLOW_WEBHOOK_USER, TRANSFOLLOW_WEBHOOK_PASSWORD
 from services.cuestionarios import parse_report
+from services.telemetria import _get_redis
 
 
 def _save_mensaje(mid, trip_id, tipo, messagetype, originid, source, subject, body, mtime, needreply,
@@ -125,6 +126,14 @@ def _store_mensaje(block, tipo):
                   f("subject"), body, mtime, f("needreply") == "true",
                   clase=clase, direccion=direccion, report_id=report_id,
                   report_version=report_version, respuestas=respuestas)
+
+    # Tiempo real (PR 1.5): publicar el mensaje en Redis Pub/Sub (best-effort).
+    try:
+        _get_redis().publish(REDIS_CHANNEL,
+                             json.dumps({"tipo": "mensaje", "id": mid,
+                                         "trip_id": trip_id, "clase": clase}))
+    except Exception:
+        pass
     # Estado gobernado por Trimble: los macros estructurados cambian el estado del viaje.
     if tipo == "estructurado" and trip_id and messagetype:
         # Automatización Inteligente: dietas (RRHH) + cuenta corriente de palés.
