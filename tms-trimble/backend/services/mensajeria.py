@@ -107,12 +107,15 @@ def _store_mensaje(block, tipo):
     mtime = f("time")
     body = f("body")
 
-    # Clase de comunicación (Fase 5b): estructurado = formulario; libre = chat.
-    clase = "formulario" if tipo == "estructurado" else "libre"
+    # Clase de comunicación (Fase 5b): si el body trae un <Report> (crudo o escapado)
+    # es un formulario; el resto es chat libre. Los tipos 'estructurado'/'cuestionario'
+    # de Trimble no bastan: algunos estructurados son texto plano.
+    es_formulario = bool(re.search(r"(?:<|&lt;)Report\b", body or "", re.I))
+    clase = "formulario" if es_formulario else "libre"
     direccion = "entrante"
     report_id = report_version = None
     respuestas = None
-    if tipo == "estructurado" and body:
+    if es_formulario and body:
         try:
             rep = parse_report(body)
             report_id = rep["report_id"]
