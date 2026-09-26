@@ -138,3 +138,33 @@ def test_reglas_configuradas(scratch_db):
     finally:
         conn.close()
         main._tenant_ctx.reset(tok)
+
+
+@pytest.mark.integration
+def test_traducir_lote_coincide_con_por_mensaje(scratch_db):
+    """_traducir_respuestas_lote produce exactamente lo mismo que la versión por mensaje."""
+    from services.question_paths import importar_definicion, _traducir_respuestas, _traducir_respuestas_lote
+
+    tok, conn = _conn(scratch_db)
+    try:
+        importar_definicion(_XML_DEF)
+        pares = [
+            ("FORMID", [{"question": "Q1", "option": "O1", "value": "V1"},
+                        {"question": "Q2", "option": "O3", "value": ""}]),
+            ("NOEXISTE", [{"question": "Q9", "option": "O9", "value": "V"}]),
+            ("FORMID", []),
+        ]
+        lote = _traducir_respuestas_lote(conn, pares)
+        assert len(lote) == len(pares)
+        for (rid, resp), t in zip(pares, lote):
+            esperado = _traducir_respuestas(conn, rid, resp) if rid else []
+            assert t == esperado
+        # Caso concreto con definición activa.
+        assert lote[0][0]["pregunta"] == "¿Entrega correcta?"
+        assert lote[0][0]["opcion"] == "Sí"
+        # Sin definición → crudas.
+        assert lote[1][0]["pregunta"] == "Q9"
+        assert lote[1][0]["opcion"] == "O9"
+    finally:
+        conn.close()
+        main._tenant_ctx.reset(tok)

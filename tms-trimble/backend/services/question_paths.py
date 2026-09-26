@@ -126,3 +126,69 @@ def _traducir_respuestas(conn, report_id, respuestas):
             "value": r.get("value", ""),
         })
     return out
+
+
+def _traducir_respuestas_lote(conn, pares):
+    """Traduce en memoria las respuestas de varios mensajes, sin N+1.
+
+    pares: lista de (report_id, respuestas). Devuelve una lista (mismo orden) de
+    traducidas por par. Precarga qp_definiciones/qp_preguntas/qp_opciones de los
+    report_id presentes (una consulta por tabla) y resuelve en memoria.
+    """
+    if not pares:
+        return []
+    report_ids = sorted({rid for rid, _ in pares if rid})
+    if not report_ids:
+        return [[] for _ in pares]
+
+    # Definición activa por report_id (una consulta; la primera = mayor version).
+    defid_por_report = {}
+    for r in conn.execute(
+        "SELECT id, report_id FROM qp_definiciones WHERE report_id = ANY(?) AND activa ORDER BY version DESC",
+        (report_ids,),
+    ).fetchall():
+        defid_por_report.setdefault(r["report_id"], r["id"])
+
+    defids = list(defid_por_report.values())
+    preguntas = {}
+    opciones = {}
+    if defids:
+        for r in conn.execute(
+            "SELECT texto, question_id, definicion_id FROM qp_preguntas WHERE definicion_id = ANY(?)",
+            (defids,),
+        ).fetchall():
+            preguntas[(r["definicion_id"], r["question_id"])] = r["texto"]
+        for r in conn.execute(
+            "SELECT op.texto, op.option_id, p.question_id, p.definicion_id "
+            "FROM qp_opciones op JOIN qp_preguntas p ON op.pregunta_id=p.id "
+            "WHERE p.definicion_id = ANY(?)",
+            (defids,),
+        ).fetchall():
+            opciones[(r["definicion_id"], r["question_id"], r["option_id"])] = r["texto"]
+
+    out = []
+    for rid, respuestas in pares:
+        if not rid or not respuestas:
+            out.append([])
+            continue
+        defid = defid_por_report.get(rid)
+        if not defid:
+            # Sin definición importada: se devuelven las crudas (pregunta=question_id).
+            out.append([
+                {"question": r.get("question"), "pregunta": r.get("question"),
+                 "option": r.get("option"), "opcion": r.get("option") or "",
+                 "value": r.get("value", "")}
+                for r in respuestas
+            ])
+            continue
+        out.append([
+            {
+                "question": r.get("question"),
+                "pregunta": preguntas.get((defid, r.get("question")), r.get("question")),
+                "option": r.get("option"),
+                "opcion": opciones.get((defid, r.get("question"), r.get("option")), r.get("option") or "") if r.get("option") else "",
+                "value": r.get("value", ""),
+            }
+            for r in respuestas
+        ])
+    return out

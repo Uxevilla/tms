@@ -38,7 +38,7 @@ export function MensajeriaDashboard() {
         .then((d) => { if (!cancel && d.ok) setMensajes(d.mensajes ?? []); })
         .catch(() => {});
     cargar();
-    const t = setInterval(cargar, 2500);
+    const t = setInterval(cargar, 10000);
     return () => { cancel = true; clearInterval(t); };
   }, [terminal]);
 
